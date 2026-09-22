@@ -6295,6 +6295,7 @@
       "copied": "Endereço copiado",
       "unreachableTitle": "A porta da ponte não está acessível",
       "unreachableHint": "O servidor do codeg colocou esta página em {origin}, mas seu navegador não consegue alcançá-la. Publique essa porta (veja CODEG_BRIDGE_PORTS) ou defina CODEG_BRIDGE_PUBLIC_HOST; se o codeg é servido por HTTPS, as portas da ponte também precisam de HTTPS.",
+      "unreachableHostHint": "O servidor do codeg colocou esta página em {origin}, mas o seu navegador não consegue acessá-la. Esse nome de host precisa resolver para o servidor do codeg e atravessar o proxy que estiver à frente: um registro DNS curinga e um vhost curinga (veja CODEG_BRIDGE_HOST_PATTERN).",
       "errorTitle": "Esta página não pode ser exibida aqui"
     },
     "download": {

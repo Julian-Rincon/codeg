@@ -6295,6 +6295,7 @@
       "copied": "주소를 복사했습니다",
       "unreachableTitle": "브리지 포트에 연결할 수 없습니다",
       "unreachableHint": "codeg 서버가 이 페이지를 {origin}에 올렸지만 브라우저에서 접근할 수 없습니다. 해당 포트를 공개하거나(CODEG_BRIDGE_PORTS 참고) CODEG_BRIDGE_PUBLIC_HOST를 설정하세요. codeg를 HTTPS로 제공한다면 브리지 포트에도 HTTPS가 필요합니다.",
+      "unreachableHostHint": "codeg 서버가 이 페이지를 {origin}에 두었지만 브라우저에서 접근할 수 없습니다. 해당 호스트 이름이 codeg 서버로 확인되고 앞단 프록시를 통과해야 합니다. 와일드카드 DNS 레코드와 와일드카드 vhost가 필요합니다(CODEG_BRIDGE_HOST_PATTERN 참조).",
       "errorTitle": "이 페이지는 여기에 표시할 수 없습니다"
     },
     "download": {

@@ -6295,6 +6295,7 @@
       "copied": "تم نسخ العنوان",
       "unreachableTitle": "تعذّر الوصول إلى منفذ الجسر",
       "unreachableHint": "وضع خادم codeg هذه الصفحة على {origin}، لكن متصفحك لا يستطيع الوصول إليه. انشر هذا المنفذ (راجع CODEG_BRIDGE_PORTS) أو اضبط CODEG_BRIDGE_PUBLIC_HOST؛ وإذا كان codeg يُقدَّم عبر HTTPS فإن منافذ الجسر تحتاج إلى HTTPS أيضًا.",
+      "unreachableHostHint": "وضع خادم codeg هذه الصفحة على {origin}، لكن متصفحك لا يستطيع الوصول إليها. يجب أن يُترجَم اسم المضيف هذا إلى خادم codeg وأن يمر عبر الوكيل الموجود أمامه: سجل DNS بحرف بدل ومضيف افتراضي بحرف بدل (راجع CODEG_BRIDGE_HOST_PATTERN).",
       "errorTitle": "لا يمكن عرض هذه الصفحة هنا"
     },
     "download": {
