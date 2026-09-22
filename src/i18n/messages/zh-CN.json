@@ -5043,6 +5043,7 @@
   "BrowserSettings": {
     "title": "内置浏览器",
     "description": "从会话、工具结果和终端打开的网页可以作为标签页显示在文件旁边，而不必离开应用。",
+    "descriptionWeb": "在浏览器会话里，网页都在你正在用的浏览器中打开；例外是跑在 codeg 主机上的服务器，它会被转发成这里的一个标签页。以下是仍然生效的设置。",
     "defaultTargetTitle": "链接在哪里打开",
     "defaultTargetHint": "按来源分别设置。按住 ⌘/Ctrl 点击链接可临时使用另一种方式。",
     "sourceTranscript": "会话消息",
@@ -5082,6 +5083,7 @@
     "downloadsHint": "网页下载的文件保存在 {dir}。不会自动打开，也不会覆盖已有文件。",
     "rulesTitle": "站点规则",
     "rulesHint": "按站点设定：始终用内置浏览器、始终用系统浏览器，或阻止。模式可以是主机名、*.example.com 或 *，可选加 :端口；最具体的匹配生效。",
+    "rulesHintWeb": "按站点设定：阻止。在浏览器会话里，网页在哪里打开没有可选项。模式可以是主机名、*.example.com 或 *，可选加 :端口；最具体的匹配生效。",
     "serviceOpenTitle": "本机服务",
     "serviceOpenHint": "终端里启动的服务打印出地址时，在浏览器标签页中打开它。只认本机地址，且必须确认那个端口上真的有程序在监听。",
     "serviceOpenOff": "什么都不做",

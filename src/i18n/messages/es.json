@@ -5043,6 +5043,7 @@
   "BrowserSettings": {
     "title": "Navegador integrado",
     "description": "Las páginas web abiertas desde conversaciones, resultados de herramientas y la terminal pueden mostrarse como pestañas junto a tus archivos, sin salir de la aplicación.",
+    "descriptionWeb": "En una sesión de navegador, las páginas se abren en el navegador que ya estás usando. La excepción es un servidor que se ejecuta en el host de codeg: se reenvía a una pestaña aquí. Estos son los ajustes que siguen decidiendo algo.",
     "defaultTargetTitle": "Dónde se abren los enlaces",
     "defaultTargetHint": "Se configura por origen. Haz ⌘/Ctrl+clic en un enlace para usar la otra opción solo esta vez.",
     "sourceTranscript": "Mensajes de la conversación",
@@ -5082,6 +5083,7 @@
     "downloadsHint": "Los archivos que descarga una página se guardan en {dir}. No se abre nada automáticamente y nunca se reemplaza un archivo existente.",
     "rulesTitle": "Reglas de sitio",
     "rulesHint": "Por sitio: siempre el navegador integrado, siempre el navegador del sistema, o bloquear. Los patrones son un nombre de host, *.example.com o *, con un :puerto opcional; gana la coincidencia más específica.",
+    "rulesHintWeb": "Por sitio: bloquear. En una sesión de navegador no se puede elegir dónde se abre un enlace. Los patrones son un nombre de host, *.example.com o *, con un :puerto opcional; gana la coincidencia más específica.",
     "serviceOpenTitle": "Servidores locales",
     "serviceOpenHint": "Cuando un servidor iniciado en un terminal imprime su dirección, ábrela en una pestaña del navegador. Solo direcciones de este equipo y solo cuando algo esté escuchando en ellas.",
     "serviceOpenOff": "No hacer nada",

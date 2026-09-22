@@ -5043,6 +5043,7 @@
   "BrowserSettings": {
     "title": "內建瀏覽器",
     "description": "從對話、工具結果和終端機開啟的網頁可以作為分頁顯示在檔案旁邊，而不必離開應用程式。",
+    "descriptionWeb": "在瀏覽器會話裡，網頁都在你正在使用的瀏覽器中開啟；例外是跑在 codeg 主機上的伺服器，它會被轉發成這裡的一個分頁。以下是仍然生效的設定。",
     "defaultTargetTitle": "連結在哪裡開啟",
     "defaultTargetHint": "依來源分別設定。按住 ⌘/Ctrl 點擊連結可暫時改用另一種方式。",
     "sourceTranscript": "對話訊息",
@@ -5082,6 +5083,7 @@
     "downloadsHint": "網頁下載的檔案儲存於 {dir}。不會自動開啟，也不會覆蓋既有檔案。",
     "rulesTitle": "站點規則",
     "rulesHint": "按站點設定：一律用內建瀏覽器、一律用系統瀏覽器，或阻止。模式可以是主機名稱、*.example.com 或 *，可選加 :連接埠；最具體的符合項生效。",
+    "rulesHintWeb": "按站點設定：阻止。在瀏覽器會話裡，網頁在哪裡開啟沒有可選項。模式可以是主機名稱、*.example.com 或 *，可選加 :連接埠；最具體的符合項生效。",
     "serviceOpenTitle": "本機服務",
     "serviceOpenHint": "終端機裡啟動的服務印出位址時，在瀏覽器分頁中開啟它。只接受本機位址，且必須確認那個連接埠上真的有程式在監聽。",
     "serviceOpenOff": "什麼都不做",

@@ -5043,6 +5043,7 @@
   "BrowserSettings": {
     "title": "Navegador integrado",
     "description": "Páginas web abertas a partir de conversas, resultados de ferramentas e do terminal podem aparecer como abas ao lado dos seus arquivos, sem sair do aplicativo.",
+    "descriptionWeb": "Em uma sessão de navegador, as páginas abrem no navegador que você já está usando. A exceção é um servidor em execução no host do codeg: ele é encaminhado para uma aba aqui. Estas são as configurações que ainda decidem algo.",
     "defaultTargetTitle": "Onde os links abrem",
     "defaultTargetHint": "Definido por origem. Use ⌘/Ctrl+clique em um link para usar a outra opção só desta vez.",
     "sourceTranscript": "Mensagens da conversa",
@@ -5082,6 +5083,7 @@
     "downloadsHint": "Os arquivos baixados por uma página são salvos em {dir}. Nada é aberto automaticamente e um arquivo existente nunca é substituído.",
     "rulesTitle": "Regras de site",
     "rulesHint": "Por site: sempre o navegador integrado, sempre o navegador do sistema ou bloquear. Os padrões são um nome de host, *.example.com ou *, com :porta opcional; a correspondência mais específica vence.",
+    "rulesHintWeb": "Por site: bloquear. Onde um link abre não é uma escolha em uma sessão de navegador. Os padrões são um nome de host, *.example.com ou *, com :porta opcional; a correspondência mais específica vence.",
     "serviceOpenTitle": "Servidores locais",
     "serviceOpenHint": "Quando um servidor iniciado num terminal imprime o endereço, abri-lo numa aba do navegador. Apenas endereços desta máquina e só quando algo estiver a escutar neles.",
     "serviceOpenOff": "Não fazer nada",
