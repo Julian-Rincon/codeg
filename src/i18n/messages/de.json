@@ -6301,6 +6301,17 @@
       "unreachableHostHint": "Der codeg-Server hat diese Seite unter {origin} bereitgestellt, aber dein Browser erreicht sie nicht. Dieser Hostname muss auf den codeg-Server auflösen und den davorliegenden Proxy passieren – ein Wildcard-DNS-Eintrag und ein Wildcard-vhost (siehe CODEG_BRIDGE_HOST_PATTERN).",
       "errorTitle": "Diese Seite kann hier nicht angezeigt werden"
     },
+    "remote": {
+      "title": "Diese Adresse liegt auf {host}",
+      "titleUnnamed": "Diese Adresse liegt auf dem entfernten Host",
+      "description": "Sie zeigt auf die Maschine, auf der dieser Arbeitsbereich läuft, nicht auf diesen Rechner – daher lässt sie sich hier noch nicht in einem Tab öffnen.",
+      "copyAddress": "Adresse kopieren",
+      "copied": "Adresse kopiert",
+      "tryHost": "{host} versuchen",
+      "tryHostHint": "Öffnet {address} in einem Tab auf diesem Rechner. Das funktioniert, wenn die Seite dort auf allen Netzwerkschnittstellen lauscht und dieser Rechner ihren Port erreicht.",
+      "openHere": "Auf diesem Rechner öffnen",
+      "openHereHint": "Öffnet die Adresse in einem Tab auf diesem Rechner. Das funktioniert, wenn dieser Rechner im selben Netzwerk ist."
+    },
     "download": {
       "started": "Wird geladen…",
       "completed": "Gespeichert",
@@ -6356,6 +6367,7 @@
       "shareControl": "Lesen und bedienen",
       "levelDefault": "Standard",
       "notShareable": "Diese Seite hat keine Webadresse, die für Agenten freigegeben werden könnte",
+      "remoteWindow": "Agenten eines entfernten Arbeitsbereichs laufen auf dessen Host und können den Browser dieses Rechners nicht verwenden",
       "shared": "Freigegeben",
       "sharedControl": "Geteilt · darf bedienen",
       "sharedWith": "Agenten können {origin} lesen",

@@ -6301,6 +6301,17 @@
       "unreachableHostHint": "El servidor de codeg puso esta página en {origin}, pero tu navegador no puede acceder a ella. Ese nombre de host tiene que resolverse al servidor de codeg y atravesar el proxy que haya delante: un registro DNS comodín y un vhost comodín (consulta CODEG_BRIDGE_HOST_PATTERN).",
       "errorTitle": "Esta página no se puede mostrar aquí"
     },
+    "remote": {
+      "title": "Esta dirección está en {host}",
+      "titleUnnamed": "Esta dirección está en el host remoto",
+      "description": "Apunta a la máquina donde se ejecuta este espacio de trabajo, no a este equipo, así que todavía no se puede abrir en una pestaña aquí.",
+      "copyAddress": "Copiar dirección",
+      "copied": "Dirección copiada",
+      "tryHost": "Probar {host}",
+      "tryHostHint": "Abre {address} en una pestaña de este equipo. Funciona si la página escucha en todas las interfaces de red y este equipo llega a su puerto.",
+      "openHere": "Abrir en este equipo",
+      "openHereHint": "Abre la dirección en una pestaña de este equipo. Funciona si este equipo está en la misma red."
+    },
     "download": {
       "started": "Descargando…",
       "completed": "Guardado",
@@ -6356,6 +6367,7 @@
       "shareControl": "Leer y actuar",
       "levelDefault": "Predeterminado",
       "notShareable": "Esta página no tiene una dirección web que compartir con los agentes",
+      "remoteWindow": "Los agentes de un espacio de trabajo remoto se ejecutan en su host y no pueden usar el navegador de este equipo",
       "shared": "Compartida",
       "sharedControl": "Compartida · puede actuar",
       "sharedWith": "Los agentes pueden leer {origin}",

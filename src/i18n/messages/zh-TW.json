@@ -6301,6 +6301,17 @@
       "unreachableHostHint": "codeg 伺服器把這個頁面放在了 {origin}，但你的瀏覽器連不到。這個主機名稱必須解析到 codeg 伺服器，並且能穿過前方的反向代理——也就是一筆萬用字元 DNS 記錄加一個萬用字元虛擬主機（見 CODEG_BRIDGE_HOST_PATTERN）。",
       "errorTitle": "無法在這裡顯示此頁面"
     },
+    "remote": {
+      "title": "此網址在 {host} 上",
+      "titleUnnamed": "此網址在遠端主機上",
+      "description": "它指向這個工作區所在的機器，而不是這台電腦，所以暫時無法在這裡的分頁中開啟。",
+      "copyAddress": "複製網址",
+      "copied": "已複製網址",
+      "tryHost": "嘗試 {host}",
+      "tryHostHint": "在這台電腦的分頁中開啟 {address}。前提是那邊的頁面監聽了所有網路介面，且這台電腦能連到該連接埠。",
+      "openHere": "在這台電腦上開啟",
+      "openHereHint": "在這台電腦的分頁中開啟此網址。前提是這台電腦也在同一個網路中。"
+    },
     "download": {
       "started": "正在下載…",
       "completed": "已儲存",
@@ -6356,6 +6367,7 @@
       "shareControl": "讀取並操作權限",
       "levelDefault": "預設",
       "notShareable": "此頁面沒有可分享給智慧代理的網址",
+      "remoteWindow": "遠端工作區的智慧代理在它的主機上執行，無法使用這台電腦的瀏覽器",
       "shared": "已分享",
       "sharedControl": "已共享 · 可操作",
       "sharedWith": "智慧代理可讀取 {origin}",

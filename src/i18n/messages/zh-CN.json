@@ -6301,6 +6301,17 @@
       "unreachableHostHint": "codeg 服务端把这个页面放在了 {origin}，但你的浏览器访问不到。这个主机名需要解析到 codeg 服务端，并且能穿过前面的反向代理——也就是一条泛域名 DNS 记录加一个泛域名虚拟主机（见 CODEG_BRIDGE_HOST_PATTERN）。",
       "errorTitle": "无法在这里显示此页面"
     },
+    "remote": {
+      "title": "该地址在 {host} 上",
+      "titleUnnamed": "该地址在远端主机上",
+      "description": "它指向这个工作区所在的机器，而不是这台电脑，所以暂时无法在这里的标签页中打开。",
+      "copyAddress": "复制地址",
+      "copied": "已复制地址",
+      "tryHost": "尝试 {host}",
+      "tryHostHint": "在这台电脑的标签页中打开 {address}。前提是那边的页面监听了所有网络接口，并且这台电脑能访问该端口。",
+      "openHere": "在这台电脑上打开",
+      "openHereHint": "在这台电脑的标签页中打开该地址。前提是这台电脑也在同一个网络里。"
+    },
     "download": {
       "started": "正在下载…",
       "completed": "已保存",
@@ -6356,6 +6367,7 @@
       "shareControl": "读取并操作权限",
       "levelDefault": "默认",
       "notShareable": "此页面没有可共享给智能体的网址",
+      "remoteWindow": "远程工作区的智能体运行在它的主机上，无法使用这台电脑的浏览器",
       "shared": "已共享",
       "sharedControl": "已共享 · 可操作",
       "sharedWith": "智能体可读取 {origin}",

@@ -6301,6 +6301,17 @@
       "unreachableHostHint": "codeg's server put this page on {origin}, but your browser can't reach it. That hostname has to resolve to the codeg server and reach it through whatever proxy is in front — a wildcard DNS record and a wildcard vhost (see CODEG_BRIDGE_HOST_PATTERN).",
       "errorTitle": "This page can't be shown here"
     },
+    "remote": {
+      "title": "This address is on {host}",
+      "titleUnnamed": "This address is on the remote host",
+      "description": "It points at the machine this workspace runs on, not at this computer, so it can't be opened in a tab here yet.",
+      "copyAddress": "Copy address",
+      "copied": "Address copied",
+      "tryHost": "Try {host}",
+      "tryHostHint": "Opens {address} in a tab on this computer. It works if the page there listens on every network interface and this computer can reach its port.",
+      "openHere": "Open on this computer",
+      "openHereHint": "Opens the address in a tab on this computer. It works if this computer is on the same network."
+    },
     "download": {
       "started": "Downloading…",
       "completed": "Saved",
@@ -6356,6 +6367,7 @@
       "shareControl": "Read and act",
       "levelDefault": "Default",
       "notShareable": "This page has no web address to share with agents",
+      "remoteWindow": "Agents of a remote workspace run on its host and can't use this computer's browser",
       "shared": "Shared",
       "sharedControl": "Shared · can act",
       "sharedWith": "Agents can read {origin}",
