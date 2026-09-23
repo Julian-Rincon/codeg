@@ -28,6 +28,7 @@ import {
   browserPickElement,
 } from "@/lib/browser/browser-api"
 import { useBrowserConsoleErrors } from "@/lib/browser/browser-tab-store"
+import { remoteHostAddress } from "@/lib/browser/remote-host"
 import type { BrowserTabState, PageHandoff } from "@/lib/browser/types"
 import { browserTabBackendId } from "@/lib/file-tab-id"
 import { emitAttachPageToSession } from "@/lib/session-attachment-events"
@@ -136,7 +137,12 @@ export function BrowserSendToChatControl({
         tabId: conversationTabId,
         label: handoff.label || label,
         text: handoff.text,
-        uri: handoff.url,
+        // A remote tab's page as the remote host (and its agent) knows it:
+        // the macOS alias it was loaded by names nothing there.
+        uri:
+          tab.browser.remote === true
+            ? remoteHostAddress(handoff.url)
+            : handoff.url,
         image: imageFile(
           handoff,
           safeName(handoff.label || fileName, fileName)
@@ -145,7 +151,7 @@ export function BrowserSendToChatControl({
       if (accepted) toast.success(t("sent"))
       else toast.error(t("gone"))
     },
-    [conversationTabId, t]
+    [conversationTabId, t, tab.browser.remote]
   )
 
   const failed = useCallback(

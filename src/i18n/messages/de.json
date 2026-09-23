@@ -6265,6 +6265,7 @@
       "ownedWindow": "Diese Seite wird in einem eigenen Fenster angezeigt.",
       "ownedWindowShow": "Fenster anzeigen",
       "remoteBanner": "Geöffnet über {host}",
+      "remoteBannerDown": "Die Verbindung zu {host} ist unterbrochen. Beim nächsten Aufruf wird sie neu aufgebaut.",
       "navigationBlocked": "Navigation blockiert: {host}",
       "navigationBlockedRule": "durch eine Site-Regel blockiert",
       "navigationBlockedScheme": "diese Adressart kann hier nicht geöffnet werden",
@@ -6278,7 +6279,17 @@
       "agentGrantLost": "Freigabe beendet: Die Seite hat {origin} verlassen",
       "agentGrantLostShare": "Auch {origin} freigeben",
       "agentGrantReplaced": "Freigabe beendet: {origin} wird jetzt von einem anderen Programm bedient",
-      "agentGrantReplacedShare": "Trotzdem freigeben"
+      "agentGrantReplacedShare": "Trotzdem freigeben",
+      "errorRemoteRefused": "Auf dem entfernten Host lauscht an dieser Adresse nichts",
+      "errorRemoteRefusedHint": "{host} hat die Verbindung abgelehnt. Prüfe, ob der Server hinter dieser Adresse dort läuft.",
+      "errorRemoteUnreachable": "Der entfernte Host erreicht diese Adresse nicht",
+      "errorRemoteUnreachableHint": "Von {host} aus lässt sich der Name nicht auflösen oder es gibt keinen Weg dorthin.",
+      "errorRemoteNotAllowed": "Der entfernte Server gibt diese Adresse für den Browser nicht frei",
+      "errorRemoteNotAllowedHint": "Der codeg-server auf {host} lässt seinen Browser-Tunnel nur private Adressen erreichen (CODEG_BROWSER_TUNNEL=private).",
+      "errorRemoteTimeout": "Der entfernte Host hat zu lange für die Verbindung gebraucht",
+      "errorRemoteTimeoutHint": "{host} hat von dieser Adresse nicht rechtzeitig eine Antwort bekommen. Der Server dort ist vielleicht ausgelastet oder hinter einer Firewall.",
+      "errorTunnelDown": "Die Verbindung zum entfernten Host ist unterbrochen",
+      "errorTunnelDownHint": "Der Tunnel zu {host} überträgt gerade nichts. Versuche es erneut, sobald er wieder erreichbar ist."
     },
     "tab": {
       "untitled": "Neuer Tab"
@@ -6304,13 +6315,16 @@
     "remote": {
       "title": "Diese Adresse liegt auf {host}",
       "titleUnnamed": "Diese Adresse liegt auf dem entfernten Host",
-      "description": "Sie zeigt auf die Maschine, auf der dieser Arbeitsbereich läuft, nicht auf diesen Rechner – daher lässt sie sich hier noch nicht in einem Tab öffnen.",
+      "description": "Sie verweist auf den Rechner, auf dem dieser Arbeitsbereich läuft, nicht auf diesen Computer.",
       "copyAddress": "Adresse kopieren",
       "copied": "Adresse kopiert",
       "tryHost": "{host} versuchen",
       "tryHostHint": "Öffnet {address} in einem Tab auf diesem Rechner. Das funktioniert, wenn die Seite dort auf allen Netzwerkschnittstellen lauscht und dieser Rechner ihren Port erreicht.",
       "openHere": "Auf diesem Rechner öffnen",
-      "openHereHint": "Öffnet die Adresse in einem Tab auf diesem Rechner. Das funktioniert, wenn dieser Rechner im selben Netzwerk ist."
+      "openHereHint": "Öffnet die Adresse in einem Tab auf diesem Rechner. Das funktioniert, wenn dieser Rechner im selben Netzwerk ist.",
+      "retry": "Erneut versuchen",
+      "connecting": "Verbindung über {host} wird hergestellt…",
+      "connectingUnnamed": "Verbindung über den entfernten Host wird hergestellt…"
     },
     "download": {
       "started": "Wird geladen…",
@@ -6485,6 +6499,16 @@
     "inspector": {
       "error": {
         "switchedOff": "Dieser Tab wurde bei ausgeschaltetem Web-Inspektor geöffnet. Schalte ihn in den Browser-Einstellungen ein und öffne die Seite erneut."
+      }
+    },
+    "remote": {
+      "error": {
+        "unavailable": "Um Adressen des entfernten Hosts im integrierten Browser zu öffnen, ist macOS 14 oder neuer nötig.",
+        "unsupported": "Der entfernte codeg-server ist zu alt, um Browser-Verkehr weiterzuleiten. Aktualisiere ihn, um seine Adressen hier zu öffnen.",
+        "disabled": "Beim entfernten codeg-server ist der Browser-Tunnel ausgeschaltet (CODEG_BROWSER_TUNNEL).",
+        "unreachable": "Der Browser-Tunnel des entfernten codeg-servers war nicht erreichbar ({reason}).",
+        "bypassed": "Die Browser-Engine dieses Computers schickt manche Adressen am Tunnel vorbei, daher bleiben die Seiten des entfernten Hosts geschlossen, statt von diesem Computer geladen zu werden.",
+        "probeFailed": "Der integrierte Browser konnte nicht bestätigen, dass er den entfernten Host über den Tunnel erreicht. Versuche es gleich noch einmal."
       }
     }
   }

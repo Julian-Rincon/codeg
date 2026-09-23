@@ -6265,6 +6265,7 @@
       "ownedWindow": "该页面显示在独立窗口中。",
       "ownedWindowShow": "显示窗口",
       "remoteBanner": "经由 {host} 打开",
+      "remoteBannerDown": "与 {host} 的连接已断开，下一次请求时会重新连接。",
       "navigationBlocked": "已阻止跳转：{host}",
       "navigationBlockedRule": "被站点规则阻止",
       "navigationBlockedScheme": "此类地址不能在这里打开",
@@ -6278,7 +6279,17 @@
       "agentGrantLost": "共享已结束：页面离开了 {origin}",
       "agentGrantLostShare": "也共享 {origin}",
       "agentGrantReplaced": "共享已结束：现在是另一个程序在 {origin} 上提供服务",
-      "agentGrantReplacedShare": "仍然共享"
+      "agentGrantReplacedShare": "仍然共享",
+      "errorRemoteRefused": "远端主机上没有程序在监听这个地址",
+      "errorRemoteRefusedHint": "{host} 拒绝了连接。请确认这个地址背后的服务在那台机器上正在运行。",
+      "errorRemoteUnreachable": "远端主机无法访问这个地址",
+      "errorRemoteUnreachableHint": "从 {host} 看，这个名字无法解析，或者没有到达它的路由。",
+      "errorRemoteNotAllowed": "远端服务器不允许浏览器访问这个地址",
+      "errorRemoteNotAllowedHint": "{host} 上的 codeg-server 只允许浏览器隧道访问私网地址（CODEG_BROWSER_TUNNEL=private）。",
+      "errorRemoteTimeout": "远端主机连接超时",
+      "errorRemoteTimeoutHint": "{host} 没有在限定时间内得到这个地址的响应。那边的服务可能很忙，或被防火墙挡住了。",
+      "errorTunnelDown": "与远端主机的连接已断开",
+      "errorTunnelDownHint": "通往 {host} 的隧道目前无法传输。等它恢复可达后再重试。"
     },
     "tab": {
       "untitled": "新标签页"
@@ -6304,13 +6315,16 @@
     "remote": {
       "title": "该地址在 {host} 上",
       "titleUnnamed": "该地址在远端主机上",
-      "description": "它指向这个工作区所在的机器，而不是这台电脑，所以暂时无法在这里的标签页中打开。",
+      "description": "它指向这个工作区所在的机器，而不是这台电脑。",
       "copyAddress": "复制地址",
       "copied": "已复制地址",
       "tryHost": "尝试 {host}",
       "tryHostHint": "在这台电脑的标签页中打开 {address}。前提是那边的页面监听了所有网络接口，并且这台电脑能访问该端口。",
       "openHere": "在这台电脑上打开",
-      "openHereHint": "在这台电脑的标签页中打开该地址。前提是这台电脑也在同一个网络里。"
+      "openHereHint": "在这台电脑的标签页中打开该地址。前提是这台电脑也在同一个网络里。",
+      "retry": "重试",
+      "connecting": "正在经由 {host} 连接…",
+      "connectingUnnamed": "正在经由远端主机连接…"
     },
     "download": {
       "started": "正在下载…",
@@ -6485,6 +6499,16 @@
     "inspector": {
       "error": {
         "switchedOff": "这个标签页是在网页检查器关闭时打开的。请在浏览器设置里打开它，然后重新打开该页面。"
+      }
+    },
+    "remote": {
+      "error": {
+        "unavailable": "在内置浏览器中打开远端主机的地址需要 macOS 14 或更高版本。",
+        "unsupported": "远端的 codeg-server 版本过旧，无法转发浏览器流量。更新它之后才能在这里打开它的地址。",
+        "disabled": "远端的 codeg-server 关闭了浏览器隧道（CODEG_BROWSER_TUNNEL）。",
+        "unreachable": "无法连接远端 codeg-server 的浏览器隧道（{reason}）。",
+        "bypassed": "这台电脑的浏览器引擎会让部分地址绕过隧道，为避免从这台电脑加载，远端主机的页面不会打开。",
+        "probeFailed": "内置浏览器无法确认它能通过隧道访问远端主机。请稍后重试。"
       }
     }
   }
