@@ -101,6 +101,7 @@ pub fn capabilities(policy: &BrowserPolicy) -> BrowserCapabilities {
         profiles: enabled && profile::profiles_supported(),
         sign_in_user_agent: enabled && profile::sign_in_user_agent_supported(),
         owned_window_controls: crate::browser::surface_window::HAS_CHANNEL,
+        remote_egress: enabled && crate::browser::remote::supported(),
     }
 }
 
@@ -201,7 +202,10 @@ pub fn open_tab_core(
             "the built-in browser is disabled by the administrator's policy",
         ));
     }
-    let url = parse_web_url(&params.url)?;
+    let asked = parse_web_url(&params.url)?;
+    // Where the tab really goes: a remote profile's loopback address, on
+    // macOS, by its alias (see `browser::remote`).
+    let url = crate::browser::remote::egress_address(&params.profile, &asked).into_owned();
     let label = tab_label(&params.tab_id);
     profile::check(&params.profile).map_err(AppCommandError::invalid_input)?;
     // Held until this returns (the tab is registered by then): a deletion of
@@ -211,7 +215,15 @@ pub fn open_tab_core(
     profile::prepare(app, &params.profile)
         .map_err(|e| window_err("Failed to prepare the browser profile", e))?;
 
-    let surface = match pick_surface(params.surface) {
+    // A remote profile's tab on macOS is embedded whatever the preference:
+    // the alias rewrite and the loopback rules are the embedded surface's
+    // (`remote::supported` refuses a build without it).
+    let choice = if cfg!(target_os = "macos") && profile::is_remote_profile(&params.profile) {
+        SurfaceChoice::Child
+    } else {
+        params.surface
+    };
+    let surface = match pick_surface(choice) {
         #[cfg(all(
             feature = "browser-child",
             any(target_os = "macos", target_os = "windows")
@@ -261,7 +273,7 @@ pub fn open_tab_core(
         origin: None,
         zoom: 1.0,
         error: None,
-        remote_host: None,
+        remote_host: profile::remote_host(&params.profile),
         opener_tab_id: None,
         profile: Some(params.profile.clone()),
         agent_grant: None,
@@ -313,11 +325,11 @@ pub fn open_tab_core(
     // A blocked address gets its tab — the caller (an agent tool, a deep
     // link) asked for one and the block page is where the user learns why —
     // but nothing is loaded into it.
-    if blocked_by_policy(app, &url) {
+    if blocked_by_policy(app, &asked) || blocked_by_policy(app, &url) {
         let state = registry
             .update_state(&params.tab_id, |s| {
                 s.loading = false;
-                s.error = Some(blocked_error(&url));
+                s.error = Some(blocked_error(&asked));
             })
             .unwrap_or(state);
         events::emit_state(app, &state);
@@ -973,30 +985,35 @@ pub fn navigate_core(
     tab_id: &str,
     raw_url: &str,
 ) -> Result<BrowserTabState, AppCommandError> {
-    let url = parse_web_url(raw_url)?;
+    let asked = parse_web_url(raw_url)?;
     let surface = surface_of(registry, tab_id)?;
+    let current = registry.state(tab_id);
     // A document guest shows one file; it is not an address bar.
-    if registry
-        .state(tab_id)
-        .is_some_and(|state| state.kind == TabKind::Document)
-    {
+    if current.as_ref().is_some_and(|state| state.kind == TabKind::Document) {
         return Err(AppCommandError::invalid_input(
             "a document view cannot be navigated to another address",
         ));
     }
+    // A remote tab's loopback address, on macOS, by its alias (see
+    // `browser::remote`): sent there now rather than refused by the tab's
+    // navigation hook and sent there after.
+    let url = match current.as_ref().and_then(|state| state.profile.as_deref()) {
+        Some(profile_id) => crate::browser::remote::egress_address(profile_id, &asked).into_owned(),
+        None => asked.clone(),
+    };
     // Refused by a site rule: the block page takes the place of the page,
     // as in a browser, and nothing is loaded. Whatever was loading before
     // is stopped and its watcher retired, or its commit or failure would
     // land on top of the block a moment later.
-    if blocked_by_policy(app, &url) {
+    if blocked_by_policy(app, &asked) || blocked_by_policy(app, &url) {
         let _ = surface.stop();
         let state = registry
             .update(tab_id, |tab| {
                 tab.load_seq += 1;
                 tab.provisional_url = None;
-                tab.state.requested_url = url.to_string();
+                tab.state.requested_url = asked.to_string();
                 tab.state.loading = false;
-                tab.state.error = Some(blocked_error(&url));
+                tab.state.error = Some(blocked_error(&asked));
                 tab.state.clone()
             })
             .ok_or_else(|| AppCommandError::not_found(format!("browser tab {tab_id} not found")))?;
@@ -3548,10 +3565,24 @@ pub async fn browser_open_tab(
     folder_id: Option<i64>,
     devtools: Option<bool>,
     profile: Option<String>,
+    egress: Option<i32>,
 ) -> Result<BrowserTabState, AppCommandError> {
     // Folder scoping is a frontend concern (tab strip grouping); the backend
     // only needs the owner window.
     let _ = folder_id;
+    let profile = open_tab_profile(profile, egress, || {
+        validate_tab_id(&tab_id)?;
+        parse_web_url(&url).map(|_| ())
+    })?;
+    let profile = match profile {
+        TabProfile::Named(profile) => profile,
+        // The connection's own profile, once its egress is ready: nothing
+        // about the tab may reach this computer instead.
+        TabProfile::Remote(connection_id) => {
+            crate::browser::remote::prepare(&app, &window, connection_id).await?;
+            profile::remote_profile_id(connection_id)
+        }
+    };
     open_tab_core(
         &app,
         &window,
@@ -3563,9 +3594,41 @@ pub async fn browser_open_tab(
             background: background.unwrap_or(false),
             surface: surface.unwrap_or_default(),
             devtools: devtools.unwrap_or(false),
-            profile: profile.unwrap_or_else(|| profile::DEFAULT_PROFILE_ID.to_string()),
+            profile,
         },
     )
+}
+
+/// The profile a tab asked for from the frontend goes into.
+#[derive(Debug, PartialEq, Eq)]
+enum TabProfile {
+    /// A profile the user has (`default` when the caller has no opinion).
+    Named(String),
+    /// The egress profile of this remote connection.
+    Remote(i32),
+}
+
+/// Sort out `browser_open_tab`'s profile arguments. An `egress` connection
+/// decides the profile by itself; a remote profile named outright is refused
+/// — its proxy is the one thing about it that must not be anything but its
+/// egress, and only `remote::prepare` sets that up. `check` runs first, so an
+/// open that is refused anyway starts no listener and no tunnel.
+fn open_tab_profile(
+    profile: Option<String>,
+    egress: Option<i32>,
+    check: impl FnOnce() -> Result<(), AppCommandError>,
+) -> Result<TabProfile, AppCommandError> {
+    check()?;
+    if let Some(connection_id) = egress {
+        return Ok(TabProfile::Remote(connection_id));
+    }
+    let profile = profile.unwrap_or_else(|| profile::DEFAULT_PROFILE_ID.to_string());
+    if profile::is_remote_profile(&profile) {
+        return Err(AppCommandError::invalid_input(format!(
+            "browser profile {profile:?} is a remote connection's; open the tab with its connection instead"
+        )));
+    }
+    Ok(TabProfile::Named(profile))
 }
 
 #[tauri::command]
@@ -3980,6 +4043,24 @@ mod tests {
         assert_eq!(origin_title(&url), "accounts.example.com");
         let url = Url::parse("http://localhost:3000/app#x").unwrap();
         assert_eq!(origin_title(&url), "localhost:3000");
+    }
+
+    #[test]
+    fn a_tab_goes_into_the_profile_asked_for_or_its_connection_s() {
+        let ok = || Ok(());
+        assert_eq!(open_tab_profile(None, None, ok).unwrap(), TabProfile::Named("default".into()));
+        assert_eq!(
+            open_tab_profile(Some("p-abc".into()), None, ok).unwrap(),
+            TabProfile::Named("p-abc".into())
+        );
+        // The connection decides, whatever profile came along with it.
+        assert_eq!(open_tab_profile(Some("p-abc".into()), Some(4), ok).unwrap(), TabProfile::Remote(4));
+        // A remote profile is never named from outside: only its connection
+        // opens it, after its egress is in place.
+        assert!(open_tab_profile(Some("remote-4".into()), None, ok).is_err());
+        // An open refused anyway is refused before anything is started.
+        let refused = open_tab_profile(None, Some(4), || Err(AppCommandError::invalid_input("bad url")));
+        assert_eq!(refused.unwrap_err().message, "bad url");
     }
 
     #[test]

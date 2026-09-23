@@ -6265,6 +6265,7 @@
       "ownedWindow": "此頁面顯示在獨立視窗中。",
       "ownedWindowShow": "顯示視窗",
       "remoteBanner": "經由 {host} 開啟",
+      "remoteBannerDown": "與 {host} 的連線已中斷，下一次請求時會重新連線。",
       "navigationBlocked": "已阻止跳轉：{host}",
       "navigationBlockedRule": "被站點規則阻止",
       "navigationBlockedScheme": "此類位址不能在這裡開啟",
@@ -6278,7 +6279,17 @@
       "agentGrantLost": "分享已結束：頁面離開了 {origin}",
       "agentGrantLostShare": "也分享 {origin}",
       "agentGrantReplaced": "分享已結束：現在是另一個程式在 {origin} 上提供服務",
-      "agentGrantReplacedShare": "仍然分享"
+      "agentGrantReplacedShare": "仍然分享",
+      "errorRemoteRefused": "遠端主機上沒有程式在監聽這個位址",
+      "errorRemoteRefusedHint": "{host} 拒絕了連線。請確認這個位址背後的服務在那台機器上正在執行。",
+      "errorRemoteUnreachable": "遠端主機無法連到這個位址",
+      "errorRemoteUnreachableHint": "從 {host} 看，這個名稱無法解析，或者沒有到達它的路由。",
+      "errorRemoteNotAllowed": "遠端伺服器不允許瀏覽器連到這個位址",
+      "errorRemoteNotAllowedHint": "{host} 上的 codeg-server 只允許瀏覽器通道連到私人網路位址（CODEG_BROWSER_TUNNEL=private）。",
+      "errorRemoteTimeout": "遠端主機連線逾時",
+      "errorRemoteTimeoutHint": "{host} 沒有在時限內得到這個位址的回應。那邊的服務可能很忙，或被防火牆擋住了。",
+      "errorTunnelDown": "與遠端主機的連線已中斷",
+      "errorTunnelDownHint": "通往 {host} 的通道目前無法傳輸。等它恢復可連線後再重試。"
     },
     "tab": {
       "untitled": "新分頁"
@@ -6304,13 +6315,16 @@
     "remote": {
       "title": "此網址在 {host} 上",
       "titleUnnamed": "此網址在遠端主機上",
-      "description": "它指向這個工作區所在的機器，而不是這台電腦，所以暫時無法在這裡的分頁中開啟。",
+      "description": "它指向這個工作區所在的機器，而不是這台電腦。",
       "copyAddress": "複製網址",
       "copied": "已複製網址",
       "tryHost": "嘗試 {host}",
       "tryHostHint": "在這台電腦的分頁中開啟 {address}。前提是那邊的頁面監聽了所有網路介面，且這台電腦能連到該連接埠。",
       "openHere": "在這台電腦上開啟",
-      "openHereHint": "在這台電腦的分頁中開啟此網址。前提是這台電腦也在同一個網路中。"
+      "openHereHint": "在這台電腦的分頁中開啟此網址。前提是這台電腦也在同一個網路中。",
+      "retry": "重試",
+      "connecting": "正在經由 {host} 連線…",
+      "connectingUnnamed": "正在經由遠端主機連線…"
     },
     "download": {
       "started": "正在下載…",
@@ -6485,6 +6499,16 @@
     "inspector": {
       "error": {
         "switchedOff": "這個分頁是在網頁檢查器關閉時開啟的。請到瀏覽器設定中開啟它，然後重新開啟該頁面。"
+      }
+    },
+    "remote": {
+      "error": {
+        "unavailable": "在內建瀏覽器中開啟遠端主機的位址需要 macOS 14 或更新版本。",
+        "unsupported": "遠端的 codeg-server 版本過舊，無法轉送瀏覽器流量。更新它之後才能在這裡開啟它的位址。",
+        "disabled": "遠端的 codeg-server 關閉了瀏覽器通道（CODEG_BROWSER_TUNNEL）。",
+        "unreachable": "無法連線到遠端 codeg-server 的瀏覽器通道（{reason}）。",
+        "bypassed": "這台電腦的瀏覽器引擎會讓部分位址繞過通道，為避免從這台電腦載入，遠端主機的頁面不會開啟。",
+        "probeFailed": "內建瀏覽器無法確認它能透過通道連到遠端主機。請稍後再試。"
       }
     }
   }

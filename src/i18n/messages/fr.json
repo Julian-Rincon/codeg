@@ -6265,6 +6265,7 @@
       "ownedWindow": "Cette page s'affiche dans sa propre fenêtre.",
       "ownedWindowShow": "Afficher la fenêtre",
       "remoteBanner": "Ouvert via {host}",
+      "remoteBannerDown": "Connexion à {host} perdue. Elle sera rétablie à la prochaine requête.",
       "navigationBlocked": "Navigation bloquée : {host}",
       "navigationBlockedRule": "bloquée par une règle de site",
       "navigationBlockedScheme": "ce type d'adresse ne peut pas s'ouvrir ici",
@@ -6278,7 +6279,17 @@
       "agentGrantLost": "Partage terminé : la page a quitté {origin}",
       "agentGrantLostShare": "Partager aussi {origin}",
       "agentGrantReplaced": "Partage terminé : un autre programme sert maintenant {origin}",
-      "agentGrantReplacedShare": "Partager quand même"
+      "agentGrantReplacedShare": "Partager quand même",
+      "errorRemoteRefused": "Rien n'écoute à cette adresse sur l'hôte distant",
+      "errorRemoteRefusedHint": "{host} a refusé la connexion. Vérifiez que le serveur derrière cette adresse y est lancé.",
+      "errorRemoteUnreachable": "L'hôte distant ne peut pas joindre cette adresse",
+      "errorRemoteUnreachableHint": "Vu depuis {host}, le nom ne se résout pas ou aucune route n'y mène.",
+      "errorRemoteNotAllowed": "Le serveur distant n'ouvre pas cette adresse au navigateur",
+      "errorRemoteNotAllowedHint": "Le codeg-server de {host} ne laisse son tunnel du navigateur joindre que des adresses privées (CODEG_BROWSER_TUNNEL=private).",
+      "errorRemoteTimeout": "L'hôte distant a mis trop de temps à se connecter",
+      "errorRemoteTimeoutHint": "{host} n'a pas obtenu de réponse de cette adresse à temps. Le serveur est peut-être occupé ou derrière un pare-feu.",
+      "errorTunnelDown": "La connexion à l'hôte distant est coupée",
+      "errorTunnelDownHint": "Le tunnel vers {host} ne transporte rien pour l'instant. Réessayez quand il sera de nouveau joignable."
     },
     "tab": {
       "untitled": "Nouvel onglet"
@@ -6304,13 +6315,16 @@
     "remote": {
       "title": "Cette adresse se trouve sur {host}",
       "titleUnnamed": "Cette adresse se trouve sur l'hôte distant",
-      "description": "Elle désigne la machine où tourne cet espace de travail, pas cet ordinateur ; elle ne peut donc pas encore s'ouvrir dans un onglet ici.",
+      "description": "Elle désigne la machine sur laquelle tourne cet espace de travail, pas cet ordinateur.",
       "copyAddress": "Copier l'adresse",
       "copied": "Adresse copiée",
       "tryHost": "Essayer {host}",
       "tryHostHint": "Ouvre {address} dans un onglet de cet ordinateur. Cela fonctionne si la page écoute sur toutes les interfaces réseau et si cet ordinateur peut joindre son port.",
       "openHere": "Ouvrir sur cet ordinateur",
-      "openHereHint": "Ouvre l'adresse dans un onglet de cet ordinateur. Cela fonctionne si cet ordinateur est sur le même réseau."
+      "openHereHint": "Ouvre l'adresse dans un onglet de cet ordinateur. Cela fonctionne si cet ordinateur est sur le même réseau.",
+      "retry": "Réessayer",
+      "connecting": "Connexion via {host}…",
+      "connectingUnnamed": "Connexion via l'hôte distant…"
     },
     "download": {
       "started": "Téléchargement…",
@@ -6485,6 +6499,16 @@
     "inspector": {
       "error": {
         "switchedOff": "Cet onglet a été ouvert alors que l’inspecteur web était désactivé. Activez-le dans les réglages du navigateur, puis rouvrez la page."
+      }
+    },
+    "remote": {
+      "error": {
+        "unavailable": "Ouvrir les adresses de l'hôte distant dans le navigateur intégré nécessite macOS 14 ou une version ultérieure.",
+        "unsupported": "Le codeg-server distant est trop ancien pour relayer le trafic du navigateur. Mettez-le à jour pour ouvrir ses adresses ici.",
+        "disabled": "Le tunnel du navigateur est désactivé sur le codeg-server distant (CODEG_BROWSER_TUNNEL).",
+        "unreachable": "Impossible de joindre le tunnel du navigateur du codeg-server distant ({reason}).",
+        "bypassed": "Le moteur du navigateur de cet ordinateur envoie certaines adresses en dehors du tunnel ; les pages de l'hôte distant restent donc fermées plutôt que d'être chargées depuis cet ordinateur.",
+        "probeFailed": "Le navigateur intégré n'a pas pu confirmer qu'il atteint l'hôte distant par le tunnel. Réessayez dans un instant."
       }
     }
   }

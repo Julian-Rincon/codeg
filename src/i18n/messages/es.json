@@ -6265,6 +6265,7 @@
       "ownedWindow": "Esta página se muestra en su propia ventana.",
       "ownedWindowShow": "Mostrar ventana",
       "remoteBanner": "Abierto a través de {host}",
+      "remoteBannerDown": "Se perdió la conexión con {host}. Se volverá a intentar con la próxima solicitud.",
       "navigationBlocked": "Navegación bloqueada: {host}",
       "navigationBlockedRule": "bloqueada por una regla de sitio",
       "navigationBlockedScheme": "este tipo de dirección no se puede abrir aquí",
@@ -6278,7 +6279,17 @@
       "agentGrantLost": "El acceso terminó: la página salió de {origin}",
       "agentGrantLostShare": "Compartir también {origin}",
       "agentGrantReplaced": "El acceso terminó: ahora otro programa sirve {origin}",
-      "agentGrantReplacedShare": "Compartir de todos modos"
+      "agentGrantReplacedShare": "Compartir de todos modos",
+      "errorRemoteRefused": "Nada está escuchando en esta dirección del host remoto",
+      "errorRemoteRefusedHint": "{host} rechazó la conexión. Comprueba que el servidor de esta dirección esté en marcha allí.",
+      "errorRemoteUnreachable": "El host remoto no puede llegar a esta dirección",
+      "errorRemoteUnreachableHint": "Desde {host}, el nombre no se resuelve o no hay ruta hasta él.",
+      "errorRemoteNotAllowed": "El servidor remoto no abre esta dirección para el navegador",
+      "errorRemoteNotAllowedHint": "El codeg-server de {host} solo deja que su túnel del navegador llegue a direcciones privadas (CODEG_BROWSER_TUNNEL=private).",
+      "errorRemoteTimeout": "El host remoto tardó demasiado en conectar",
+      "errorRemoteTimeoutHint": "{host} no obtuvo respuesta de esta dirección a tiempo. Puede que el servidor esté ocupado o detrás de un cortafuegos.",
+      "errorTunnelDown": "La conexión con el host remoto está caída",
+      "errorTunnelDownHint": "El túnel hacia {host} no transporta nada ahora mismo. Reinténtalo cuando vuelva a estar accesible."
     },
     "tab": {
       "untitled": "Nueva pestaña"
@@ -6304,13 +6315,16 @@
     "remote": {
       "title": "Esta dirección está en {host}",
       "titleUnnamed": "Esta dirección está en el host remoto",
-      "description": "Apunta a la máquina donde se ejecuta este espacio de trabajo, no a este equipo, así que todavía no se puede abrir en una pestaña aquí.",
+      "description": "Apunta a la máquina donde se ejecuta este espacio de trabajo, no a este equipo.",
       "copyAddress": "Copiar dirección",
       "copied": "Dirección copiada",
       "tryHost": "Probar {host}",
       "tryHostHint": "Abre {address} en una pestaña de este equipo. Funciona si la página escucha en todas las interfaces de red y este equipo llega a su puerto.",
       "openHere": "Abrir en este equipo",
-      "openHereHint": "Abre la dirección en una pestaña de este equipo. Funciona si este equipo está en la misma red."
+      "openHereHint": "Abre la dirección en una pestaña de este equipo. Funciona si este equipo está en la misma red.",
+      "retry": "Reintentar",
+      "connecting": "Conectando a través de {host}…",
+      "connectingUnnamed": "Conectando a través del host remoto…"
     },
     "download": {
       "started": "Descargando…",
@@ -6485,6 +6499,16 @@
     "inspector": {
       "error": {
         "switchedOff": "Esta pestaña se abrió con el inspector web desactivado. Actívalo en la configuración del navegador y vuelve a abrir la página."
+      }
+    },
+    "remote": {
+      "error": {
+        "unavailable": "Para abrir las direcciones del host remoto en el navegador integrado se necesita macOS 14 o posterior.",
+        "unsupported": "El codeg-server remoto es demasiado antiguo para transportar el tráfico del navegador. Actualízalo para abrir sus direcciones aquí.",
+        "disabled": "El codeg-server remoto tiene desactivado su túnel del navegador (CODEG_BROWSER_TUNNEL).",
+        "unreachable": "No se pudo conectar con el túnel del navegador del codeg-server remoto ({reason}).",
+        "bypassed": "El motor del navegador de este equipo envía algunas direcciones por fuera del túnel, así que las páginas del host remoto no se abren para no cargarlas desde este equipo.",
+        "probeFailed": "El navegador integrado no pudo confirmar que llega al host remoto a través del túnel. Vuelve a intentarlo en un momento."
       }
     }
   }

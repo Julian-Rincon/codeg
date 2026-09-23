@@ -6265,6 +6265,7 @@
       "ownedWindow": "このページは別ウィンドウに表示されています。",
       "ownedWindowShow": "ウィンドウを表示",
       "remoteBanner": "{host} 経由で開いています",
+      "remoteBannerDown": "{host} との接続が切れました。次のリクエストで再接続します。",
       "navigationBlocked": "移動をブロックしました: {host}",
       "navigationBlockedRule": "サイトルールによりブロック",
       "navigationBlockedScheme": "この種類のアドレスはここでは開けません",
@@ -6278,7 +6279,17 @@
       "agentGrantLost": "共有を終了しました：ページが {origin} を離れました",
       "agentGrantLostShare": "{origin} も共有",
       "agentGrantReplaced": "共有を終了しました：現在 {origin} には別のプログラムが応答しています",
-      "agentGrantReplacedShare": "それでも共有"
+      "agentGrantReplacedShare": "それでも共有",
+      "errorRemoteRefused": "リモートホストのこのアドレスで待ち受けているものはありません",
+      "errorRemoteRefusedHint": "{host} が接続を拒否しました。このアドレスのサーバーがそのマシンで動いているか確認してください。",
+      "errorRemoteUnreachable": "リモートホストからこのアドレスに到達できません",
+      "errorRemoteUnreachableHint": "{host} から見て、この名前は解決できないか、そこへの経路がありません。",
+      "errorRemoteNotAllowed": "リモートサーバーはこのアドレスをブラウザーに開放していません",
+      "errorRemoteNotAllowedHint": "{host} の codeg-server は、ブラウザートンネルからプライベートアドレスへの接続だけを許可しています（CODEG_BROWSER_TUNNEL=private）。",
+      "errorRemoteTimeout": "リモートホストの接続がタイムアウトしました",
+      "errorRemoteTimeoutHint": "{host} はこのアドレスから時間内に応答を得られませんでした。そちらのサーバーが混んでいるか、ファイアウォールの内側にある可能性があります。",
+      "errorTunnelDown": "リモートホストとの接続が切れています",
+      "errorTunnelDownHint": "{host} へのトンネルは現在何も運べません。再び到達できるようになったら再試行してください。"
     },
     "tab": {
       "untitled": "新しいタブ"
@@ -6304,13 +6315,16 @@
     "remote": {
       "title": "このアドレスは {host} 上にあります",
       "titleUnnamed": "このアドレスはリモートホスト上にあります",
-      "description": "このコンピューターではなく、このワークスペースが動いているマシンを指しているため、まだここのタブでは開けません。",
+      "description": "このアドレスはこのワークスペースが動いているマシンを指しており、このコンピューターではありません。",
       "copyAddress": "アドレスをコピー",
       "copied": "アドレスをコピーしました",
       "tryHost": "{host} を試す",
       "tryHostHint": "{address} をこのコンピューターのタブで開きます。向こうのページがすべてのネットワークインターフェースで待ち受けていて、このコンピューターからそのポートに届く場合に使えます。",
       "openHere": "このコンピューターで開く",
-      "openHereHint": "このアドレスをこのコンピューターのタブで開きます。このコンピューターが同じネットワークにある場合に使えます。"
+      "openHereHint": "このアドレスをこのコンピューターのタブで開きます。このコンピューターが同じネットワークにある場合に使えます。",
+      "retry": "再試行",
+      "connecting": "{host} 経由で接続しています…",
+      "connectingUnnamed": "リモートホスト経由で接続しています…"
     },
     "download": {
       "started": "ダウンロード中…",
@@ -6485,6 +6499,16 @@
     "inspector": {
       "error": {
         "switchedOff": "このタブは Web インスペクタがオフの状態で開かれました。ブラウザ設定でオンにしてから、ページを開き直してください。"
+      }
+    },
+    "remote": {
+      "error": {
+        "unavailable": "リモートホストのアドレスを内蔵ブラウザで開くには macOS 14 以降が必要です。",
+        "unsupported": "リモートの codeg-server が古く、ブラウザーの通信を中継できません。ここでアドレスを開くには更新してください。",
+        "disabled": "リモートの codeg-server でブラウザートンネルがオフになっています（CODEG_BROWSER_TUNNEL）。",
+        "unreachable": "リモートの codeg-server のブラウザートンネルに接続できませんでした（{reason}）。",
+        "bypassed": "このコンピューターのブラウザーエンジンは一部のアドレスをトンネルを通さずに送るため、このコンピューターから読み込まないよう、リモートホストのページは開きません。",
+        "probeFailed": "内蔵ブラウザーがトンネル経由でリモートホストに届くことを確認できませんでした。しばらくしてからもう一度お試しください。"
       }
     }
   }

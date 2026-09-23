@@ -6265,6 +6265,7 @@
       "ownedWindow": "This page is shown in its own window.",
       "ownedWindowShow": "Show window",
       "remoteBanner": "Opened through {host}",
+      "remoteBannerDown": "Lost the connection to {host}. It is tried again on the next request.",
       "navigationBlocked": "Navigation blocked: {host}",
       "navigationBlockedRule": "blocked by a site rule",
       "navigationBlockedScheme": "address type not allowed here",
@@ -6278,7 +6279,17 @@
       "agentGrantLost": "Sharing ended: the page left {origin}",
       "agentGrantLostShare": "Share {origin} too",
       "agentGrantReplaced": "Sharing ended: a different program is serving {origin} now",
-      "agentGrantReplacedShare": "Share it anyway"
+      "agentGrantReplacedShare": "Share it anyway",
+      "errorRemoteRefused": "Nothing is listening at this address on the remote host",
+      "errorRemoteRefusedHint": "{host} refused the connection. Check that the server behind this address is running there.",
+      "errorRemoteUnreachable": "The remote host can't reach this address",
+      "errorRemoteUnreachableHint": "Seen from {host}, the name doesn't resolve or there is no route to it.",
+      "errorRemoteNotAllowed": "The remote server doesn't open this address for the browser",
+      "errorRemoteNotAllowedHint": "The codeg-server on {host} only lets its browser tunnel reach private addresses (CODEG_BROWSER_TUNNEL=private).",
+      "errorRemoteTimeout": "The remote host took too long to connect",
+      "errorRemoteTimeoutHint": "{host} got no answer from this address in time. The server there may be busy or behind a firewall.",
+      "errorTunnelDown": "The connection to the remote host is down",
+      "errorTunnelDownHint": "The tunnel to {host} isn't carrying anything right now. Retry once it's reachable again."
     },
     "tab": {
       "untitled": "New tab"
@@ -6304,13 +6315,16 @@
     "remote": {
       "title": "This address is on {host}",
       "titleUnnamed": "This address is on the remote host",
-      "description": "It points at the machine this workspace runs on, not at this computer, so it can't be opened in a tab here yet.",
+      "description": "It points at the machine this workspace runs on, not at this computer.",
       "copyAddress": "Copy address",
       "copied": "Address copied",
       "tryHost": "Try {host}",
       "tryHostHint": "Opens {address} in a tab on this computer. It works if the page there listens on every network interface and this computer can reach its port.",
       "openHere": "Open on this computer",
-      "openHereHint": "Opens the address in a tab on this computer. It works if this computer is on the same network."
+      "openHereHint": "Opens the address in a tab on this computer. It works if this computer is on the same network.",
+      "retry": "Try again",
+      "connecting": "Connecting through {host}…",
+      "connectingUnnamed": "Connecting through the remote host…"
     },
     "download": {
       "started": "Downloading…",
@@ -6485,6 +6499,16 @@
     "inspector": {
       "error": {
         "switchedOff": "This tab was opened with the web inspector switched off. Turn it on in the browser settings, then open the page again."
+      }
+    },
+    "remote": {
+      "error": {
+        "unavailable": "Opening the remote host's addresses in the built-in browser needs macOS 14 or later.",
+        "unsupported": "The remote codeg-server is too old to carry browser traffic. Update it to open its addresses here.",
+        "disabled": "The remote codeg-server has its browser tunnel switched off (CODEG_BROWSER_TUNNEL).",
+        "unreachable": "Couldn't reach the remote codeg-server's browser tunnel ({reason}).",
+        "bypassed": "This computer's browser engine sends some addresses around the tunnel, so the remote host's pages stay closed rather than load from this computer.",
+        "probeFailed": "The built-in browser couldn't confirm that it reaches the remote host through the tunnel. Try again in a moment."
       }
     }
   }
