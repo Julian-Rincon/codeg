@@ -6449,6 +6449,7 @@
       "noConversation": "先打开一个对话，才能把页面发过去",
       "pickElement": "选择一个元素…",
       "screenshot": "发送一张截图",
+      "markUp": "标注一张截图…",
       "consoleErrors": "发送控制台报错",
       "consoleClean": "这个页面没有出错",
       "picking": "选择中…",
@@ -6459,9 +6460,20 @@
       "noConsoleErrors": "这个页面没有打印过报错",
       "chipElement": "页面元素",
       "chipScreenshot": "页面截图",
+      "chipMarkedScreenshot": "带标注的截图",
       "chipConsole": "{count, plural, other {# 条控制台报错}}",
       "gone": "那个对话已经关掉了",
-      "consoleErrorsCount": "{count, plural, other {发送 # 条控制台报错}}"
+      "consoleErrorsCount": "{count, plural, other {发送 # 条控制台报错}}",
+      "markupTitle": "标注截图",
+      "markupTools": "绘制工具",
+      "markupBox": "方框",
+      "markupArrow": "箭头",
+      "markupUndo": "撤销",
+      "markupClear": "清除",
+      "markupHint": "在图上拖动来画。每个标注都带编号，消息里可以直接用编号指代。",
+      "markupCount": "{count, plural, other {# 个标注}}",
+      "markupCancel": "取消",
+      "markupSend": "加入对话"
     }
   },
   "browser": {

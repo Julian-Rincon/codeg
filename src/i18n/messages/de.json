@@ -6449,6 +6449,7 @@
       "noConversation": "Öffne eine Unterhaltung, an die die Seite gehen soll",
       "pickElement": "Ein Element auswählen…",
       "screenshot": "Einen Screenshot senden",
+      "markUp": "Screenshot markieren…",
       "consoleErrors": "Die Konsolenfehler senden",
       "consoleClean": "Auf dieser Seite ist nichts schiefgegangen",
       "picking": "Auswahl läuft…",
@@ -6459,9 +6460,20 @@
       "noConsoleErrors": "Diese Seite hat keine Fehler ausgegeben",
       "chipElement": "Seitenelement",
       "chipScreenshot": "Screenshot der Seite",
+      "chipMarkedScreenshot": "Markierter Screenshot",
       "chipConsole": "{count, plural, one {# Konsolenfehler} other {# Konsolenfehler}}",
       "gone": "Diese Unterhaltung ist nicht mehr offen",
-      "consoleErrorsCount": "{count, plural, one {# Konsolenfehler senden} other {# Konsolenfehler senden}}"
+      "consoleErrorsCount": "{count, plural, one {# Konsolenfehler senden} other {# Konsolenfehler senden}}",
+      "markupTitle": "Screenshot markieren",
+      "markupTools": "Zeichenwerkzeug",
+      "markupBox": "Rahmen",
+      "markupArrow": "Pfeil",
+      "markupUndo": "Rückgängig",
+      "markupClear": "Leeren",
+      "markupHint": "Zieh über das Bild, um zu zeichnen. Jede Markierung bekommt eine Nummer, auf die sich deine Nachricht beziehen kann.",
+      "markupCount": "{count, plural, one {# Markierung} other {# Markierungen}}",
+      "markupCancel": "Abbrechen",
+      "markupSend": "Zum Chat hinzufügen"
     }
   },
   "browser": {

@@ -6449,6 +6449,7 @@
       "noConversation": "Open a conversation to send this page to",
       "pickElement": "Pick an element…",
       "screenshot": "Send a screenshot",
+      "markUp": "Mark up a screenshot…",
       "consoleErrors": "Send the console errors",
       "consoleClean": "Nothing has gone wrong on this page",
       "picking": "Picking…",
@@ -6459,9 +6460,20 @@
       "noConsoleErrors": "This page has printed no errors",
       "chipElement": "Page element",
       "chipScreenshot": "Page screenshot",
+      "chipMarkedScreenshot": "Marked-up screenshot",
       "chipConsole": "{count, plural, one {# console error} other {# console errors}}",
       "gone": "That conversation is no longer open",
-      "consoleErrorsCount": "{count, plural, one {Send the # console error} other {Send the # console errors}}"
+      "consoleErrorsCount": "{count, plural, one {Send the # console error} other {Send the # console errors}}",
+      "markupTitle": "Mark up the screenshot",
+      "markupTools": "Drawing tool",
+      "markupBox": "Box",
+      "markupArrow": "Arrow",
+      "markupUndo": "Undo",
+      "markupClear": "Clear",
+      "markupHint": "Drag across the picture to draw. Each mark gets a number your message can refer to.",
+      "markupCount": "{count, plural, one {# mark} other {# marks}}",
+      "markupCancel": "Cancel",
+      "markupSend": "Add to chat"
     }
   },
   "browser": {

@@ -6449,6 +6449,7 @@
       "noConversation": "افتح محادثة لإرسال هذه الصفحة إليها",
       "pickElement": "اختر عنصرًا…",
       "screenshot": "أرسل لقطة شاشة",
+      "markUp": "علّم على لقطة شاشة…",
       "consoleErrors": "أرسل أخطاء وحدة التحكم",
       "consoleClean": "لم يحدث خطأ في هذه الصفحة",
       "picking": "جارٍ الاختيار…",
@@ -6459,9 +6460,20 @@
       "noConsoleErrors": "لم تطبع هذه الصفحة أي أخطاء",
       "chipElement": "عنصر من الصفحة",
       "chipScreenshot": "لقطة من الصفحة",
+      "chipMarkedScreenshot": "لقطة شاشة عليها علامات",
       "chipConsole": "{count, plural, zero {لا أخطاء في وحدة التحكم} one {خطأ واحد في وحدة التحكم} two {خطآن في وحدة التحكم} few {# أخطاء في وحدة التحكم} many {# خطأ في وحدة التحكم} other {# خطأ في وحدة التحكم}}",
       "gone": "تلك المحادثة لم تعد مفتوحة",
-      "consoleErrorsCount": "{count, plural, zero {لا أخطاء لإرسالها} one {أرسل خطأ وحدة التحكم} two {أرسل خطأي وحدة التحكم} few {أرسل # أخطاء في وحدة التحكم} many {أرسل # خطأ في وحدة التحكم} other {أرسل # خطأ في وحدة التحكم}}"
+      "consoleErrorsCount": "{count, plural, zero {لا أخطاء لإرسالها} one {أرسل خطأ وحدة التحكم} two {أرسل خطأي وحدة التحكم} few {أرسل # أخطاء في وحدة التحكم} many {أرسل # خطأ في وحدة التحكم} other {أرسل # خطأ في وحدة التحكم}}",
+      "markupTitle": "التعليم على لقطة الشاشة",
+      "markupTools": "أداة الرسم",
+      "markupBox": "مربع",
+      "markupArrow": "سهم",
+      "markupUndo": "تراجع",
+      "markupClear": "مسح",
+      "markupHint": "اسحب على الصورة لترسم. تحمل كل علامة رقمًا يمكن لرسالتك أن تشير إليه.",
+      "markupCount": "{count, plural, zero {لا علامات} one {علامة واحدة} two {علامتان} few {# علامات} many {# علامة} other {# علامة}}",
+      "markupCancel": "إلغاء",
+      "markupSend": "أضف إلى المحادثة"
     }
   },
   "browser": {

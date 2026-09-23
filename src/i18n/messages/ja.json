@@ -6449,6 +6449,7 @@
       "noConversation": "送り先の会話を開いてください",
       "pickElement": "要素を選ぶ…",
       "screenshot": "スクリーンショットを送る",
+      "markUp": "スクリーンショットに書き込む…",
       "consoleErrors": "コンソールのエラーを送る",
       "consoleClean": "このページでエラーは起きていません",
       "picking": "選択中…",
@@ -6459,9 +6460,20 @@
       "noConsoleErrors": "このページはエラーを出力していません",
       "chipElement": "ページ要素",
       "chipScreenshot": "ページのスクリーンショット",
+      "chipMarkedScreenshot": "書き込み入りのスクリーンショット",
       "chipConsole": "{count, plural, other {コンソールエラー # 件}}",
       "gone": "その会話はもう開いていません",
-      "consoleErrorsCount": "{count, plural, other {コンソールのエラー # 件を送る}}"
+      "consoleErrorsCount": "{count, plural, other {コンソールのエラー # 件を送る}}",
+      "markupTitle": "スクリーンショットに書き込む",
+      "markupTools": "描画ツール",
+      "markupBox": "枠",
+      "markupArrow": "矢印",
+      "markupUndo": "元に戻す",
+      "markupClear": "消去",
+      "markupHint": "画像の上をドラッグして描きます。マークには番号が付くので、メッセージではその番号で指し示せます。",
+      "markupCount": "{count, plural, other {マーク # 個}}",
+      "markupCancel": "キャンセル",
+      "markupSend": "チャットに追加"
     }
   },
   "browser": {

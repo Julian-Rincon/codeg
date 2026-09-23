@@ -6449,6 +6449,7 @@
       "noConversation": "보낼 대화를 먼저 열어 주세요",
       "pickElement": "요소 선택…",
       "screenshot": "스크린샷 보내기",
+      "markUp": "스크린샷에 표시하기…",
       "consoleErrors": "콘솔 오류 보내기",
       "consoleClean": "이 페이지에서 문제가 없었습니다",
       "picking": "선택 중…",
@@ -6459,9 +6460,20 @@
       "noConsoleErrors": "이 페이지는 오류를 출력하지 않았습니다",
       "chipElement": "페이지 요소",
       "chipScreenshot": "페이지 스크린샷",
+      "chipMarkedScreenshot": "표시한 스크린샷",
       "chipConsole": "{count, plural, other {콘솔 오류 #건}}",
       "gone": "그 대화는 이미 닫혔습니다",
-      "consoleErrorsCount": "{count, plural, other {콘솔 오류 #건 보내기}}"
+      "consoleErrorsCount": "{count, plural, other {콘솔 오류 #건 보내기}}",
+      "markupTitle": "스크린샷에 표시하기",
+      "markupTools": "그리기 도구",
+      "markupBox": "상자",
+      "markupArrow": "화살표",
+      "markupUndo": "실행 취소",
+      "markupClear": "지우기",
+      "markupHint": "그림 위를 드래그해서 그리세요. 표시마다 번호가 붙어서 메시지에서 번호로 가리킬 수 있습니다.",
+      "markupCount": "{count, plural, other {표시 #개}}",
+      "markupCancel": "취소",
+      "markupSend": "대화에 추가"
     }
   },
   "browser": {

@@ -6449,6 +6449,7 @@
       "noConversation": "Abre uma conversa para onde enviar esta página",
       "pickElement": "Escolher um elemento…",
       "screenshot": "Enviar uma captura",
+      "markUp": "Marcar uma captura…",
       "consoleErrors": "Enviar os erros da consola",
       "consoleClean": "Nada correu mal nesta página",
       "picking": "A escolher…",
@@ -6459,9 +6460,20 @@
       "noConsoleErrors": "Esta página não imprimiu nenhum erro",
       "chipElement": "Elemento da página",
       "chipScreenshot": "Captura da página",
+      "chipMarkedScreenshot": "Captura marcada",
       "chipConsole": "{count, plural, one {# erro de consola} other {# erros de consola}}",
       "gone": "Essa conversa já não está aberta",
-      "consoleErrorsCount": "{count, plural, one {Enviar o # erro de consola} other {Enviar os # erros de consola}}"
+      "consoleErrorsCount": "{count, plural, one {Enviar o # erro de consola} other {Enviar os # erros de consola}}",
+      "markupTitle": "Marcar a captura",
+      "markupTools": "Ferramenta de desenho",
+      "markupBox": "Caixa",
+      "markupArrow": "Seta",
+      "markupUndo": "Desfazer",
+      "markupClear": "Limpar",
+      "markupHint": "Arraste sobre a imagem para desenhar. Cada marca recebe um número a que a sua mensagem pode fazer referência.",
+      "markupCount": "{count, plural, one {# marca} other {# marcas}}",
+      "markupCancel": "Cancelar",
+      "markupSend": "Adicionar à conversa"
     }
   },
   "browser": {
