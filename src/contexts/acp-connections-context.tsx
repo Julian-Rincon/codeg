@@ -128,6 +128,7 @@ import {
 } from "@/lib/selector-prefs-storage"
 import { rememberModelLabels } from "@/lib/model-label-store"
 import { useActiveFolder } from "@/contexts/active-folder-context"
+import { PHANTOM_UI_NAME } from "@/lib/phantom-ui"
 
 /**
  * A session id we are willing to interpolate into a shell command we hand the
@@ -1721,7 +1722,7 @@ function connectionsReducer(
       // races the snapshot fetch against new content_delta events: the
       // deltas advance lastAppliedSeq past the snapshot's event_seq, the
       // outer guard rejects the patch, and `selectorsReady` never recovers
-      // — leaving the bottom status bar stuck on "正在初始化 xxx 会话".
+      // — leaving the bottom status bar stuck on "Initializing xxx session".
       const mergedSelectorsReady =
         action.patch.selectorsReady || current.selectorsReady
       const mergedSupportsFork =
@@ -2208,7 +2209,7 @@ function connectionsReducer(
           newTotalBytes =
             block.info.raw_output_total_bytes + action.raw_output.length
 
-          // 超限时从头部批量移除 chunks（单次 slice 替代循环 shift）
+          // When over the limit, evict chunks from the head in bulk (a single slice instead of looping shift)
           if (
             newTotalBytes > MAX_LIVE_TOOL_RAW_OUTPUT_CHARS &&
             newChunks.length > 1
@@ -2228,7 +2229,7 @@ function connectionsReducer(
             }
           }
         } else {
-          // 非 append 模式（替换）
+          // Non-append mode (replace)
           newChunks = [action.raw_output]
           newTotalBytes = action.raw_output.length
         }
@@ -4664,7 +4665,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
             if (nc) {
               const fn = folderNameRef.current
               void notifyDesktop("question_request", {
-                title: fn ? `${fn} - Codeg` : "Codeg",
+                title: fn ? `${fn} - ${PHANTOM_UI_NAME}` : PHANTOM_UI_NAME,
                 body: t("notificationQuestion", {
                   agent: getAgentLabel(nc.agentType),
                 }),
@@ -4771,7 +4772,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
               const nc = storeRef.current.connections.get(contextKey)
               const agentLabel = nc ? getAgentLabel(nc.agentType) : "Agent"
               const fn = folderNameRef.current
-              const title = fn ? `${fn} - Codeg` : "Codeg"
+              const title = fn ? `${fn} - ${PHANTOM_UI_NAME}` : PHANTOM_UI_NAME
               const count = e.settled.length
               const many = tChat("backgroundTasks.notifySettledMany", {
                 agent: agentLabel,
@@ -4851,7 +4852,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
             if (nc) {
               const agentLabel = getAgentLabel(nc.agentType)
               const fn = folderNameRef.current
-              const title = fn ? `${fn} - Codeg` : "Codeg"
+              const title = fn ? `${fn} - ${PHANTOM_UI_NAME}` : PHANTOM_UI_NAME
               // No redacted variant: the body is a fixed localized string
               // plus the agent's name, and names nothing of the user's.
               void notifyDesktop("permission_request", {
@@ -5241,7 +5242,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
             if (nc) {
               const agentLabel = getAgentLabel(nc.agentType)
               const fn = folderNameRef.current
-              const title = fn ? `${fn} - Codeg` : "Codeg"
+              const title = fn ? `${fn} - ${PHANTOM_UI_NAME}` : PHANTOM_UI_NAME
               const failure = latestActiveTerminalFailure(nc.sessionFailures)
               if (failure) {
                 void notifyDesktop("error", {
@@ -5301,7 +5302,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           // redacted variant drops.
           if (nc && !quiet && acpErrorNotifiesDesktop(route)) {
             const fn = folderNameRef.current
-            const title = fn ? `${fn} - Codeg` : "Codeg"
+            const title = fn ? `${fn} - ${PHANTOM_UI_NAME}` : PHANTOM_UI_NAME
             void notifyDesktop("error", {
               title,
               body: t("notificationError", {
@@ -5496,7 +5497,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
   // snapshot attach path) are never replayed. Without this, a web/server client
   // that cold-attaches, re-attaches after a broadcast lag, or refreshes
   // mid-delegation never establishes the live binding: the card shows a
-  // premature "completed" and no "查看会话" until the child finally finishes.
+  // premature "completed" and no "View session" until the child finally finishes.
   // We synthesize the same envelopes the broker emits live and fan them ONLY to
   // the JS event subscribers (DelegationProvider), bypassing applyMappedEnvelope
   // so we neither run the store reducer (which has no case for these) nor touch
@@ -5629,7 +5630,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           lastActivityRef.current.set(contextKey, Date.now())
           // Recover delegation bindings the snapshot carries but the transient
           // events don't (the load-bearing fix for the web-only "running shows
-          // completed / no 查看会话" bug). Uses the snapshot's own connection_id
+          // completed / no View session" bug). Uses the snapshot's own connection_id
           // as the parent id.
           seedDelegationsFromSnapshot(
             patch.connectionId,
@@ -7398,7 +7399,7 @@ export function AcpConnectionsProvider({ children }: { children: ReactNode }) {
           // never replayed, so a viewer opening onto a turn that ALREADY
           // delegated (the work-task transcript dialog is the case) would
           // otherwise establish no binding — no agent icon/label, no child
-          // sub-stream, no "待批准" badge on the sub-agent card. Idempotent
+          // sub-stream, no "awaiting approval" badge on the sub-agent card. Idempotent
           // against any live event for the same `parent_tool_use_id`.
           seedDelegationsFromSnapshot(
             patch.connectionId,

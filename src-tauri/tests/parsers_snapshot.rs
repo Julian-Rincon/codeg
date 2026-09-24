@@ -13,6 +13,7 @@
 use std::fs;
 use std::path::Path;
 
+use codeg_lib::models::{ContentBlock, TurnRole};
 use codeg_lib::parsers::{
     claude::ClaudeParser, cline::ClineParser, codex::CodexParser, gemini::GeminiParser,
     hermes::HermesParser, kimi_code::KimiCodeParser, openclaw::OpenClawParser,
@@ -1151,6 +1152,352 @@ fn opencode_placeholder_titles_fall_back_to_the_opening_message() {
         .get_conversation("oc-placeholder")
         .expect("get conversation");
     assert_eq!(detail.summary.title.as_deref(), Some("执行一下 pnpm build"));
+}
+
+/// OpenCode 2.x persists one JSON envelope per row in `session_message` and
+/// keeps the session hierarchy in `session_v2`. These payloads mirror the
+/// 2.0.16 shapes (including `content[].state.content` and the terminal `idle`
+/// row), with all values deliberately synthetic so the fixture contains no
+/// transcript or credential material.
+#[test]
+fn opencode_v2_sessions_and_messages_are_read_without_legacy_tables() {
+    use sea_orm::{ConnectionTrait, Database, DatabaseBackend, Statement};
+
+    let temp = tempfile::tempdir().expect("create tempdir");
+    let base = temp.path().to_path_buf();
+    let db_path = base.join("opencode.db");
+    let root_id = "oc-v2-root";
+    let child_id = "oc-v2-child";
+    let t0: i64 = 1_772_020_800_000;
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .expect("build tokio runtime");
+    rt.block_on(async {
+        let conn = Database::connect(format!("sqlite:{}?mode=rwc", db_path.display()))
+            .await
+            .expect("open sqlite");
+
+        for ddl in [
+            "CREATE TABLE session_v2 (id TEXT PRIMARY KEY, directory TEXT NOT NULL, \
+             parent_id TEXT, title TEXT, version TEXT NOT NULL, model TEXT, \
+             time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL)",
+            "CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, \
+             type TEXT NOT NULL, seq INTEGER NOT NULL, time_created INTEGER NOT NULL, \
+             time_updated INTEGER NOT NULL, data TEXT NOT NULL)",
+        ] {
+            conn.execute(Statement::from_string(DatabaseBackend::Sqlite, ddl))
+                .await
+                .expect("create V2 table");
+        }
+
+        for (id, parent, title, created, model) in [
+            (
+                root_id,
+                None,
+                "New session - 2026-03-01T10:00:00.000Z",
+                t0,
+                "{\"id\":\"fixture-model\",\"providerID\":\"fixture\"}",
+            ),
+            (
+                child_id,
+                Some(root_id),
+                "Child fixture",
+                t0 + 10_000,
+                "{\"id\":\"fixture-model\",\"providerID\":\"fixture\"}",
+            ),
+        ] {
+            conn.execute(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "INSERT INTO session_v2 (id, directory, parent_id, title, version, model, \
+                 time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
+                [
+                    id.into(),
+                    "/tmp/opencode-v2-demo".into(),
+                    parent.into(),
+                    title.into(),
+                    "2.0.16".into(),
+                    model.into(),
+                    created.into(),
+                    (created + 1_000).into(),
+                ],
+            ))
+            .await
+            .expect("insert V2 session");
+        }
+
+        let root_messages = vec![
+            (
+                "v2-user",
+                "user",
+                1_i64,
+                json!({
+                    "text": "hello from v2",
+                    "files": [],
+                    "agents": [],
+                    "time": { "created": t0 + 100 }
+                }),
+            ),
+            (
+                "v2-assistant",
+                "assistant",
+                2,
+                json!({
+                    "agent": "build",
+                    "model": { "id": "fixture-model", "providerID": "fixture", "variant": "default" },
+                    "content": [
+                        { "type": "reasoning", "text": "inspect the fixture", "state": { "reasoningField": "text" } },
+                        { "type": "text", "text": "working" },
+                        {
+                            "type": "tool",
+                            "id": "v2-edit-call",
+                            "name": "edit",
+                            "executed": true,
+                            "state": {
+                                "status": "completed",
+                                "input": { "path": "src/a.txt", "oldString": "a", "newString": "b" },
+                                "content": [{ "type": "text", "text": "edited" }],
+                                "metadata": { "truncated": false }
+                            },
+                            "time": { "created": t0 + 200, "ran": t0 + 210, "completed": t0 + 220 }
+                        }
+                    ],
+                    "tokens": { "input": 12, "output": 4, "reasoning": 2, "cache": { "read": 0, "write": 0 } },
+                    "time": { "created": t0 + 200, "completed": t0 + 300 }
+                }),
+            ),
+            (
+                "v2-synthetic",
+                "synthetic",
+                4,
+                json!({
+                    "text": "a large model-facing instruction",
+                    "description": "Plan mode enabled",
+                    "metadata": { "notice": "mode" },
+                    "time": { "created": t0 + 400 }
+                }),
+            ),
+            (
+                "v2-compaction",
+                "compaction",
+                5,
+                json!({
+                    "status": "completed",
+                    "reason": "auto",
+                    "summary": "synthetic summary",
+                    "recent": "synthetic recent context",
+                    "model": { "id": "fixture-model", "providerID": "fixture" },
+                    "tokens": { "input": 1, "output": 1, "reasoning": 0, "cache": { "read": 0, "write": 0 } },
+                    "time": { "created": t0 + 500 }
+                }),
+            ),
+            (
+                "v2-assistant-after-compaction",
+                "assistant",
+                6,
+                json!({
+                    "agent": "build",
+                    "model": { "id": "fixture-model", "providerID": "fixture" },
+                    "content": [{ "type": "text", "text": "after compaction" }],
+                    "time": { "created": t0 + 600 }
+                }),
+            ),
+            (
+                "v2-idle",
+                "idle",
+                7,
+                json!({ "outcome": "succeeded", "time": { "created": t0 + 800 } }),
+            ),
+        ];
+        for (id, row_type, seq, data) in root_messages {
+            conn.execute(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [
+                    id.into(),
+                    root_id.into(),
+                    row_type.into(),
+                    seq.into(),
+                    (t0 + seq * 100).into(),
+                    (t0 + seq * 100 + 50).into(),
+                    data.to_string().into(),
+                ],
+            ))
+            .await
+            .expect("insert V2 root message");
+        }
+
+        // A genuinely malformed JSON payload must be isolated rather than
+        // poisoning the complete session read.
+        conn.execute(Statement::from_sql_and_values(
+            DatabaseBackend::Sqlite,
+            "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) \
+             VALUES (?, ?, ?, ?, ?, ?, ?)",
+            [
+                "v2-malformed".into(),
+                root_id.into(),
+                "assistant".into(),
+                3_i64.into(),
+                (t0 + 300).into(),
+                (t0 + 350).into(),
+                "{not-json".into(),
+            ],
+        ))
+        .await
+        .expect("insert malformed V2 row");
+
+        for (id, row_type, seq, data) in [
+            (
+                "v2-child-user",
+                "user",
+                1_i64,
+                json!({ "text": "child prompt", "time": { "created": t0 + 10_100 } }),
+            ),
+            (
+                "v2-child-assistant",
+                "assistant",
+                2,
+                json!({
+                    "agent": "explore",
+                    "model": { "id": "fixture-model", "providerID": "fixture" },
+                    "content": [{
+                        "type": "tool",
+                        "id": "v2-subagent-call",
+                        "name": "subagent",
+                        "executed": true,
+                        "state": {
+                            "status": "completed",
+                            "input": { "agent": "explore", "description": "inspect", "prompt": "look around" },
+                            "content": [{ "type": "text", "text": "child result" }],
+                            "metadata": { "sessionID": "oc-v2-child", "status": "completed", "truncated": false }
+                        },
+                        "time": { "created": t0 + 10_200, "completed": t0 + 10_300 }
+                    }],
+                    "time": { "created": t0 + 10_200, "completed": t0 + 10_300 }
+                }),
+            ),
+            (
+                "v2-child-idle",
+                "idle",
+                3,
+                json!({ "outcome": "succeeded", "time": { "created": t0 + 10_400 } }),
+            ),
+        ] {
+            conn.execute(Statement::from_sql_and_values(
+                DatabaseBackend::Sqlite,
+                "INSERT INTO session_message (id, session_id, type, seq, time_created, time_updated, data) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [
+                    id.into(),
+                    child_id.into(),
+                    row_type.into(),
+                    seq.into(),
+                    (t0 + 10_000 + seq * 100).into(),
+                    (t0 + 10_000 + seq * 100 + 50).into(),
+                    data.to_string().into(),
+                ],
+            ))
+            .await
+            .expect("insert V2 child message");
+        }
+    });
+
+    let parser = OpenCodeParser::with_base_dir(base);
+    let summaries = parser.list_conversations().expect("list V2 conversations");
+    let root_summary = summaries
+        .iter()
+        .find(|summary| summary.id == root_id)
+        .expect("root summary");
+    let child_summary = summaries
+        .iter()
+        .find(|summary| summary.id == child_id)
+        .expect("child summary");
+    assert_eq!(root_summary.parent_id, None);
+    assert_eq!(child_summary.parent_id.as_deref(), Some(root_id));
+    assert_eq!(root_summary.title.as_deref(), Some("hello from v2"));
+    assert_eq!(root_summary.model.as_deref(), Some("fixture-model"));
+    assert_eq!(root_summary.message_count, 7);
+    assert_eq!(child_summary.message_count, 3);
+
+    let detail = parser
+        .get_conversation(root_id)
+        .expect("get V2 root detail");
+    assert_eq!(detail.summary.id, root_id);
+    assert_eq!(
+        detail
+            .turns
+            .iter()
+            .filter(|turn| matches!(turn.role, TurnRole::Assistant))
+            .count(),
+        3
+    );
+    assert!(detail
+        .turns
+        .iter()
+        .any(|turn| matches!(&turn.role, TurnRole::System)
+            && matches!(&turn.blocks[0], ContentBlock::Text { text } if text == "Plan mode enabled")));
+    let post_compaction = detail
+        .turns
+        .iter()
+        .find(|turn| {
+            turn.blocks.iter().any(
+                |block| matches!(block, ContentBlock::Text { text } if text == "after compaction"),
+            )
+        })
+        .expect("post-compaction assistant");
+    assert!(post_compaction.completed_at.is_some());
+
+    let tool_turn = detail
+        .turns
+        .iter()
+        .find(|turn| {
+            turn.blocks
+                .iter()
+                .any(|block| matches!(block, ContentBlock::Thinking { .. }))
+        })
+        .expect("assistant content turn");
+    assert!(tool_turn.blocks.iter().any(|block| matches!(
+        block,
+        ContentBlock::ToolUse { tool_name, .. } if tool_name == "edit"
+    )));
+    assert!(tool_turn.blocks.iter().any(|block| matches!(
+        block,
+        ContentBlock::ToolResult { output_preview: Some(output), .. } if output == "edited"
+    )));
+    let compaction_turn = detail
+        .turns
+        .iter()
+        .find(|turn| {
+            turn.blocks
+                .iter()
+                .any(|block| matches!(block, ContentBlock::ToolUse { tool_name, .. } if tool_name == "context_compaction"))
+        })
+        .expect("compaction turn");
+    assert!(compaction_turn.blocks.iter().any(|block| matches!(
+        block,
+        ContentBlock::ToolResult {
+            is_error: false,
+            ..
+        }
+    )));
+
+    let child_detail = parser
+        .get_conversation(child_id)
+        .expect("get V2 child detail");
+    assert_eq!(child_detail.summary.parent_id.as_deref(), Some(root_id));
+    assert!(child_detail.turns.iter().any(|turn| {
+        turn.blocks.iter().any(|block| {
+            matches!(block, ContentBlock::ToolUse { tool_name, .. } if tool_name == "Agent")
+        })
+    }));
+    assert!(child_detail.turns.iter().any(|turn| {
+        turn.blocks.iter().any(|block| {
+            matches!(block, ContentBlock::ToolResult { agent_stats: Some(stats), .. }
+                if stats.child_session_id.as_deref() == Some(child_id))
+        })
+    }));
 }
 
 // ────────────────────────────────────────────────────────────────────────────

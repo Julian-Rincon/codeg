@@ -71,8 +71,12 @@ export function ModelOptionPicker({
             aria-label={
               currentLabel ? `${option.name}: ${currentLabel}` : option.name
             }
-            className="min-w-0 gap-0.5 px-1 text-muted-foreground"
+            className="phantom-model-trigger min-w-0 gap-1.5 px-1 text-muted-foreground"
           >
+            <span
+              aria-hidden
+              className="size-1.5 shrink-0 rounded-full bg-[var(--phantom-accent)]"
+            />
             <span className="max-w-[10rem] truncate">{currentLabel}</span>
             <ChevronDown className="size-3 shrink-0 text-muted-foreground" />
           </Button>

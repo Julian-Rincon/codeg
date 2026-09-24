@@ -161,7 +161,7 @@ describe("TasksViewProvider", () => {
     })
     await waitFor(() => expect(notifyMock).toHaveBeenCalledTimes(1))
     expect(notifyMock).toHaveBeenCalledWith("work_task", {
-      title: "proj - Codeg",
+      title: "proj - Phantom",
       body: expect.stringContaining("notifyFailed"),
       // Carries the task title, so it needs a variant that doesn't.
       redactedBody: "notifyFailedRedacted",

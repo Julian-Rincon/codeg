@@ -10,6 +10,7 @@ import { AppToaster } from "@/components/ui/app-toaster"
 import { getFolder } from "@/lib/api"
 import type { FolderDetail } from "@/lib/types"
 import { RemoteConnectionGate } from "@/contexts/remote-connection-context"
+import { PHANTOM_UI_NAME } from "@/lib/phantom-ui"
 
 const TOAST_DURATION_MS = 6000
 
@@ -68,7 +69,7 @@ function StashPageInner() {
   const pageTitle = folder ? `${t("title")} · ${folder.name}` : t("title")
 
   useEffect(() => {
-    document.title = `${pageTitle} - codeg`
+    document.title = `${pageTitle} - ${PHANTOM_UI_NAME}`
   }, [pageTitle])
 
   return (

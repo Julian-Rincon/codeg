@@ -21,10 +21,11 @@ import {
 } from "@/lib/tasks-board-filter-storage"
 import { useAppWorkspaceStore } from "@/stores/app-workspace-store"
 import type { WorkTask } from "@/lib/types"
+import { PHANTOM_UI_NAME } from "@/lib/phantom-ui"
 
 const WORK_TASK_CHANGED_EVENT = "task://changed"
 
-/** Statuses that need the user ("等你处理") — drives the sidebar badge. */
+/** Statuses that need the user ("Needs you") — drives the sidebar badge. */
 const ATTENTION_STATUSES = new Set(["awaiting_input", "review", "failed"])
 
 interface TasksViewContextValue {
@@ -180,7 +181,9 @@ function notifyFlips(
       .getState()
       .folders.find((f) => f.id === task.folder_id)
     const folderName = folder ? (folder.alias ?? folder.name) : null
-    const title = folderName ? `${folderName} - Codeg` : "Codeg"
+    const title = folderName
+      ? `${folderName} - ${PHANTOM_UI_NAME}`
+      : PHANTOM_UI_NAME
     const review = task.status === "review"
     void notifyDesktop("work_task", {
       title,

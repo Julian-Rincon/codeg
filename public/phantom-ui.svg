@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-labelledby="title desc">
+  <title id="title">Phantom UI Azul General</title>
+  <desc id="desc">A blue phantom-shaped mark for Phantom UI.</desc>
+  <defs>
+    <linearGradient id="bg" x1="12" y1="8" x2="116" y2="120" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#0b1f4d"/>
+      <stop offset="1" stop-color="#061329"/>
+    </linearGradient>
+    <linearGradient id="phantom" x1="38" y1="28" x2="91" y2="101" gradientUnits="userSpaceOnUse">
+      <stop stop-color="#7dd3fc"/>
+      <stop offset="0.48" stop-color="#38bdf8"/>
+      <stop offset="1" stop-color="#2563eb"/>
+    </linearGradient>
+    <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
+      <feGaussianBlur stdDeviation="3" result="blur"/>
+      <feMerge><feMergeNode in="blur"/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+  <rect width="128" height="128" rx="30" fill="url(#bg)"/>
+  <path d="M64 20c-21 0-35 15-35 36v31c0 4 5 6 8 3l7-7 7 7c2 2 5 2 7 0l6-6 6 6c2 2 5 2 7 0l7-7 7 7c3 3 8 1 8-3V56c0-21-14-36-35-36Z" fill="url(#phantom)" opacity=".2" filter="url(#glow)"/>
+  <path d="M64 20c-21 0-35 15-35 36v31c0 4 5 6 8 3l7-7 7 7c2 2 5 2 7 0l6-6 6 6c2 2 5 2 7 0l7-7 7 7c3 3 8 1 8-3V56c0-21-14-36-35-36Z" fill="none" stroke="url(#phantom)" stroke-width="5" stroke-linejoin="round"/>
+  <path d="M47 58c5-7 11-10 17-10s12 3 17 10" fill="none" stroke="#e0f2fe" stroke-width="5" stroke-linecap="round" opacity=".9"/>
+  <circle cx="51" cy="59" r="4" fill="#e0f2fe"/>
+  <circle cx="77" cy="59" r="4" fill="#e0f2fe"/>
+  <path d="M53 76c7 5 15 5 22 0" fill="none" stroke="#bae6fd" stroke-width="4" stroke-linecap="round" opacity=".85"/>
+</svg>

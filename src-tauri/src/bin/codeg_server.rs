@@ -620,9 +620,11 @@ async fn async_main() -> ExitCode {
         .mark_externally_running(advertised_host.clone(), actual_port, token.clone());
     let addresses = addresses_for_bind(&advertised_host, actual_port);
 
-    // Token on stderr ONLY (bearer credential — keep it out of the log files
-    // and the in-app viewer); the bind addresses are safe to log normally.
-    eprintln!("[SERVER] Token: {}", token);
+    // The resolved token is intentionally not printed here. The generated-token
+    // branch above already reports a token only when the operator has not
+    // supplied one; an environment-provided bearer credential must never be
+    // copied into journals, container logs, or diagnostic output. The bind
+    // addresses are safe to log normally.
     // Port bridge for dev servers on this host (web-mode built-in browser):
     // bound where our own socket is, on the ports after ours unless
     // CODEG_BRIDGE_PORTS says otherwise — or nothing of its own at all when

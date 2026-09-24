@@ -40,6 +40,7 @@ import {
 import { AppTitleBar } from "@/components/layout/app-title-bar"
 import { useIsMobile } from "@/hooks/use-mobile"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
+import { PHANTOM_UI_NAME } from "@/lib/phantom-ui"
 
 interface SettingsNavItem {
   href: string
@@ -190,7 +191,7 @@ export function SettingsShell({ children }: SettingsShellProps) {
   const [navOpen, setNavOpen] = useState(false)
 
   useEffect(() => {
-    document.title = `${t("title")} - codeg`
+    document.title = `${t("title")} - ${PHANTOM_UI_NAME}`
   }, [t])
 
   const navigateTo = useCallback(

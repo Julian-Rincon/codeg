@@ -9,6 +9,7 @@ import { getAgentLabel } from "@/lib/custom-agents"
 import { downloadImage } from "@/lib/image-download"
 import { saveTextFile, type SaveFileResult } from "@/lib/save-file"
 import { toPng } from "html-to-image"
+import { PHANTOM_UI_NAME } from "@/lib/phantom-ui"
 
 /** Outcome of an export operation — see {@link SaveFileResult}. */
 export type ExportResult = SaveFileResult
@@ -410,7 +411,7 @@ ${blocksToHtml(turn.blocks, labels)}
 <div class="container">
 ${header}
 <main>${messages}</main>
-<div class="footer">Codeg</div>
+<div class="footer">${PHANTOM_UI_NAME}</div>
 </div>
 </body>
 </html>`
@@ -443,7 +444,7 @@ export async function exportAsMarkdown(
   }
 
   parts.push("---")
-  parts.push("*Codeg*")
+  parts.push("*Phantom*")
 
   return saveTextFile({
     content: parts.join("\n"),

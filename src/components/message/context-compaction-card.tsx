@@ -35,7 +35,7 @@
  */
 
 import { useId, useState } from "react"
-import { useTranslations } from "next-intl"
+import { useFormatter, useTranslations } from "next-intl"
 import { Archive, ChevronDown, ChevronUp } from "lucide-react"
 
 import { MessageResponse } from "@/components/ai-elements/message"
@@ -169,6 +169,9 @@ function CompactionSummaryBody({
 
 export function ContextCompactionCard({ state, meta, summary }: Props) {
   const t = useTranslations("Folder.chat.contextCompaction")
+  // Format with the app locale, not the host's: toLocaleString() would print
+  // "51.777" inside an English UI on an es_ES machine.
+  const format = useFormatter()
   const [summaryOpen, setSummaryOpen] = useState(false)
   const summaryId = useId()
   const isRunning = state === "input-streaming" || state === "input-available"
@@ -197,8 +200,8 @@ export function ContextCompactionCard({ state, meta, summary }: Props) {
       ? t("compacting")
       : before !== null && after !== null && before !== after
         ? t("compactedTokens", {
-            before: before.toLocaleString(),
-            after: after.toLocaleString(),
+            before: format.number(before),
+            after: format.number(after),
           })
         : t("compacted")
   const summaryText =

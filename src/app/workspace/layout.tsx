@@ -98,12 +98,16 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { usePlatform } from "@/hooks/use-platform"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { OverlayHostHiddenProvider } from "@/components/ui/overlay-host-hidden"
+import { PhantomModelAccentBridge } from "@/components/phantom-model-accent-bridge"
+import { PHANTOM_UI_NAME } from "@/lib/phantom-ui"
 
 function WorkspaceDocumentTitle() {
   const { activeFolder } = useActiveFolder()
 
   useEffect(() => {
-    document.title = activeFolder ? `${activeFolder.name} - codeg` : "codeg"
+    document.title = activeFolder
+      ? `${activeFolder.name} - ${PHANTOM_UI_NAME}`
+      : PHANTOM_UI_NAME
   }, [activeFolder])
 
   return null
@@ -1182,10 +1186,12 @@ function FolderLayoutShell({ children }: { children: React.ReactNode }) {
 
   return (
     <div className="fixed inset-0 flex flex-col overflow-hidden bg-background text-foreground pt-[env(safe-area-inset-top)] pr-[env(safe-area-inset-right)] pb-[env(safe-area-inset-bottom)] pl-[env(safe-area-inset-left)]">
-      {/* 用户背景图片：铺在整个工作区底层。根 div 是 fixed，已建立层叠上下文，故
-          -z-10 绘于自身 bg-background 之上、所有流内容之下。遮罩是朝 --background 的
-          面纱（明暗自适配），保证内容可读；结构性面板的半透明由 globals.css 的
-          [data-workspace-bg] 规则处理，不在此。 */}
+      {/* User background image: spans the bottom layer of the whole workspace. The
+          root div is fixed and already establishes a stacking context, so -z-10
+          paints above its own bg-background and below all in-flow content. The
+          scrim is a veil toward --background (adapts to light/dark) to keep content
+          readable; translucency of structural panels is handled by the
+          [data-workspace-bg] rules in globals.css, not here. */}
       {showBackground && (
         <>
           <div
@@ -1295,6 +1301,7 @@ function WorkspaceLayoutInner({ children }: { children: React.ReactNode }) {
                 <ConversationRuntimeProvider>
                   <WorkspaceProvider>
                     <TabProvider>
+                      <PhantomModelAccentBridge />
                       <WorkspaceDocumentTitle />
                       <TabKeysSync />
                       <BrowserEventsBridge />

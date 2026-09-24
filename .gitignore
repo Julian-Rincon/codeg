@@ -61,3 +61,29 @@ src-tauri/binaries/
 # executable then sits untracked in the repo root — which is enough to fail a
 # work task's "worktree is clean" check at delivery.
 /rust_out
+
+# ---------------------------------------------------------------------------
+# Phantom UI local state — never publish these. Runtime secrets, local
+# databases, generated tooling output and session-note directories that
+# belong to one deployment, not the repo.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+server.env
+*.db
+# ...except tracked upstream test fixtures: real fixture data the parser
+# tests assert against, not local runtime state.
+!src-tauri/tests/fixtures/**/*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+# graphify's AST-index build output (ast graph.json) — regenerated locally,
+# not source.
+/graphify-out/
+*.backup-*
+reports/
+.remember/
+*.pem
+*.key

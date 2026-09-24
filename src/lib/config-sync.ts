@@ -19,6 +19,7 @@
 
 import { isLocalDesktop } from "./platform"
 import { getTransport } from "./transport"
+import { PHANTOM_UI_NAME } from "./phantom-ui"
 
 /** Stable domain ids, matching `domains::CONFIG_DOMAINS` in Rust. */
 export const CONFIG_DOMAIN_IDS = [
@@ -209,7 +210,7 @@ export async function exportConfigToFile(): Promise<ConfigExportSummary | null> 
   const { save } = await import("@tauri-apps/plugin-dialog")
   const destPath = await save({
     defaultPath: fileName,
-    filters: [{ name: "Codeg config", extensions: ["json"] }],
+    filters: [{ name: `${PHANTOM_UI_NAME} config`, extensions: ["json"] }],
   })
   if (!destPath) return null
   return getTransport().call<ConfigExportSummary>("config_sync_export_file", {
@@ -235,7 +236,7 @@ export async function pickConfigFileToImport(): Promise<PickedConfigImport | nul
   const picked = await open({
     multiple: false,
     directory: false,
-    filters: [{ name: "Codeg config", extensions: ["json"] }],
+    filters: [{ name: `${PHANTOM_UI_NAME} config`, extensions: ["json"] }],
   })
   const srcPath = typeof picked === "string" ? picked : null
   if (!srcPath) return null

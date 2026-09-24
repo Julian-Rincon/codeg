@@ -29,6 +29,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog"
 import { isDesktop } from "@/lib/platform"
+import { PHANTOM_UI_NAME } from "@/lib/phantom-ui"
 import { getActiveRemoteConnectionId } from "@/lib/transport"
 import { relaunchApp, restartApp, waitForServerHealthy } from "@/lib/updater"
 import {
@@ -275,7 +276,9 @@ export function BackupSettings({ pane }: { pane: DataSyncPane }) {
     const { open } = await import("@tauri-apps/plugin-dialog")
     const picked = await open({
       multiple: false,
-      filters: [{ name: "Codeg backup", extensions: ["codegbak", "zip"] }],
+      filters: [
+        { name: `${PHANTOM_UI_NAME} backup`, extensions: ["codegbak", "zip"] },
+      ],
     })
     if (typeof picked !== "string") return
     releasePrepared(restoreSource?.sourceId)

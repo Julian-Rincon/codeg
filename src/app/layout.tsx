@@ -14,6 +14,7 @@ import { ClipboardFallbackInit } from "@/components/clipboard-fallback-init"
 import { WebConnectionGuard } from "@/components/connection/web-connection-guard"
 import { WindowResizeGrips } from "@/components/layout/window-resize-grips"
 import { CloseRequestDialog } from "@/components/workspace/close-request-dialog"
+import { PHANTOM_ACCENT_INIT_SCRIPT, PHANTOM_UI_NAME } from "@/lib/phantom-ui"
 
 export const viewport: Viewport = {
   width: "device-width",
@@ -22,10 +23,11 @@ export const viewport: Viewport = {
 }
 
 export const metadata: Metadata = {
-  title: "codeg",
-  description: "AI Coding Agent Conversation Manager",
+  title: PHANTOM_UI_NAME,
+  description: "Phantom · AI coding agent workspace",
   icons: {
     icon: [
+      { url: "/phantom-ui.svg", type: "image/svg+xml" },
       { url: "/icon-32x32.png", sizes: "32x32", type: "image/png" },
       { url: "/icon.svg", type: "image/svg+xml" },
     ],
@@ -53,6 +55,10 @@ export default async function RootLayout({
         />
         {/* Apply appearance preferences (theme color + zoom + dark class) before first paint to prevent FOUC */}
         <script dangerouslySetInnerHTML={{ __html: APPEARANCE_INIT_SCRIPT }} />
+        {/* Restore the last model accent before first paint (runs after the dark class is set) */}
+        <script
+          dangerouslySetInnerHTML={{ __html: PHANTOM_ACCENT_INIT_SCRIPT }}
+        />
         {/* Suppress benign ResizeObserver loop warnings (W3C spec §3.3) */}
         <script>{`window.addEventListener("error",function(e){if(e.message&&e.message.indexOf("ResizeObserver")!==-1){e.stopImmediatePropagation();e.preventDefault()}});window.onerror=function(m){if(typeof m==="string"&&m.indexOf("ResizeObserver")!==-1)return true}`}</script>
         <NextIntlClientProvider

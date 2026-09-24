@@ -11,6 +11,7 @@ import {
 } from "@/lib/pet/sprite-url"
 import { disposeTauriListener } from "@/lib/tauri-listener"
 import { getTransport, isDesktop } from "@/lib/transport"
+import { PHANTOM_UI_NAME } from "@/lib/phantom-ui"
 import {
   PET_FRAME_DURATIONS_MS,
   PET_ONESHOT_LOOPS,
@@ -271,7 +272,9 @@ export function PetWindow({ petId }: PetWindowProps) {
   // Keep the document title clean. macOS hides it via title_bar_style anyway,
   // but server-mode preview shows it.
   useEffect(() => {
-    document.title = pet ? `${pet.displayName} - codeg pet` : "codeg pet"
+    document.title = pet
+      ? `${pet.displayName} - ${PHANTOM_UI_NAME}`
+      : PHANTOM_UI_NAME
   }, [pet])
 
   // Fully transparent body so the OS chrome is invisible. Done in JS to keep

@@ -2,7 +2,7 @@
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
 @import "@xterm/xterm/css/xterm.css";
-/* 自托管字体（@font-face 声明惰性，woff2 仅在被应用/预览时下载） */
+/* Self-hosted fonts (@font-face declarations are lazy; woff2 is only downloaded when applied/previewed) */
 @import "@fontsource-variable/inter";
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/jetbrains-mono";
@@ -11,29 +11,36 @@
 @custom-variant dark (&:is(.dark *));
 
 :root {
-  /* 默认界面字体 = Inter（与 DEFAULT_UI_FONT_ID = "inter" 一致，须等于
-     font-presets.ts 的 resolveFontStack("inter", "", "sans")，否则首屏到水合会闪字），
-     运行时由 AppearanceProvider 覆盖 --font-sans。会话消息区等普通文本均跟随 --font-sans；
-     --font-mono 不在此自定义，由 Tailwind 默认等宽栈兜底（与代码编辑器字体相互独立）。 */
+  /* Default UI font = Inter (matches DEFAULT_UI_FONT_ID = "inter"; must equal
+     resolveFontStack("inter", "", "sans") in font-presets.ts, otherwise text flashes
+     between first paint and hydration). AppearanceProvider overrides --font-sans at
+     runtime. Regular text such as the conversation message area follows --font-sans;
+     --font-mono is not customized here and falls back to Tailwind's default monospace
+     stack (independent of the code editor font). */
   --font-sans:
     "Inter Variable", system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
 
   font-family: var(--font-sans);
   font-size: 16px;
-  /* 这条行高被所有没自带 line-height 的文字继承，必须跟着根字号一起放大：写死 24px
-     的话缩放到 300% 时字长到 42px、行盒却仍是 24px，`truncate` 的 overflow:hidden
-     会把侧栏导航标签、会话标题、文件夹选择器的汉字上下各切掉几像素。
+  /* This line-height is inherited by all text without its own line-height, so it must
+     scale with the root font size: hardcoded to 24px, at 300% zoom glyphs grow to
+     42px while the line box stays 24px, and `truncate`'s overflow:hidden clips a few
+     pixels off the top and bottom of CJK glyphs in sidebar nav labels, conversation
+     titles and the folder picker.
 
-     em 而非 rem：**根元素上的 rem 在 WebKit 里不解析为根字号，而是解析为 font-size
-     的初始值 16px**。缩放是 AppearanceProvider 往 <html> 上写 font-size 实现的，
-     于是 `1.5rem` 在这里被永久钉死在 24px —— 不是失效竞态，300% 冷启动同样是 24px。
-     Chromium 按规范解析为 1.5×根字号，所以这个 bug 只在桌面端（Tauri = WKWebView）
-     出现，浏览器里跑 server 模式看不到。根元素上的 em 就是它自己的 font-size，两个
-     引擎都实时解析：100% 下算出 24px（与旧写法逐像素相同），300% 下 72px。
+     em rather than rem: **in WebKit, rem on the root element does not resolve to the
+     root font size but to the initial font-size value of 16px**. Zoom is implemented
+     by AppearanceProvider writing font-size onto <html>, so `1.5rem` here is
+     permanently pinned at 24px — not an invalidation race; a cold start at 300% is
+     also 24px. Chromium resolves it per spec as 1.5 × root font size, so this bug only
+     appears on desktop (Tauri = WKWebView) and not when running server mode in a
+     browser. em on the root element is its own font-size, which both engines resolve
+     live: 24px at 100% (pixel-identical to the old rule) and 72px at 300%.
 
-     `calc(1.5 * 1rem)` 和 `var(--lh)`（值为 1.5rem）在 WebKit 上同样被钉死，换写法
-     绕不过去；要留在 :root 上就只能用 em。 */
+     `calc(1.5 * 1rem)` and `var(--lh)` (value 1.5rem) are pinned the same way on
+     WebKit, so rewriting doesn't get around it; to stay on :root, em is the only
+     option. */
   line-height: 1.5em;
   font-weight: 400;
 
@@ -44,23 +51,29 @@
   -webkit-text-size-adjust: 100%;
   --radius: 0.625rem;
 
-  /* Workspace 背景图片：面板半透明度与磨砂强度。仅当 <html data-workspace-bg="on">
-     时下方 .ws-surface* 规则才消费它们；未启用背景图时这些变量存在但无副作用。
-     --ws-surface-alpha 由 inline 脚本 / AppearanceProvider 覆盖为用户设置。 */
+  /* Workspace background image: panel translucency and frost strength. The
+     .ws-surface* rules below only consume them when <html data-workspace-bg="on">;
+     with no background image these variables exist but have no side effects.
+     --ws-surface-alpha is overridden with the user setting by the inline script /
+     AppearanceProvider. */
   --ws-surface-alpha: 0.3;
   --ws-surface-blur: 8px;
 
-  /* 消息内磨砂表面（ws-msg-*：内联代码 / 用户气泡 / 卡片 / 胶囊 / 表格 / 代码块标题栏）的
-     固定半透明度：刻意不随「面板不透明度」滑块（--ws-surface-alpha）变化，让这些消息内小面
-     在任何面板透明度下都稳定。全族统一用中性 --muted 染色（不再按角色分 card/secondary/primary），
-     配 backdrop 磨砂 + 1px 描边（见下方 ws-msg-* 各规则），在忙碌背景图上仍看得清、分得出边界。 */
+  /* Fixed translucency for frosted in-message surfaces (ws-msg-*: inline code / user
+     bubble / card / pill / table / code block header): deliberately does not follow
+     the "panel opacity" slider (--ws-surface-alpha), so these small in-message
+     surfaces stay stable at any panel transparency. The whole family is tinted with
+     neutral --muted (no longer split by role into card/secondary/primary), paired
+     with backdrop frosting + a 1px border (see the ws-msg-* rules below), so they
+     remain legible with clear edges over busy background images. */
   --ws-msg-alpha: 0.5;
 }
 
 /* ===========================================================================
    Theme color presets (data-theme attribute)
-   每个预设包含成对的 light + dark 变量，与 .dark 类组合生效。
-   inline 脚本会在 hydration 前给 <html> 设置 data-theme 属性。
+   Each preset contains paired light + dark variables, applied in combination with
+   the .dark class. The inline script sets the data-theme attribute on <html>
+   before hydration.
    ========================================================================= */
 
 /* ---------- neutral (default) ---------- */
@@ -98,7 +111,7 @@
   --sidebar-ring: oklch(0.708 0 0);
 }
 
-/* 兜底：如果 inline 脚本失败或 data-theme 缺失，回退到 neutral light */
+/* Fallback: if the inline script fails or data-theme is missing, fall back to neutral light */
 :root:not([data-theme]) {
   --background: oklch(1 0 0);
   --foreground: oklch(0.145 0 0);
@@ -167,7 +180,7 @@
   --sidebar-ring: oklch(0.556 0 0);
 }
 
-/* 兜底 dark：data-theme 缺失时仍能跟随 .dark 类切换 */
+/* Fallback dark: still follows .dark class toggling when data-theme is missing */
 :root:not([data-theme]).dark {
   --background: oklch(0.145 0 0);
   --foreground: oklch(0.985 0 0);
@@ -1014,14 +1027,18 @@
   --color-card: var(--card);
   --color-foreground: var(--foreground);
   --color-background: var(--background);
-  /* 圆角刻度采用 shadcn 现行的**乘法式**（旧版是 calc(var(--radius) ± Npx) 的加减法）。
-     换过来有两个理由：
-     1. 外观设置页的圆角滑块会把 --radius 调到任意值，加减法在小值处会算出负数
-        （--radius: 0 → --radius-sm: -4px），比例整个失真；乘法式全程等比、永不越界。
-     2. 缩放档位（80%–150%）会改 html 的 font-size，而 --radius 是 rem 单位。加减法
-        混用 rem 与固定 px，缩放时圆角比例会漂；乘法式让圆角随缩放等比放大。
-     在默认 --radius: 0.625rem、100% 缩放下两种写法逐像素相同（6/8/10/14/18/22/26px），
-     所以这次迁移在默认配置上零视觉差异。 */
+  /* The radius scale uses shadcn's current **multiplicative** form (the old one was
+     additive: calc(var(--radius) ± Npx)). Two reasons for switching:
+     1. The radius slider on the Appearance settings page can set --radius to any
+        value; the additive form goes negative at small values
+        (--radius: 0 → --radius-sm: -4px), distorting the whole scale; the
+        multiplicative form stays proportional and never goes out of range.
+     2. Zoom levels (80%–150%) change the html font-size, and --radius is in rem. The
+        additive form mixes rem with fixed px, so radius proportions drift when
+        zooming; the multiplicative form scales radii proportionally with zoom.
+     At the default --radius: 0.625rem and 100% zoom both forms are pixel-identical
+     (6/8/10/14/18/22/26px), so this migration has zero visual difference on the
+     default configuration. */
   --radius-sm: calc(var(--radius) * 0.6);
   --radius-md: calc(var(--radius) * 0.8);
   --radius-lg: var(--radius);
@@ -1031,11 +1048,13 @@
   --radius-4xl: calc(var(--radius) * 2.6);
 }
 
-/* 比 text-xs(12px) 更小的两档字号。缩放档位（80%–150%）改的是 html 的 font-size，
-   所以只有 rem 会跟着放大 —— 全仓原先散落的 `text-[11px]` / `text-[10px]` 在缩放到
-   150% 时仍是 11px/10px，旁边的 text-sm 却涨到 21px，小字被压得越来越不成比例。
-   刻意只声明 font-size、不声明 line-height：被它们替换掉的 `text-[Npx]` 任意值同样
-   只写 font-size，行高照旧由 leading-* 或继承决定，换过来在 100% 缩放下零视觉差异。 */
+/* Two font sizes smaller than text-xs (12px). Zoom levels (80%–150%) change the html
+   font-size, so only rem scales with it — the `text-[11px]` / `text-[10px]` scattered
+   across the repo stayed at 11px/10px at 150% zoom while neighboring text-sm grew to
+   21px, making small text increasingly out of proportion.
+   Deliberately declares only font-size, not line-height: the arbitrary `text-[Npx]`
+   values they replace also set only font-size, with line-height still determined by
+   leading-* or inheritance, so the switch has zero visual difference at 100% zoom. */
 @utility text-2xs {
   font-size: 0.6875rem; /* 11px @100% */
 }
@@ -1061,11 +1080,14 @@
 }
 
 /* ===========================================================================
-   Workspace 背景图片：半透明表面
-   workspace/layout.tsx 的结构性表面（侧栏/面板/标签条/终端/状态栏）用这几个语义
-   类替代 bg-sidebar/bg-muted/bg-background。未启用背景图时它们与原 Tailwind 工具类
-   字节等价（纯色，折叠防闪白契约不变）；仅当 inline 脚本 / Provider 给 <html> 打上
-   data-workspace-bg="on" 时才转为半透明 + 磨砂，透出背景图。
+   Workspace background image: translucent surfaces
+   Structural surfaces in workspace/layout.tsx (sidebar/panels/tab strip/terminal/
+   status bar) use these semantic classes instead of bg-sidebar/bg-muted/
+   bg-background. With no background image they are byte-equivalent to the original
+   Tailwind utilities (solid color; the collapse anti-white-flash contract is
+   unchanged); only when the inline script / Provider sets data-workspace-bg="on" on
+   <html> do they become translucent + frosted, letting the background image show
+   through.
    ========================================================================= */
 .ws-surface {
   background-color: var(--background);
@@ -1104,11 +1126,15 @@
   -webkit-backdrop-filter: blur(var(--ws-surface-blur));
   backdrop-filter: blur(var(--ws-surface-blur));
 }
-/* Card 表面（面板级，磨砂，组合式）：无 base 规则，与元素上的 bg-card 配对——关图时保留
-   bg-card 原样（含 hover:bg-* 等 layered 工具类，零回归），开图才转半透明磨砂。属 ws-surface-*
-   面板级家族，跟随「面板不透明度」滑块（--ws-surface-alpha）。消息流内的卡片改用 ws-msg-card
-   （固定 --ws-msg-alpha，不随滑块，见下）；此原语保留给面板级卡片（如 git-log 提交卡），当前
-   暂无消费者。老 WebKit 无 color-mix 时声明作废 → 回落到元素自带 bg-card（不透明），无需额外兜底。 */
+/* Card surface (panel-level, frosted, compositional): no base rule; pairs with bg-card on
+   the element — with the background image off, bg-card is kept as-is (including layered
+   utilities like hover:bg-*, zero regression); only with it on does it become translucent
+   + frosted. Belongs to the panel-level ws-surface-* family and follows the "panel
+   opacity" slider (--ws-surface-alpha). Cards inside the message stream use ws-msg-card
+   instead (fixed --ws-msg-alpha, independent of the slider, see below); this primitive is
+   reserved for panel-level cards (e.g. git-log commit cards) and currently has no
+   consumers. On old WebKit without color-mix the declaration is dropped → falls back to
+   the element's own bg-card (opaque), no extra fallback needed. */
 [data-workspace-bg="on"] .ws-surface-card {
   background-color: color-mix(
     in oklch,
@@ -1119,10 +1145,13 @@
   backdrop-filter: blur(var(--ws-surface-blur));
 }
 
-/* 内联代码全圆角 pill（与背景图无关，始终生效）：Streamdown 默认 rounded(小圆角)→改 rounded-full,
-   与合并工具胶囊一致；略增左右内边距让 pill 两端不挤字；box-decoration-break: clone 提为常驻——
-   inline-code 是行内元素，跨行折断时默认(slice)会把底色/ring/圆角当一个盒切开、断处露豁口，clone
-   让每段行片各自成完整圆角 pill。属性选择器(unlayered)压过 streamdown 的 layered rounded/px-1.5。 */
+/* Fully rounded inline-code pill (independent of the background image, always active):
+   Streamdown's default rounded (small radius) → rounded-full, consistent with the merged
+   tool chip; slightly more horizontal padding so text isn't cramped at the pill ends;
+   box-decoration-break: clone is made permanent — inline-code is an inline element, and
+   when wrapping across lines the default (slice) cuts background/ring/radius as one box,
+   leaving gaps at the break; clone makes each line fragment its own fully rounded pill.
+   The attribute selector (unlayered) overrides streamdown's layered rounded/px-1.5. */
 [data-streamdown="inline-code"] {
   border-radius: 9999px;
   padding-inline: 0.5rem;
@@ -1130,10 +1159,13 @@
   box-decoration-break: clone;
 }
 
-/* 会话内联代码（Streamdown 的 inline-code，元素自带 bg-muted）：开图转半透明中性染色（不磨砂，
-   用户要真透出背景图），用 inset 1px ring 描出边界（纯色 var(--border)，不改盒模型、无回流，替代
-   磨砂提供分离）。组合式无 base 规则，关图零回归（bg-muted 原样保留）。代码块（code-block-body）
-   有 shiki 底色，不在此列。 */
+/* Conversation inline code (Streamdown's inline-code; the element has its own bg-muted):
+   with the background image on, becomes a translucent neutral tint (not frosted — the
+   user wants the background image to truly show through), with an inset 1px ring outlining
+   the edge (solid var(--border); doesn't change the box model, no reflow; provides
+   separation instead of frosting). Compositional with no base rule, zero regression with
+   the image off (bg-muted kept as-is). Code blocks (code-block-body) have a shiki
+   background and are not covered here. */
 [data-workspace-bg="on"] [data-streamdown="inline-code"] {
   background-color: color-mix(
     in oklch,
@@ -1143,10 +1175,13 @@
   box-shadow: inset 0 0 0 1px var(--border);
 }
 
-/* 用户消息气泡（MessageContent 上的 ws-msg-secondary，配对元素自带的
-   group-[.is-user]:bg-secondary）：开图转半透明中性染色（全族统一 --muted，不磨砂，不再 secondary
-   色）+ inset 1px ring 描边（纯色 var(--border)，替代磨砂提供分离）。以 .is-user 祖先限定——助手
-   消息（.is-assistant）本无气泡底色，须保持画布透出，不受影响。关图零回归。 */
+/* User message bubble (ws-msg-secondary on MessageContent, paired with the element's own
+   group-[.is-user]:bg-secondary): with the background image on, becomes a translucent
+   neutral tint (the whole family uses --muted, not frosted, no longer the secondary color)
+   + an inset 1px ring outline (solid var(--border), providing separation instead of
+   frosting). Scoped by the .is-user ancestor — assistant messages (.is-assistant) have no
+   bubble background and must keep the canvas showing through, so they are unaffected.
+   Zero regression with the image off. */
 [data-workspace-bg="on"] .is-user .ws-msg-secondary {
   background-color: color-mix(
     in oklch,
@@ -1156,9 +1191,11 @@
   box-shadow: inset 0 0 0 1px var(--border);
 }
 
-/* 折叠态内容底部渐隐（会话用户消息、提交 tab 的提交信息…）：遮罩内容本身而非叠加层，跟
-   .qa-rail-viewport / .browser-tab-label 同技术，天然适配纯色 bg-secondary 或开工作区
-   背景图后的半透明 ws-msg-secondary。不属于下面的 ws- 门控家族，始终生效。 */
+/* Bottom fade for collapsed content (conversation user messages, commit messages in the
+   commit tab…): masks the content itself rather than an overlay, the same technique as
+   .qa-rail-viewport / .browser-tab-label, so it naturally works on a solid bg-secondary
+   or on the translucent ws-msg-secondary when the workspace background image is on. Not
+   part of the gated ws- family below; always active. */
 .collapsed-content-fade {
   -webkit-mask-image: linear-gradient(
     to bottom,
@@ -1168,15 +1205,20 @@
   mask-image: linear-gradient(to bottom, #000 calc(100% - 2.5rem), transparent);
 }
 
-/* ===== 消息内半透明表面 ws-msg-* =====
-   会话消息内一切带底色元素读作同一种半透明中性染色（**不磨砂**，用户要真透出背景图）+ 1px
-   var(--border) 边。alpha 固定（--ws-msg-alpha=0.5），刻意不随「面板不透明度」滑块——消息不随
-   chrome 不透明度抖动，区别于面板级 ws-surface-* 家族（那族仍磨砂、跟滑块）。组合式（无 base
-   规则）：配元素自带的 bg-*（关图兜底，零回归）；老 WebKit 无 color-mix 时染色声明作废、回落
-   到元素自带 bg-*（不透明），ring 用纯色仍描边。 */
+/* ===== Translucent in-message surfaces ws-msg-* =====
+   Every element with a background inside conversation messages reads as the same
+   translucent neutral tint (**not frosted** — the user wants the background image to truly
+   show through) + a 1px var(--border) edge. Alpha is fixed (--ws-msg-alpha=0.5) and
+   deliberately ignores the "panel opacity" slider — messages don't flicker with chrome
+   opacity, unlike the panel-level ws-surface-* family (which stays frosted and follows the
+   slider). Compositional (no base rule): paired with the element's own bg-* (fallback with
+   the image off, zero regression); on old WebKit without color-mix the tint declaration is
+   dropped and falls back to the element's own bg-* (opaque), while the solid-color ring
+   still outlines. */
 
-/* 内容卡片（抬升的容器：委派三卡 / 后台任务卡 / 提问两卡 / 计划卡 / CodeBlock 根）。全族统一
-   染色用中性 --muted；边界由元素自带 border 提供，无需 ring。 */
+/* Content cards (elevated containers: the three delegation cards / background task card /
+   the two question cards / plan card / CodeBlock root). The whole family is tinted with
+   neutral --muted; the edge comes from the element's own border, no ring needed. */
 [data-workspace-bg="on"] .ws-msg-card {
   background-color: color-mix(
     in oklch,
@@ -1185,10 +1227,12 @@
   );
 }
 
-/* 轻量胶囊（合并工具胶囊 / Agent 胶囊）：全族统一后与卡片同族——开图转半透明中性染色
-   （muted@--ws-msg-alpha，不磨砂）+ inset 1px ring（pill 无边框故用 ring）。关图零回归（无 base
-   规则，元素自带 bg-muted/60·bg-primary/10 原样）。注：开图 unlayered 背景会盖过同节点
-   hover:bg-*，与卡片一致（染色即表面）。 */
+/* Lightweight chips (merged tool chip / Agent chip): after unifying the family they match
+   the cards — with the background image on, a translucent neutral tint
+   (muted@--ws-msg-alpha, not frosted) + an inset 1px ring (pills have no border, hence the
+   ring). Zero regression with the image off (no base rule; the element's own
+   bg-muted/60 / bg-primary/10 kept as-is). Note: with the image on, the unlayered background
+   overrides hover:bg-* on the same node, consistent with cards (the tint is the surface). */
 [data-workspace-bg="on"] .ws-msg-chip {
   background-color: color-mix(
     in oklch,
@@ -1198,9 +1242,12 @@
   box-shadow: inset 0 0 0 1px var(--border);
 }
 
-/* 会话表格（Streamdown 内部渲染）：表格整体做成圆角半透明卡片——圆角/边框挂在滚动容器上（见
-   下方 table-wrapper 区块，不磨砂），thead/tbody 只上半透明中性染色。表头比表体略深保层级；关图
-   回落各自 bg-muted/80·bg-muted/40（属性选择器 unlayered 压过 streamdown 的 layered 值）。 */
+/* Conversation tables (rendered internally by Streamdown): the whole table becomes a
+   rounded translucent card — radius/border live on the scroll container (see the
+   table-wrapper block below, not frosted), and thead/tbody only get a translucent neutral
+   tint. The header is slightly darker than the body to keep hierarchy; with the image off
+   they fall back to their own bg-muted/80 / bg-muted/40 (the unlayered attribute selector
+   overrides streamdown's layered values). */
 [data-workspace-bg="on"] [data-streamdown="table-header"] {
   background-color: color-mix(in oklch, var(--muted) 65%, transparent);
 }
@@ -1212,9 +1259,11 @@
   );
 }
 
-/* 围栏代码块标题栏（Streamdown 的 code-block-header，元素自带 bg-muted/80）：转半透明中性染色
-   （不磨砂），与其它 muted 标题栏统一。代码块根自带 rounded-xl border 作边界。代码正文
-   （code-block-body）有 shiki 底色、保持不透明（护可读性），不在此列。 */
+/* Fenced code block header (Streamdown's code-block-header; the element has its own
+   bg-muted/80): becomes a translucent neutral tint (not frosted), consistent with other
+   muted header bars. The code block root has its own rounded-xl border as the edge. The
+   code body (code-block-body) has a shiki background and stays opaque (for readability),
+   so it is not covered here. */
 [data-workspace-bg="on"] [data-streamdown="code-block-header"] {
   background-color: color-mix(
     in oklch,
@@ -1223,43 +1272,60 @@
   );
 }
 
-/* Canvas 表面：开启背景图时强制透明，让底层背景图 + 遮罩直接透出（会话/文件
-   overlay section、侧栏会话行）。无 base 规则 —— 与元素上配对的 bg-*（bg-background
-   / bg-sidebar）组合，未启用背景图时完全等价那个纯色（零回归）。透明不依赖
-   color-mix，故无需 @supports 降级。 */
+/* Canvas surface: forced transparent when the background image is on, so the underlying
+   background image + scrim show through directly (conversation/file overlay section,
+   sidebar conversation rows). No base rule — combined with the paired bg-* on the element
+   (bg-background / bg-sidebar), it is fully equivalent to that solid color when the
+   background image is off (zero regression). Transparency doesn't depend on color-mix,
+   so no @supports fallback is needed. */
 [data-workspace-bg="on"] .ws-transparent-bg {
   background-color: transparent;
 }
 
-/* 终端画布：让 xterm 视口透出所属 ws-surface 面板的磨砂表面（而非黑块）。xterm 6 的视口
-   分两层——外层 .xterm-viewport（xterm.css 硬编码 background-color:#000，且不随主题变化）
-   套着内层 SmoothScrollableElement 节点（终端主题背景色应用在这层）。terminal-view.tsx 已把
-   内层主题背景改成 alpha 0（透明），但外层那层黑底会透出来，终端仍是黑块。这里把外层也改
-   透明——两层皆透，终端画布才透出下方磨砂面板。选择器 .xterm .xterm-viewport 特异性(0,3,0)
-   高于 xterm.css 同名规则(0,2,0)，无需 !important；纯透明不依赖 color-mix，关图无此规则，
-   零回归。 */
+/* Terminal canvas: let the xterm viewport show the frosted surface of its ws-surface
+   panel (instead of a black block). xterm 6's viewport has two layers — the outer
+   .xterm-viewport (xterm.css hardcodes background-color:#000, and it doesn't follow the
+   theme) wraps the inner SmoothScrollableElement node (where the terminal theme background
+   is applied). terminal-view.tsx already sets the inner theme background to alpha 0
+   (transparent), but the outer black layer shows through and the terminal is still a
+   black block. Here the outer layer is made transparent too — only with both layers
+   transparent does the terminal canvas show the frosted panel beneath. The selector
+   .xterm .xterm-viewport has specificity (0,3,0), higher than xterm.css's rule of the same
+   name (0,2,0), so no !important is needed; plain transparency doesn't depend on
+   color-mix, and with the image off this rule doesn't apply, zero regression. */
 [data-workspace-bg="on"] .xterm .xterm-viewport {
   background-color: transparent;
 }
 
-/* Monaco sticky scroll（钉住的父级作用域行）：开背景图时编辑器画布透明（WSBG_CANVAS_ALPHA=0），
-   sticky 头部也随画布透明（monaco-themes.ts 里 sticky 背景跟随 canvas）。放任透明则滚动的代码
-   从钉住行下方透出、两者重叠看不清；填成不透明画布色又是浮在背景图上一坨突兀的深色块（用户
-   反馈「一坨黑色」）。这里把整条 .sticky-widget 做成与消息内联代码/气泡同族的磨砂表面：半透明
-   画布色（--card，与编辑器画布同源）+ backdrop 磨砂，把身后滚动代码与背景图糊开，钉住行文字
-   清晰浮于其上。alpha 固定（--ws-msg-alpha），与消息内小面统一、不随面板滑块。主题侧 sticky
-   背景已随画布透明，故此处单层着色、无接缝。关图无 data-workspace-bg，规则不生效，零回归。
+/* Monaco sticky scroll (pinned parent-scope lines): with the background image on, the
+   editor canvas is transparent (WSBG_CANVAS_ALPHA=0), and the sticky header is also
+   transparent along with it (the sticky background follows canvas in monaco-themes.ts).
+   Left transparent, scrolling code shows through beneath the pinned lines and the two
+   overlap illegibly; filled with an opaque canvas color, it becomes a jarring dark block
+   floating over the background image (user feedback: "a black blob"). Here the whole
+   .sticky-widget becomes a frosted surface in the same family as in-message inline
+   code/bubbles: translucent canvas color (--card, same source as the editor canvas) +
+   backdrop frosting, blurring the scrolling code and background image behind it so the
+   pinned line text floats clearly on top. Alpha is fixed (--ws-msg-alpha), consistent
+   with small in-message surfaces and independent of the panel slider. The theme-side
+   sticky background is already transparent with the canvas, so this is a single tinted
+   layer with no seams. With the image off there's no data-workspace-bg, the rule doesn't
+   apply, zero regression.
 
-   ★覆盖到滚动条条带：Monaco 运行时给 .sticky-widget 打 inline width =
-   layoutInfo.width − verticalScrollbarWidth（stickyScrollWidget.js:160，即内容宽，右侧漏出
-   一条竖向滚动条宽的条带），CSS 里的 width:100% 被这条 inline 盖过 → 磨砂层到不了右边缘，
-   滚动代码从那条缝透出（用户反馈「右边显示不全」）。故用 width:100% !important 压过 inline
-   width，把磨砂层铺到编辑器右缘补上那条缝。安全性：可见滚动条 .monaco-scrollable-element>.visible
-   是 z-index:11（scrollbars.css），高于 sticky-widget 的 z-index:4——磨砂层永远在滚动条之下，
-   滑块照常浮在其上、可拖可点；滚动条隐藏时（opacity:0 不绘制）磨砂层正好补上条带。backdrop
-   只糊身后的代码，不糊上层滑块。 */
+   ★Covering the scrollbar strip: at runtime Monaco sets an inline width on .sticky-widget
+   = layoutInfo.width − verticalScrollbarWidth (stickyScrollWidget.js:160, i.e. the
+   content width, leaving a scrollbar-wide strip exposed on the right). The inline width
+   overrides the CSS width:100% → the frosted layer doesn't reach the right edge, and
+   scrolling code shows through that gap (user feedback: "the right side isn't fully
+   covered"). So width:100% !important overrides the inline width, extending the frosted
+   layer to the editor's right edge to fill the gap. Safety: the visible scrollbar
+   .monaco-scrollable-element>.visible is z-index:11 (scrollbars.css), above the
+   sticky-widget's z-index:4 — the frosted layer is always below the scrollbar, so the
+   slider still floats on top and stays draggable/clickable; when the scrollbar is hidden
+   (opacity:0, not painted) the frosted layer fills the strip exactly. backdrop only blurs
+   the code behind it, not the slider above. */
 [data-workspace-bg="on"] .monaco-editor .sticky-widget {
-  /* 压过 Monaco 的 inline 内容宽，铺满到右缘（含滚动条条带）。见上方安全性说明。 */
+  /* Override Monaco's inline content width to fill to the right edge (including the scrollbar strip). See the safety note above. */
   width: 100% !important;
   background-color: color-mix(
     in oklch,
@@ -1270,66 +1336,96 @@
   backdrop-filter: blur(var(--ws-surface-blur));
 }
 
-/* 顶部标签条「浏览器拱门」下边框（组合式，无 base 规则，关图零回归）。整条标签条 +
-   所有 tab 开图皆透明（透出真背景图）；靠一条细下边框把标签条与下方内容分隔，唯独激活
-   tab 处开口——线绕到激活 tab 顶部走一圈（拱门轮廓），激活 tab 靠这圈描边区分而非填充色。
-   连续下边框无法在激活 tab 处「开口」（透明子元素盖不住祖先画的线），故平线逐段画在激活
-   tab 的兄弟区域（预留区/非激活 tab/按钮/拖拽填充），激活 tab 及其祖先不画。拱门轮廓（顶 +
-   两侧 + 反向圆角脚）与两端 group px-2 补缝都在下方 .browser-tab-item 区块。色 =
-   var(--ws-chrome-border)（下方定义的加强色，与状态栏/header 等所有 chrome 分隔线统一）。 */
+/* "Browser arch" bottom border of the top tab strip (compositional, no base rule, zero
+   regression with the image off). With the image on, the whole tab strip + all tabs are
+   transparent (showing the real background image); a thin bottom border separates the
+   tab strip from the content below, open only at the active tab — the line wraps around
+   the top of the active tab (arch outline), and the active tab is distinguished by this
+   outline rather than a fill color. A continuous bottom border can't "open" at the active
+   tab (transparent children can't cover a line drawn by an ancestor), so the flat line is
+   drawn segment by segment on the active tab's sibling areas (reserved area/inactive
+   tabs/buttons/drag filler), and the active tab and its ancestors don't draw it. The arch
+   outline (top + sides + reverse-rounded feet) and the gap fill for the group px-2 at both
+   ends are in the .browser-tab-item block below. Color = var(--ws-chrome-border) (the
+   reinforced color defined below, unified with all chrome dividers like the status
+   bar/header). */
 
-/* ===== 结构性 chrome 分隔线加强色 --ws-chrome-border =====
-   状态栏顶边 / 会话·文件 header 底边 / 移动端标题栏·aux 标签条底边 / 标签条平线 + 激活 tab 拱门——
-   这些持久的 chrome 细分隔线原本用主题 --border（浅色主题=0.922 灰，在浅色磨砂面上几乎看不见；深色
-   主题=白/10%）。开启背景图后（默认遮罩 0.82 把画面veil向 --background），它们常被冲淡看不清（用户
-   反馈「边框很多时候不清楚」）。这里给它们一个 foreground 染色的加强 hairline：浅色主题转深、深色主题
-   转浅，自动在两侧都有对比；alpha 低只描出一条清晰细线。仅 bg-on 生效，关图零回归。单一变量=一处调深浅。
-   **R2 13%→18%**：13% 在**浅色**背景图（暖白/高亮度照片）上仍旧糊掉——遮罩把画面 veil 向 --background
-   后，13% 的 foreground 线与被 veil 的浅色画面亮度差太小（用户二次反馈「都看不清，特别是边界」）。18%
-   仍是 hairline（不发黑、不抢内容），但在浅图上有可辨亮度差；深色主题白线同步提亮一档。 */
+/* ===== Reinforced color for structural chrome dividers --ws-chrome-border =====
+   Status bar top edge / conversation/file header bottom edge / mobile title bar/aux tab
+   strip bottom edge / tab strip flat line + active tab arch — these persistent thin
+   chrome dividers originally used the theme --border (light theme = 0.922 gray, nearly
+   invisible on light frosted surfaces; dark theme = white/10%). With the background image
+   on (the default 0.82 scrim veils the image toward --background), they often wash out
+   (user feedback: "borders are often unclear"). Here they get a reinforced hairline tinted
+   with foreground: darker in light themes, lighter in dark themes, so there's contrast on
+   both; low alpha draws just a crisp thin line. Only active with bg-on, zero regression
+   with the image off. A single variable = one place to tune the intensity.
+   **R2 13%→18%**: 13% still washed out on **light** background images (warm white/bright
+   photos) — after the scrim veils the image toward --background, the brightness
+   difference between a 13% foreground line and the veiled light image is too small
+   (second user feedback: "can't see anything, especially the edges"). 18% is still a
+   hairline (not blackish, doesn't compete with content) but has a discernible brightness
+   difference on light images; the white line in dark themes is brightened one step to
+   match. */
 [data-workspace-bg="on"] {
   --ws-chrome-border: color-mix(in oklch, var(--foreground) 18%, transparent);
 }
-/* 老引擎无 color-mix 时回落到主题 --border（仍随主题，至少不崩）。 */
+/* Old engines without color-mix fall back to the theme --border (still follows the theme, at least doesn't break). */
 @supports not (background: color-mix(in oklch, white, transparent)) {
   [data-workspace-bg="on"] {
     --ws-chrome-border: var(--border);
   }
 }
-/* 组合式 utility（无 base 规则）：挂在已带 border-* / border-border* 的 chrome 元素上，开图时用加强色
-   覆盖其 border-color。unlayered 压过 Tailwind 的 layered border-border（与 specificity 无关）。关图无此
-   规则 → 元素保留自带 border 颜色，零回归。这些分隔线无 hover 变色，故 unlayered 覆盖不会误盖交互态。 */
+/* Compositional utility (no base rule): applied to chrome elements that already have
+   border-* / border-border*; with the image on, overrides their border-color with the
+   reinforced color. Unlayered beats Tailwind's layered border-border (regardless of
+   specificity). With the image off this rule doesn't apply → the element keeps its own
+   border color, zero regression. These dividers have no hover color change, so the
+   unlayered override won't clobber interactive states. */
 [data-workspace-bg="on"] .ws-chrome-border {
   border-color: var(--ws-chrome-border);
 }
 
-/* 平线：挂到激活 tab 的兄弟/非祖先区域，逐段 border-bottom 连成一条线（各兄弟 h-full，
-   底都落在 strip 底 y=40）。激活 tab 不挂 → 留缺口给拱门。色随 --ws-chrome-border（同上加强色，
-   与状态栏/header 分隔线统一）。 */
+/* Flat line: applied to the active tab's sibling/non-ancestor areas; segment-by-segment
+   border-bottom forms one line (each sibling is h-full, all bottoms land at the strip
+   bottom y=40). Not applied to the active tab → leaves a gap for the arch. Color follows
+   --ws-chrome-border (the same reinforced color, unified with status bar/header dividers). */
 [data-workspace-bg="on"] .ws-strip-line {
   border-bottom: 1px solid var(--ws-chrome-border);
 }
 
-/* 分栏拖拽把手的静止细线（会话↔文件、自动化列表↔详情…）：ResizableHandle 的 `before:bg-border` 在
-   背景图上同样被冲淡，两栏之间没了边界。只把 **inactive** 态换成加强色——hover/drag 态那两档是
-   Tailwind layered 工具类，无条件覆盖会被 unlayered 规则静默吃掉、丢掉拖拽反馈，故用 state 属性
-   精确限定。关图无此规则 → 仍是 bg-border，零回归。 */
+/* Idle thin line of split-pane resize handles (conversation↔files, automation list↔detail…):
+   ResizableHandle's `before:bg-border` also washes out over the background image, leaving
+   no edge between panes. Only the **inactive** state switches to the reinforced color —
+   the hover/drag states are Tailwind layered utilities, and an unconditional override
+   would be silently swallowed by the unlayered rule, losing drag feedback, so the state
+   attribute scopes it precisely. With the image off this rule doesn't apply → still
+   bg-border, zero regression. */
 [data-workspace-bg="on"] [data-resize-handle-state="inactive"]::before {
   background-color: var(--ws-chrome-border);
 }
 
-/* ===== 分栏拖拽把手 hover/drag 的**实色** =====
-   这两档原本是 `bg-foreground/40` / `/60`（半透明）。把手盒子本身只有 1px 宽，加粗后的 5px 线
-   居中压过去 → 两侧各 2px 骑在相邻面板上，正中 1px 却是两个面板都够不到的缝，透出的是面板组
-   底下的页面底色。于是只要两栏的背景不是页面底色（会话↔文件分栏顶部那条 `bg-muted` 标签条就是
-   典型），半透明线在缝上会亮一档，整条线读成「两条竖线中间夹一道缝」（用户反馈「顶部有两个边框
-   竖线重叠」）。实色取「40%/60% foreground 压在 --background 上」的同一个合成值：页面底色上与
-   原来逐像素一致（`in srgb` 而非 oklab——alpha 合成就是在 sRGB 分量上线性插值，oklab 混出来会
-   暗一档），换到标签条那种别的底色上也不再变调，缝随之消失。随主题走：自定义属性里的 var() 是在
-   **声明它的那个元素**上代入的（不是使用处），而主题的 --foreground/--background 正是由
-   `[data-theme=…]` / `.dark` 写在根元素上的（见 appearance-provider 的 documentElement），
-   和这条 :root 同一个元素 ⇒ 深色主题、强调色主题自动跟随。要把主题挪到子树上，这两行得跟着挪。
-   color-mix 不是新依赖——Tailwind v4 的 `/40` 透明度修饰符本身就是 color-mix。 */
+/* ===== **Solid colors** for split-pane resize handle hover/drag =====
+   These two states were originally `bg-foreground/40` / `/60` (translucent). The handle
+   box itself is only 1px wide, and the thickened 5px line is centered over it → 2px on
+   each side overlap the adjacent panels, while the middle 1px is a gap neither panel
+   reaches, exposing the page background beneath the panel group. So whenever the two
+   panes' background isn't the page background (the `bg-muted` tab strip at the top of the
+   conversation↔files split is the typical case), the translucent line is one step
+   brighter over the gap, and the whole line reads as "two vertical lines with a gap
+   between them" (user feedback: "two border lines overlap at the top"). The solid color
+   uses the same composited value as "40%/60% foreground over --background": pixel-identical
+   to before on the page background (`in srgb` rather than oklab — alpha compositing is
+   linear interpolation of sRGB components; mixing in oklab comes out one step darker),
+   and it no longer shifts tone on other backgrounds like the tab strip, so the gap
+   disappears. Follows the theme: var() in a custom property is substituted on **the
+   element that declares it** (not where it's used), and the theme's
+   --foreground/--background are written onto the root element by `[data-theme=…]` /
+   `.dark` (see documentElement in appearance-provider), the same element as this :root ⇒
+   dark and accent themes follow automatically. If the theme moves onto a subtree, these
+   two lines must move with it.
+   color-mix is not a new dependency — Tailwind v4's `/40` opacity modifier is itself
+   color-mix. */
 :root {
   --resize-handle-hover: color-mix(
     in srgb,
@@ -1343,10 +1439,12 @@
   );
 }
 
-/* 旧 WebKitGTK 无 color-mix 时降级为不透明（背景图仅在透明内容区透出，不崩）。 */
+/* Old WebKitGTK without color-mix degrades to opaque (the background image only shows through transparent content areas; nothing breaks). */
 @supports not (background: color-mix(in oklch, white, transparent)) {
-  /* 老引擎关掉面板 chrome 的背景模糊（背景色 color-mix 已作废回落到不透明 bg-*）。消息内表面
-     现已不磨砂（只半透明染色 + 纯色 var(--border) 描边），无 backdrop-filter 可关，故不在此列。 */
+  /* Old engines disable backdrop blur on panel chrome (the color-mix background color is
+     already dropped and falls back to opaque bg-*). In-message surfaces are no longer
+     frosted (only translucent tint + solid var(--border) outline), so there's no
+     backdrop-filter to disable and they're not listed here. */
   [data-workspace-bg="on"] .ws-surface,
   [data-workspace-bg="on"] .ws-surface-muted,
   [data-workspace-bg="on"] .ws-surface-sidebar,
@@ -1354,17 +1452,20 @@
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
-  /* Monaco sticky scroll 是第三方 DOM，无自带 bg 工具类可回落——color-mix 作废后
-     background-color 声明整条失效会让 .sticky-widget 透明（滚动代码透出）。故老引擎显式
-     回落到不透明画布色 var(--card)（即背景图开启前的老不透明band，仍可读），并关掉磨砂。 */
+  /* Monaco sticky scroll is third-party DOM with no bg utility of its own to fall back to —
+     once color-mix is dropped, the whole background-color declaration is invalid and
+     .sticky-widget becomes transparent (scrolling code shows through). So old engines
+     explicitly fall back to the opaque canvas color var(--card) (i.e. the old opaque band
+     from before the background image, still readable) and disable frosting. */
   [data-workspace-bg="on"] .monaco-editor .sticky-widget {
     background-color: var(--card);
     -webkit-backdrop-filter: none;
     backdrop-filter: none;
   }
-  /* 标签条拱门/平线（ws-strip-line、.browser-tab-item 的拱门 ::after / 首末 tab 补缝
-     ::after / seat 描边）只画纯色 var(--border) 边框——无 color-mix、无 backdrop-filter，
-     故不进本 @supports，老引擎照常渲染。 */
+  /* The tab strip arch/flat line (ws-strip-line, .browser-tab-item's arch ::after /
+     first/last tab gap-fill ::after / seat outline) only draws solid var(--border)
+     borders — no color-mix, no backdrop-filter — so they're not in this @supports and
+     render normally on old engines. */
 }
 
 /* Native fallback for containers that cannot use OverlayScrollbars (e.g. virtua) */
@@ -1510,26 +1611,32 @@
   z-index: 10;
 }
 
-/* 表格圆角卡片化（与背景图无关，始终生效·点③·参考委派卡）：把圆角 + 边框挂在滚动容器
-   （直接包着 <table> 的 overflow-x-auto div）——它已有 overflow(auto)，border-radius 会把表格裁到
-   圆角；复制工具条是 table-wrapper 的兄弟、不在此容器内，故不被裁（无需搬动）。 */
+/* Rounded-card tables (independent of the background image, always active; point 3;
+   modeled on the delegation card): radius + border live on the scroll container (the
+   overflow-x-auto div directly wrapping <table>) — it already has overflow(auto), so
+   border-radius clips the table to the rounded corners; the copy toolbar is a sibling of
+   table-wrapper, not inside this container, so it isn't clipped (no need to move it). */
 [data-streamdown="table-wrapper"] > div:has(> [data-streamdown="table"]) {
   border-radius: 0.5rem;
   border: 1px solid var(--border);
 }
-/* 表格自带外边框归 0，避免与容器边框双线；内部行线（tr border-b / tbody divide-y）保留。 */
+/* Zero the table's own outer border to avoid doubling with the container border; inner row lines (tr border-b / tbody divide-y) are kept. */
 [data-streamdown="table"] {
   border-width: 0;
 }
-/* 末行的 border-b 会与容器底边框叠成双线（Codex 实测：末行 1px + 容器 1px）——去掉「最末行组」
-   末行的底边框；有 tbody 时表头末行的 border-b（表头/表体分隔线）不受影响、保留。 */
+/* The last row's border-b stacks with the container's bottom border into a double line
+   (measured by Codex: last row 1px + container 1px) — remove the bottom border of the last
+   row in the "last row group"; when there's a tbody, the header's last-row border-b (the
+   header/body divider) is unaffected and kept. */
 [data-streamdown="table"] > tbody:last-child > tr:last-child,
 [data-streamdown="table"] > thead:last-child > tr:last-child {
   border-bottom-width: 0;
 }
-/* 表格不再磨砂（用户要真透出背景图）：滚动容器只保留上面的圆角 + 边框；thead/tbody 走半透明
-   中性染色。历史注：曾给行组 thead/tbody 加 backdrop-filter 会让 border-collapse 合并边框整体
-   不渲染（表格边框消失根因），去磨砂后无此问题。 */
+/* Tables are no longer frosted (the user wants the background image to truly show
+   through): the scroll container keeps only the radius + border above; thead/tbody use a
+   translucent neutral tint. Historical note: adding backdrop-filter to the thead/tbody
+   row groups caused border-collapse merged borders to not render at all (root cause of
+   disappearing table borders); without frosting this issue is gone. */
 
 /* Streamdown code line number width by total line digits */
 [data-streamdown="code-block-body"] code {
@@ -1847,18 +1954,22 @@
   .action-menu-item,
 .monaco-editor .suggest-widget .monaco-list-row,
 .monaco-editor .peekview-widget .monaco-list-row {
-  /* 与 --radius-md 同式（乘法），不再用 `- 2px`：外观设置页的圆角滑块能把 --radius
-     调到 0，减法在小值处会算出负数，整条声明被丢弃。默认 0.625rem 下两者都是 8px。 */
+  /* Same form as --radius-md (multiplicative), no longer `- 2px`: the radius slider on the
+     Appearance settings page can set --radius to 0, where subtraction yields a negative
+     value and the whole declaration is dropped. At the default 0.625rem both are 8px. */
   border-radius: calc(var(--radius) * 0.8);
 }
 
-/* 并排 diff 的中缝：Monaco 自带样式在 original / modified 两侧各画一条 6px 模糊的
-   box-shadow（`--vscode-scrollbar-shadow`），而 `diffEditor.border` 默认 null——中缝于是
-   只剩一团柔和阴影、没有实线，看上去发虚（用户反馈「左右中间的竖线/边框很虚」），开背景图
-   时画布透明更糊。这里去掉这两条阴影，中缝改由主题里的 `diffEditor.border`（monaco-themes.ts）
-   画 1px 实线，两者配套。选择器加 `div` 元素限定（0,4,1）压过 Monaco 自己的 (0,4,0) 规则——
-   Monaco 的 CSS 是运行时按需插入的，晚于本表，靠特异性而非顺序取胜。仅并排 diff 生效，普通
-   编辑器滚动时的阴影不受影响。 */
+/* Center seam of the side-by-side diff: Monaco's built-in styles draw a 6px blurred
+   box-shadow (`--vscode-scrollbar-shadow`) on each of the original / modified sides, while
+   `diffEditor.border` defaults to null — so the seam is just a soft shadow with no solid
+   line and looks fuzzy (user feedback: "the vertical line/border between left and right is
+   blurry"), even more so with the background image on and a transparent canvas. Here the
+   two shadows are removed and the seam is instead drawn as a 1px solid line by the theme's
+   `diffEditor.border` (monaco-themes.ts); the two go together. The selector adds a `div`
+   element qualifier (0,4,1) to beat Monaco's own (0,4,0) rule — Monaco's CSS is inserted
+   on demand at runtime, after this sheet, so it wins by specificity rather than order.
+   Only affects side-by-side diffs; regular editor scroll shadows are unaffected. */
 div.monaco-diff-editor.side-by-side .editor.original,
 div.monaco-diff-editor.side-by-side .editor.modified {
   box-shadow: none;
@@ -2438,7 +2549,7 @@ div.monaco-diff-editor.side-by-side .editor.modified {
    and the gradient fades exactly that padding. A title that fits ends inside the
    solid zone, so the fade falls over empty padding and eats nothing; only a title
    long enough to spill into the padding actually fades. This is what lets a short /
-   only tab ("新建会话") show its full title instead of losing its tail to the fade.
+   only tab ("New Conversation") show its full title instead of losing its tail to the fade.
    One fade width suffices because the close button no longer hides under the label —
    its footprint is reserved as content padding (below), so it never covers text. */
 .browser-tab-label {
@@ -2497,10 +2608,11 @@ div.monaco-diff-editor.side-by-side .editor.modified {
 .browser-tab-hover::before {
   content: "";
   position: absolute;
-  /* rem 而非 2/2/8/2 px：底部这一格是**镜像 `.browser-tab-seat` 的 0.5rem 座高**（凹
-     弧脚的地盘），写死 px 的话缩放到 250% 时座是 20px 而药丸只让出 8px —— 药丸下沿落进
-     脚区，上面注释里「让开脚部」的前提就不成立了。100% 下 0.125rem=2px、0.5rem=8px，
-     逐像素与原值相同。 */
+  /* rem rather than 2/2/8/2 px: the bottom inset **mirrors `.browser-tab-seat`'s 0.5rem
+     seat height** (the concave feet's area). Hardcoded in px, at 250% zoom the seat is
+     20px while the pill only leaves 8px — the pill's bottom edge falls into the feet
+     area, breaking the "clear the feet" premise in the comment above. At 100%
+     0.125rem=2px and 0.5rem=8px, pixel-identical to the original values. */
   inset: 0.125rem 0.125rem 0.5rem 0.125rem;
   z-index: -1;
   border-radius: 0.5rem;
@@ -2562,10 +2674,13 @@ div.monaco-diff-editor.side-by-side .editor.modified {
   width: 0.5rem;
   background-color: var(--background);
 }
-/* ★ 遮罩半径必须与上面的 0.5rem 见方盒**同单位**：写死 7px/8px 时，缩放到 250% 盒子是
-   20px 见方而凹弧只有 8px 半径 —— 弧只啃掉左上角一小口，剩下的仍是实心方块，视觉上就是
-   两个「方脚」而非反向圆角（用户在 250% 下反馈「反向圆角过渡不自然」）。0.4375rem=7px、
-   0.5rem=8px @100%，逐像素与原值相同；抗锯齿带宽也随之等比。 */
+/* ★ The mask radius must use **the same unit** as the 0.5rem square box above: hardcoded
+   at 7px/8px, at 250% zoom the box is 20px square while the concave arc has only an 8px
+   radius — the arc just nibbles a small bite off the top-left corner and the rest remains
+   a solid square, visually two "square feet" instead of reverse-rounded corners (user
+   feedback at 250%: "the reverse-rounded transition looks unnatural"). 0.4375rem=7px,
+   0.5rem=8px @100%, pixel-identical to the original values; the anti-aliasing band scales
+   proportionally too. */
 .browser-tab-seat::before {
   left: -0.5rem;
   -webkit-mask-image: radial-gradient(
@@ -2592,20 +2707,28 @@ div.monaco-diff-editor.side-by-side .editor.modified {
     #000 0.5rem
   );
 }
-/* Workspace 背景图开启：所有 tab 全透明，seat 反向圆角默认不显示（否则透明 tab 会挂
-   var(--background) 白色小圆角）。非激活 tab 的 seat 已不随 hover 显示（见上「仅激活」），
-   激活 tab 的脚在下方用真实 border 重画。 */
+/* Workspace background image on: all tabs are fully transparent, and the seat's
+   reverse-rounded corners are hidden by default (otherwise transparent tabs would carry
+   small var(--background) white rounded corners). Inactive tabs' seats no longer show on
+   hover (see "active only" above); the active tab's feet are redrawn below with real
+   borders. */
 [data-workspace-bg="on"] .browser-tab-seat::before,
 [data-workspace-bg="on"] .browser-tab-seat::after {
   background-color: transparent;
 }
-/* 激活 tab 的两个反向圆角脚（bg-on）：用**真实 border + border-radius** 画 1px 凹弧描边，
-   取代旧的 radial-gradient 环带 mask——环带核仅 0.5px + 两侧抗锯齿，实机易出毛边/线头
-   （用户反馈「底部两角有线跑出来、过渡不自然」）。seat ::before/::after 本就是 gutter 里
-   0.5rem 见方的盒(left/right:-0.5rem, y32→40, box-sizing:border-box)，把**对角圆角 + 相邻
-   两条边框**做成一段干净四分之一凹弧：左脚=右下角圆角+下/右边框，右脚=左下角圆角+下/左边框。
-   弧顶(tab 边 y32)竖直切线接拱门 ::after 侧边、弧底(gutter 外沿 y40)水平切线接 ws-strip-line
-   平线，两端相切→过渡自然。清掉 mask 与填充色，只留描边，色 var(--ws-chrome-border) 与拱门同深。 */
+/* The active tab's two reverse-rounded feet (bg-on): draw a 1px concave arc outline with
+   **real border + border-radius**, replacing the old radial-gradient ring mask — the ring
+   core was only 0.5px + anti-aliasing on both sides, prone to jaggies/stray line ends on
+   real devices (user feedback: "lines stick out at the two bottom corners, the transition
+   looks unnatural"). The seat ::before/::after are already 0.5rem square boxes in the
+   gutter (left/right:-0.5rem, y32→40, box-sizing:border-box); the **opposite corner
+   radius + two adjacent borders** form a clean quarter concave arc: left foot =
+   bottom-right radius + bottom/right borders, right foot = bottom-left radius +
+   bottom/left borders. The arc top (tab edge, y32) has a vertical tangent joining the
+   arch ::after side, and the arc bottom (gutter outer edge, y40) has a horizontal tangent
+   joining the ws-strip-line flat line; tangent at both ends → a natural transition. The
+   mask and fill are cleared, leaving only the outline, colored var(--ws-chrome-border),
+   the same depth as the arch. */
 [data-workspace-bg="on"]
   .browser-tab-item[data-active="true"]
   .browser-tab-seat::before,
@@ -2631,15 +2754,22 @@ div.monaco-diff-editor.side-by-side .editor.modified {
   border-bottom-left-radius: 0.5rem;
 }
 
-/* 激活 tab 拱门「顶 + 两侧」描边：画在 .browser-tab-item 的 ::after（Reorder.Item 未
-   overflow-hidden，脚可外飘）。top:0 = group pt-1.5 下沿(y6)，bottom:0.5rem → 竖边止于
-   y32，正好接上 seat 的反向圆角脚(y32→40)；竖边不再越过脚部下探到 y40，消除脚部两侧的
-   「垂直角边框」毛刺。rounded-t 出拱顶。仅 bg-on + 激活生效，关图无 ::after（零回归）。
-   ★left/right:-1px（而非 0）：竖边描边画在盒内沿，若贴 tab 边(left:0)则落在 x∈[0,1]（tab
-   内侧），而 seat 脚的竖直切线描边在 tab 外沿 x∈[-1,0]（脚 ::before/::after 往 gutter 外
-   飘 0.5rem，border 画在其内沿）——两者差 1px 形成 y32 处「水平错位」，正是用户反馈激活 tab
-   底部两角弧度「断断续续」的成因。把两侧各外移 1px → 竖边与脚竖直切线共线(x∈[-1,0] /
-   [w,w+1])，拱门侧边与反向弧脚无缝相接。取代旧的 .ws-tab-arch（整高边框底部越界成毛刺）。 */
+/* Active tab arch "top + sides" outline: drawn on .browser-tab-item's ::after
+   (Reorder.Item isn't overflow-hidden, so the feet can extend outward). top:0 = bottom
+   edge of the group's pt-1.5 (y6), bottom:0.5rem → the vertical sides stop at y32,
+   exactly meeting the seat's reverse-rounded feet (y32→40); the sides no longer extend
+   past the feet down to y40, eliminating the "vertical corner border" spurs on both sides
+   of the feet. rounded-t forms the arch top. Only active with bg-on + active; with the
+   image off there's no ::after (zero regression).
+   ★left/right:-1px (rather than 0): the side outline is drawn on the box's inner edge; if
+   flush with the tab edge (left:0) it lands at x∈[0,1] (inside the tab), while the seat
+   feet's vertical-tangent outline is at the tab's outer edge x∈[-1,0] (the feet
+   ::before/::after extend 0.5rem out into the gutter, with the border drawn on their inner
+   edge) — the 1px difference creates a "horizontal misalignment" at y32, exactly the cause
+   of the user-reported "choppy" arcs at the active tab's two bottom corners. Shifting each
+   side out by 1px → the sides and the feet's vertical tangents are collinear (x∈[-1,0] /
+   [w,w+1]), and the arch sides join the reverse-arc feet seamlessly. Replaces the old
+   .ws-tab-arch (whose full-height border overshot at the bottom into spurs). */
 [data-workspace-bg="on"] .browser-tab-item[data-active="true"]::after {
   content: "";
   position: absolute;
@@ -2655,17 +2785,24 @@ div.monaco-diff-editor.side-by-side .editor.modified {
   pointer-events: none;
 }
 
-/* 标签条两端的补缝：group 的 pl-2 在首 tab 外留 0.5rem 无线缝（首 tab 非激活时左端断层）。
-   补缝不能画在 group 上（连续线会盖到激活 tab 下方），且必须跟随边缘 tab 的激活态——激活的
-   边缘 tab 该处是拱门脚（反向圆角描边）而非平线，此处绝不能有平线。故补缝画在「非激活」边缘
-   tab 自己的 ::after 上（激活 tab 的 ::after 已改画拱门轮廓，且 :not([data-active]) 排除它）：
-   往 tab 外侧的 gutter 伸出 0.5rem 平线，接上左侧 reserve 的 ws-strip-line。gutter 落在 group
-   的 padding box 内，overflow-hidden 不裁（同 seat 脚）。宽度 = pl-2 = 0.5rem（改 group 内边距
-   需同步）。仅 bg-on 生效，关图无补缝（零回归）。
-   :last-child 一支目前不会命中：两条嵌入式标签条（会话 tab-bar.tsx / 文件
-   file-workspace-tab-bar.tsx）都把尾部 wrapper 放进 group 当最后一个子元素，末 tab 因此不是
-   :last-child，且 group 右侧无 padding——尾部 wrapper 自己的 ws-strip-line 直接从末 tab 右沿
-   起画，无缝可补。保留该分支是给「末 tab 后确实留了右 gutter」的标签条兜底。 */
+/* Gap fill at both ends of the tab strip: the group's pl-2 leaves a 0.5rem line-less gap
+   outside the first tab (a break at the left end when the first tab is inactive). The
+   fill can't be drawn on the group (a continuous line would run under the active tab),
+   and it must follow the edge tab's active state — an active edge tab has an arch foot
+   (reverse-rounded outline) there rather than a flat line, so there must never be a flat
+   line there. So the fill is drawn on the "inactive" edge tab's own ::after (the active
+   tab's ::after now draws the arch outline, and :not([data-active]) excludes it): a 0.5rem
+   flat line extends into the gutter outside the tab, joining the left reserve's
+   ws-strip-line. The gutter lies within the group's padding box, so overflow-hidden
+   doesn't clip it (same as the seat feet). Width = pl-2 = 0.5rem (keep in sync if the
+   group padding changes). Only active with bg-on; no fill with the image off (zero
+   regression).
+   The :last-child branch currently never matches: both embedded tab strips (conversation
+   tab-bar.tsx / file file-workspace-tab-bar.tsx) put the trailing wrapper inside the
+   group as the last child, so the last tab isn't :last-child, and the group has no right
+   padding — the trailing wrapper's own ws-strip-line starts right at the last tab's right
+   edge, leaving no gap to fill. The branch is kept as a fallback for tab strips that do
+   leave a right gutter after the last tab. */
 [data-workspace-bg="on"]
   .browser-tab-item:first-child:not([data-active="true"])::after,
 [data-workspace-bg="on"]
@@ -2687,22 +2824,32 @@ div.monaco-diff-editor.side-by-side .editor.modified {
   right: -0.5rem;
 }
 
-/* 激活 tab 两侧邻居的基线内缩：激活 tab 的反向圆角脚（透明）往外 flare 0.5rem，盖在紧邻
-   tab 上；紧邻 tab 的 ws-strip-line 是**全宽** border-bottom，其被脚罩住的那 0.5rem 会在脚
-   下透出成一小段横线（脚弧只在外端 y40 触到基线，内侧一路悬空）——即用户反馈「激活 tab 角边
-   还有横线穿出来」。修法：把紧邻 tab 的基线撤掉 border-bottom、改画一条**朝激活 tab 一侧内缩
-   0.5rem** 的 ::after 平线，起点正落在脚弧触地处 → 基线与脚弧无缝相接、脚下不再有横线。
-   `data-adjacent-active`（before/after）由标签条按 activeIndex 现算并挂到 .browser-tab-item
-   上（前一个=before，后一个=after），避免上一个兄弟无法用 CSS 选中的问题，且不依赖 :has()。
-   紧邻 tab 必为非激活（有 ws-strip-line + 空闲 ::after），仅 bg-on 生效，关图零回归。 */
+/* Inset baseline for the active tab's neighbors: the active tab's reverse-rounded feet
+   (transparent) flare 0.5rem outward over the adjacent tabs; an adjacent tab's
+   ws-strip-line is a **full-width** border-bottom, and the 0.5rem covered by the foot
+   shows through beneath it as a short horizontal line (the foot arc only touches the
+   baseline at its outer end y40 and floats above it all the way in) — i.e. the user
+   feedback "a horizontal line still pokes out at the active tab's corner". Fix: remove
+   the adjacent tab's border-bottom baseline and instead draw an ::after flat line **inset
+   0.5rem on the side facing the active tab**, starting exactly where the foot arc touches
+   down → the baseline joins the foot arc seamlessly and no line shows under the foot.
+   `data-adjacent-active` (before/after) is computed by the tab strip from activeIndex and
+   set on .browser-tab-item (previous = before, next = after), sidestepping the fact that a
+   previous sibling can't be selected with CSS, and without depending on :has(). Adjacent
+   tabs are always inactive (they have ws-strip-line + a free ::after). Only active with
+   bg-on, zero regression with the image off. */
 [data-workspace-bg="on"]
   .browser-tab-item[data-adjacent-active]
   .ws-strip-line {
-  /* border-bottom-WIDTH:0（而非仅 color:transparent）：内缩基线走 ::after(bottom:0)，其
-     containing block 是本元素 padding box。若保留 1px 透明边框，padding box 比 border box
-     矮 1px → ::after 落在 border box 底沿上方 1px，与其它 tab 的 border-bottom（落在 border
-     box 底沿）差 1px，即用户反馈「紧邻激活的 tab 下边框对不齐」。撤掉边框宽度 → padding box
-     与 border box 同底，::after bottom:0 正落 border box 底沿，与普通 tab 基线共线。 */
+  /* border-bottom-WIDTH:0 (not just color:transparent): the inset baseline uses
+     ::after(bottom:0), whose containing block is this element's padding box. Keeping a
+     1px transparent border would make the padding box 1px shorter than the border box →
+     ::after lands 1px above the border box's bottom edge, 1px off from other tabs'
+     border-bottom (which sits at the border box's bottom edge), i.e. the user feedback
+     "the bottom border of the tab next to the active one is misaligned". Removing the
+     border width → the padding box and border box share the same bottom, so ::after
+     bottom:0 lands exactly on the border box's bottom edge, collinear with regular tab
+     baselines. */
   border-bottom-width: 0;
 }
 [data-workspace-bg="on"]
@@ -2727,14 +2874,18 @@ div.monaco-diff-editor.side-by-side .editor.modified {
   left: 0;
   right: 0.5rem;
 }
-/* 同款内缩，但用于末尾「新建会话」按钮 wrapper（它紧邻激活的末尾 tab 时挂 data-adjacent-active
-   ="after"）。激活 tab 的右反向圆角脚往外 flare 0.5rem 盖在这个 wrapper 上，而 wrapper 的
-   ws-strip-line 是全宽 border-bottom，会在脚下透出一小段横线（用户反馈「激活末尾 tab 右下角
-   下边框突出来」）。上面的规则只处理 tab 邻居——那里 ws-strip-line 是 .browser-tab-item 的
-   后代；这个尾部 wrapper 不是 tab，且 ws-strip-line 与 data-adjacent-active 同挂在它自己身上，
-   故用独立选择器。撤掉全宽 border-bottom、改画一条朝激活 tab 一侧内缩 0.5rem 的 ::after 平线
-   （起点正落在脚弧触地处）→ 脚下不再有横线。wrapper 的 position:relative 由组件提供。仅 bg-on
-   生效，关图零回归。 */
+/* The same inset, but for the trailing "New Conversation" button wrapper (it gets
+   data-adjacent-active="after" when next to an active last tab). The active tab's right
+   reverse-rounded foot flares 0.5rem outward over this wrapper, and the wrapper's
+   ws-strip-line is a full-width border-bottom that shows through beneath the foot as a
+   short horizontal line (user feedback: "the bottom border sticks out at the bottom-right
+   corner of the active last tab"). The rule above only handles tab neighbors — there
+   ws-strip-line is a descendant of .browser-tab-item; this trailing wrapper isn't a tab,
+   and ws-strip-line and data-adjacent-active are both on the wrapper itself, hence a
+   separate selector. Remove the full-width border-bottom and instead draw an ::after flat
+   line inset 0.5rem on the side facing the active tab (starting exactly where the foot arc
+   touches down) → no line under the foot. The wrapper's position:relative is provided by
+   the component. Only active with bg-on, zero regression with the image off. */
 [data-workspace-bg="on"] .ws-strip-line[data-adjacent-active="after"] {
   border-bottom-width: 0;
 }
@@ -2750,32 +2901,38 @@ div.monaco-diff-editor.side-by-side .editor.modified {
 }
 
 /* ===========================================================================
-   Token 用量看板配色（.tu-viz 作用域）
+   Token usage dashboard colors (.tu-viz scope)
 
-   看板只说两种颜色的语言：--tu-accent（强调色）＝「由缓存承担的上下文」，
-   --tu-ink 及其淡阶（中性墨色）＝「真正新算的 Token」。趋势堆叠、缓存环、
-   构成条与热力图 ramp 全部由这两个锚派生，所以整页天然跟随外观预设的
-   强调色（emphasis 编码：一个彩色 + 中性灰阶，不再需要多色分类板——
-   所有分档/排行图里身份都由行内文字直标承载，颜色只做量级提示）。
+   The dashboard speaks a two-color language: --tu-accent (accent) = "context served by
+   the cache", and --tu-ink with its tints (neutral ink) = "tokens actually computed
+   fresh". The trend stack, cache ring, composition bar and heatmap ramp are all derived
+   from these two anchors, so the whole page naturally follows the appearance preset's
+   accent color (emphasis encoding: one hue + a neutral gray scale, no multi-color
+   categorical palette needed — in all tiered/ranking charts identity is carried by
+   inline direct labels, and color only hints at magnitude).
 
-   强调色取 --primary：八个彩色预设下它就是主题色；亮色模式掺 14% 墨色，
-   把 yellow/orange 这类高亮度主色压到对白底 ≥2.5:1 的标记可读区。五个
-   中性预设（neutral/zinc/slate/stone/gray）的 --primary 是无彩度黑/白，
-   会和 --tu-ink 撞在一起 —— 这些预设在下方显式锚定到经典看板蓝。
+   The accent comes from --primary: under the eight colored presets it is the theme
+   color; light mode mixes in 14% ink, pulling high-luminance primaries like
+   yellow/orange into the mark-legible range of ≥2.5:1 against a white background. The
+   five neutral presets (neutral/zinc/slate/stone/gray) have an achromatic black/white
+   --primary that would collide with --tu-ink — these presets are explicitly anchored
+   below to the classic dashboard blue.
 
-   顺序 ramp（热力图）用 color-mix 从强调色向表面色/墨色两端展开：与
-   中性色混合保持单一色相，混合比单调 → 亮度单调，两条 sequential 规则
-   由构造保证；card/foreground 明暗互换后同一组公式在暗色下自动反向。
-   真正的「零」不画 ramp，画中性空格加细描边，避免「没有数据」被读成
-   「很小的数据」。
+   The sequential ramp (heatmap) uses color-mix to spread from the accent toward the
+   surface/ink colors at both ends: mixing with neutrals keeps a single hue, and a
+   monotonic mix ratio → monotonic lightness, so both sequential rules are guaranteed by
+   construction; with card/foreground swapping light/dark, the same formulas reverse
+   automatically in dark mode.
+   A true "zero" doesn't use the ramp; it draws a neutral empty cell with a thin outline,
+   so "no data" isn't read as "very little data".
    ========================================================================= */
 .tu-viz {
   --tu-accent: color-mix(in oklab, var(--primary) 86%, var(--foreground));
   --tu-ink: var(--foreground);
-  /* 墨色淡阶：构成条里「新算」侧的次级行（缓存写入/输出） */
+  /* Ink tints: secondary rows on the "freshly computed" side of the composition bar (cache write/output) */
   --tu-ink-2: color-mix(in oklab, var(--foreground) 55%, var(--card));
   --tu-ink-3: color-mix(in oklab, var(--foreground) 32%, var(--card));
-  /* 强调色的表面淡染：缓存环的未充满轨道、洞察横幅底色、悬停列高亮 */
+  /* Soft surface tint of the accent: the cache ring's unfilled track, insight banner background, hovered column highlight */
   --tu-accent-soft: color-mix(in oklab, var(--tu-accent) 14%, var(--card));
   --tu-seq-1: color-mix(in oklab, var(--tu-accent) 13%, var(--card));
   --tu-seq-2: color-mix(in oklab, var(--tu-accent) 26%, var(--card));
@@ -2786,15 +2943,19 @@ div.monaco-diff-editor.side-by-side .editor.modified {
   --tu-seq-7: color-mix(in oklab, var(--tu-accent) 72%, var(--foreground));
 }
 .dark .tu-viz {
-  /* 暗色下主色本就落在中亮度带，不需要再压深 */
+  /* In dark mode the primary already falls in the mid-lightness band; no need to darken it further */
   --tu-accent: var(--primary);
 }
-/* 中性预设（neutral/zinc/slate/stone/gray）：--primary 是近黑/近白，看板随
-   之走全灰阶——不引入任何外来色相，和这些主题「主按钮就是黑白」的语言一致。
-   accent（=缓存）沿用上面的 primary 派生（近黑/近白）；「新算」墨阶整体下压
-   一档与 accent 拉开；seq ramp 顶部两档在灰阶下会贴在一起，重排为到 accent
-   为止的等距灰梯。公式全部混向 card/foreground，亮暗模式自动反向。
-   （:root:not([data-theme]) 是 inline 脚本失败时的兜底路径，同样中性。） */
+/* Neutral presets (neutral/zinc/slate/stone/gray): --primary is near-black/near-white,
+   so the dashboard goes fully grayscale with it — no foreign hue is introduced,
+   consistent with these themes' "primary button is black/white" language.
+   accent (= cache) keeps the primary-derived value above (near-black/near-white); the
+   "freshly computed" ink scale is pushed down one step overall to separate it from
+   accent; the top two steps of the seq ramp would merge in grayscale, so they're
+   rearranged into an evenly spaced gray ladder up to accent. All formulas mix toward
+   card/foreground, reversing automatically between light and dark modes.
+   (:root:not([data-theme]) is the fallback path when the inline script fails, also
+   neutral.) */
 :root:not([data-theme]) .tu-viz,
 [data-theme="neutral"] .tu-viz,
 [data-theme="zinc"] .tu-viz,
@@ -2987,4 +3148,60 @@ div.monaco-diff-editor.side-by-side .editor.modified {
   100% {
     transform: translateX(300%);
   }
+}
+
+/* Phantom — the active model's iconic accent.
+   PhantomModelAccentBridge (and PHANTOM_ACCENT_INIT_SCRIPT before first paint)
+   write both mode shades inline on <html>; the defaults below are the general
+   blue from PHANTOM_ACCENTS. The shade follows the explicit light/dark mode, so
+   the accent never fights the mode the user picked. */
+:root {
+  --phantom-accent-light: #1d4ed8;
+  --phantom-accent-light-foreground: #ffffff;
+  --phantom-accent-dark: #60a5fa;
+  --phantom-accent-dark-foreground: #0a0a0a;
+  --phantom-accent: var(--phantom-accent-light);
+  --phantom-accent-foreground: var(--phantom-accent-light-foreground);
+  --phantom-accent-soft: color-mix(
+    in srgb,
+    var(--phantom-accent) 16%,
+    transparent
+  );
+}
+
+:root.dark {
+  --phantom-accent: var(--phantom-accent-dark);
+  --phantom-accent-foreground: var(--phantom-accent-dark-foreground);
+}
+
+/* The model accent only recolors shadcn tokens on the neutral base preset.
+   An explicit color preset (data-theme other than neutral) is the user's
+   choice and wins; custom token overrides are inline on <html> and win over
+   this rule regardless. The repeated attribute lifts specificity to (0,3,1)
+   so it also beats the `:root:not([data-theme]).dark` fallback (0,3,0). */
+html[data-phantom-accent][data-phantom-accent]:is(
+    [data-theme="neutral"],
+    :not([data-theme])
+  ) {
+  --primary: var(--phantom-accent);
+  --primary-foreground: var(--phantom-accent-foreground);
+  --ring: var(--phantom-accent);
+  --sidebar-primary: var(--phantom-accent);
+  --sidebar-primary-foreground: var(--phantom-accent-foreground);
+  --chart-3: var(--phantom-accent);
+  accent-color: var(--phantom-accent);
+}
+
+html[data-phantom-accent] [data-slot="agent-pill"][aria-pressed="true"] {
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--phantom-accent) 32%, transparent);
+}
+
+.phantom-model-trigger {
+  border-color: color-mix(in srgb, var(--phantom-accent) 28%, transparent);
+}
+
+.phantom-model-trigger:hover {
+  background: var(--phantom-accent-soft);
+  color: var(--foreground);
 }

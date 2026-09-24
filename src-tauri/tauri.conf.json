@@ -1,6 +1,6 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "codeg",
+  "productName": "Phantom",
   "version": "0.32.2",
   "identifier": "app.codeg",
   "build": {
