@@ -615,10 +615,19 @@ async fn handle_acp_envelope(
                 // BEFORE dropping the guard so a second TurnComplete can't
                 // double-send it; retry below once the lock is released.
                 let deferred_kickoff = session.pending_prompt.take();
+                // Reply-hook state for the Telegram extensions — taken here
+                // (not just read) so it never survives past the turn that
+                // set it, same lifetime as `content_buffer`/`pending_prompt`.
+                let voice_reply_lang = session.pending_voice_reply_lang.take();
                 drop(guard);
 
                 let lang = get_lang(db).await;
-                let body = format_completion(&content, tool_count, lang);
+                // Pull `[[phantom:send_file ...]]` directives out before the
+                // text is shown to the user or spoken back — see
+                // `chat_channel::directives`.
+                let (clean_content, file_directives) =
+                    crate::chat_channel::directives::parse_send_file_directives(&content);
+                let body = format_completion(&clean_content, tool_count, lang);
 
                 let msg = RichMessage::info(body)
                     .with_title(match lang {
@@ -635,6 +644,14 @@ async fn handle_acp_envelope(
                     );
 
                 let _ = manager.send_to_target(&target, &msg).await;
+
+                if !file_directives.is_empty() {
+                    send_directed_files(manager, &target, &file_directives, lang).await;
+                }
+
+                if let Some(voice_lang) = voice_reply_lang {
+                    send_voice_reply(manager, &target, &clean_content, &voice_lang).await;
+                }
 
                 if stop_reason == "end_turn" {
                     let _ = conversation_service::update_status(
@@ -796,6 +813,117 @@ async fn clear_session_route(
         }
     } else {
         let _ = sender_context_service::clear_session(db, channel_id, sender_id).await;
+    }
+}
+
+/// Upload every `send_file` directive's target file to `target`, reporting a
+/// short text line instead of a file for any that fail path validation or
+/// the upload itself — never panics or aborts the batch on one bad path.
+async fn send_directed_files(
+    manager: &ChatChannelManager,
+    target: &ChannelMessageTarget,
+    directives: &[crate::chat_channel::directives::SendFileDirective],
+    lang: Lang,
+) {
+    let Some(home) = dirs::home_dir() else {
+        for _ in directives {
+            let msg = RichMessage::error(super::i18n::send_file_validation_failed(
+                lang,
+                "home directory could not be determined",
+            ));
+            let _ = manager.send_to_target(target, &msg).await;
+        }
+        return;
+    };
+
+    for directive in directives {
+        let (path, _size) =
+            match crate::chat_channel::directives::validate_send_file_path(&directive.path, &home)
+            {
+                Ok(v) => v,
+                Err(e) => {
+                    let msg = RichMessage::error(super::i18n::send_file_validation_failed(
+                        lang,
+                        &e.to_string(),
+                    ));
+                    let _ = manager.send_to_target(target, &msg).await;
+                    continue;
+                }
+            };
+
+        let bytes = match tokio::fs::read(&path).await {
+            Ok(b) => b,
+            Err(e) => {
+                let msg =
+                    RichMessage::error(super::i18n::send_file_upload_failed(lang, &e.to_string()));
+                let _ = manager.send_to_target(target, &msg).await;
+                continue;
+            }
+        };
+        let filename = path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "file".to_string());
+        let caption = directive.caption.as_deref();
+
+        let upload = match crate::chat_channel::directives::classify_attachment(&filename) {
+            crate::chat_channel::directives::AttachmentKind::Photo => {
+                manager
+                    .send_photo_to_target(target, bytes, &filename, caption)
+                    .await
+            }
+            crate::chat_channel::directives::AttachmentKind::Audio => {
+                manager
+                    .send_audio_to_target(target, bytes, &filename, caption)
+                    .await
+            }
+            crate::chat_channel::directives::AttachmentKind::Document => {
+                manager
+                    .send_document_to_target(target, bytes, &filename, caption)
+                    .await
+            }
+        };
+        if let Err(e) = upload {
+            let msg =
+                RichMessage::error(super::i18n::send_file_upload_failed(lang, &e.to_string()));
+            let _ = manager.send_to_target(target, &msg).await;
+        }
+    }
+}
+
+/// Synthesize `text` as a spoken reply and send it as a native voice message
+/// (Telegram: OGG/Opus via `sendVoice`). Best-effort and silent on failure —
+/// the text reply already went out, and voice-out is an optional add-on, so
+/// a down speech service or missing ffmpeg only costs the voice half of the
+/// reply, logged rather than surfaced as another chat message.
+async fn send_voice_reply(
+    manager: &ChatChannelManager,
+    target: &ChannelMessageTarget,
+    text: &str,
+    lang: &str,
+) {
+    let prepared = crate::chat_channel::speech_service::prepare_tts_text(text);
+    if prepared.trim().is_empty() {
+        return;
+    }
+
+    let client = crate::chat_channel::speech_service::SpeechServiceClient::from_env();
+    let wav = match client.synthesize(&prepared, lang).await {
+        Ok(w) => w,
+        Err(e) => {
+            tracing::warn!("[SessionEventSub] TTS synthesis failed, skipping voice reply: {e}");
+            return;
+        }
+    };
+    let ogg = match crate::chat_channel::speech_service::wav_to_ogg_opus(wav).await {
+        Ok(o) => o,
+        Err(e) => {
+            tracing::warn!("[SessionEventSub] ffmpeg conversion failed, skipping voice reply: {e}");
+            return;
+        }
+    };
+    if let Err(e) = manager.send_voice_to_target(target, ogg).await {
+        tracing::warn!("[SessionEventSub] failed to send voice reply: {e}");
     }
 }
 
@@ -1335,6 +1463,7 @@ mod async_relay_dedup_tests {
                 last_flushed: Instant::now(),
                 pending_prompt: None,
                 permission_pending: None,
+                pending_voice_reply_lang: None,
             },
         );
         let chat = ChatChannelManager::new();
@@ -1673,6 +1802,7 @@ mod error_terminal_gate_tests {
                 last_flushed: Instant::now(),
                 pending_prompt: None,
                 permission_pending: None,
+                pending_voice_reply_lang: None,
             },
         );
         (bridge, conv_id)

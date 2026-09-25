@@ -3163,7 +3163,29 @@
         "mentionGroupAgent": "Agenten",
         "mentionGroupSession": "Sitzungen",
         "mentionGroupCommit": "Commits",
-        "mentionGroupSkill": "Fähigkeiten"
+        "mentionGroupSkill": "Fähigkeiten",
+        "voice": {
+          "openLive": "Sprachgespräch",
+          "title": "Sprachgespräch",
+          "stateChecking": "Verbinde…",
+          "stateUnavailable": "Sprache nicht verfügbar",
+          "stateListening": "Hört zu",
+          "stateTranscribing": "Transkribiert",
+          "stateThinking": "Denkt nach",
+          "stateSpeaking": "Spricht",
+          "unavailableServiceDown": "Der lokale Sprachdienst läuft nicht. Starte ihn mit: systemctl --user start phantom-voice",
+          "unavailableMicDenied": "Der Mikrofonzugriff wurde verweigert. Erlaube ihn in den Browsereinstellungen und versuche es erneut.",
+          "mute": "Mikrofon stummschalten",
+          "unmute": "Mikrofon aktivieren",
+          "stopSpeaking": "Sprechen stoppen",
+          "stopAgent": "Agent stoppen",
+          "endVoiceMode": "Sprachgespräch beenden",
+          "youSaidLabel": "Du sagtest:",
+          "assistantSaysLabel": "Assistent sagt:",
+          "permissionCue": "Ich brauche deine Freigabe auf dem Bildschirm.",
+          "permissionPendingCue": "Warte auf deine Freigabe auf dem Bildschirm.",
+          "codeBlockNote": "Codeblock."
+        }
       },
       "messageQueue": {
         "addToQueue": "Zur Warteschlange",

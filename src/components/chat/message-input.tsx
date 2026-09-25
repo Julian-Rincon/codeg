@@ -1,7 +1,8 @@
 "use client"
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
-import { useTranslations } from "next-intl"
+import { createPortal } from "react-dom"
+import { useLocale, useTranslations } from "next-intl"
 import { isImeCompositionKey } from "@/lib/ime-composition"
 import { Button } from "@/components/ui/button"
 import { Skeleton } from "@/components/ui/skeleton"
@@ -13,6 +14,7 @@ import {
   Clock,
   Cog,
   Copy,
+  Mic,
   MessageSquareText,
   Scissors,
   Send,
@@ -21,6 +23,9 @@ import {
   X,
   Zap,
 } from "lucide-react"
+import { useVoiceLive } from "@/lib/voice/use-voice-live"
+import { useLiveAssistantText } from "@/lib/voice/use-live-assistant-text"
+import { VoiceLiveOverlay } from "@/components/voice/voice-live-overlay"
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -274,6 +279,17 @@ interface MessageInputProps {
    * component knows the action row that separates them.
    */
   tall?: boolean
+  /** Stable runtime session key (`effectiveConversationId`), used ONLY to
+   *  scope the voice-live overlay's live-text subscription — a leaf-level
+   *  read of the runtime store, never a value the parent re-renders on. See
+   *  `useLiveAssistantText`. */
+  conversationId?: number | null
+  /** A permission/question/plan-approval is currently blocking the agent —
+   *  drives the voice overlay's spoken + visible cue. */
+  awaitingUserAction?: boolean
+  /** Friendly agent/model label for the voice overlay's "who's answering"
+   *  chip. Falls back to `agentType` when absent. */
+  agentName?: string | null
 }
 
 // Non-image files attach as inline file badges in the editor (like `@`-file
@@ -402,6 +418,9 @@ export function MessageInput({
   onInjectConsumed,
   getSentHistory,
   tall = false,
+  conversationId = null,
+  awaitingUserAction = false,
+  agentName,
 }: MessageInputProps) {
   const t = useTranslations("Folder.chat.messageInput")
   const tQueue = useTranslations("Folder.chat.messageQueue")
@@ -466,6 +485,59 @@ export function MessageInput({
     historyRef.current = []
   }, [effectiveDraftStorageKey])
   const containerRef = useRef<HTMLDivElement>(null)
+
+  // --- Voice-live ("Gemini Live"-style) overlay ---------------------------
+  // `voiceOverlayOpen` is local (not `voiceLive.isOpen`) so it can gate
+  // `useLiveAssistantText`'s subscription in the SAME render pass that
+  // builds `useVoiceLive`'s options — reading `voiceLive.isOpen` here would
+  // be a one-render-stale reference to a value that hasn't been computed yet
+  // this render. Both flip together from `openVoiceLive`/`closeVoiceLive`.
+  const locale = useLocale()
+  const [voiceOverlayOpen, setVoiceOverlayOpen] = useState(false)
+  const [voicePortalTarget, setVoicePortalTarget] =
+    useState<HTMLElement | null>(null)
+  const liveAssistantText = useLiveAssistantText(
+    conversationId,
+    voiceOverlayOpen
+  )
+  const voiceLive = useVoiceLive({
+    locale,
+    isAgentBusy: isPrompting,
+    liveAssistantText,
+    awaitingUserAction,
+    // Same delivery path as typing + Enter: a plain-text draft through the
+    // exact `onSend` callback the send button/RichComposer submit use below.
+    sendText: useCallback(
+      (text: string) =>
+        onSend({ blocks: [{ type: "text", text }], displayText: text }),
+      [onSend]
+    ),
+    onCancelTurn: onCancel,
+    codeBlockNote: t("voice.codeBlockNote"),
+    permissionCue: t("voice.permissionCue"),
+  })
+  const openVoiceLive = useCallback(() => {
+    setVoiceOverlayOpen(true)
+    voiceLive.open()
+  }, [voiceLive])
+  const closeVoiceLive = useCallback(() => {
+    setVoiceOverlayOpen(false)
+    voiceLive.close()
+  }, [voiceLive])
+  useEffect(() => {
+    if (!voiceOverlayOpen) return
+    // Portal into the nearest conversation-shell root so the overlay covers
+    // the full conversation area (transcript + composer) rather than just
+    // this composer box — never a browser-level/body-spanning modal. Falls
+    // back to `document.body` for a composer surface with no such ancestor
+    // (e.g. a folderless chat draft, or a canvas/browser card).
+    const target =
+      containerRef.current?.closest<HTMLElement>(
+        "[data-conversation-shell-root]"
+      ) ?? document.body
+    setVoicePortalTarget(target)
+  }, [voiceOverlayOpen])
+
   // The editor owns the content now; this mirror of its empty state drives the
   // send button and `hasSendableContent`.
   const [composerEmpty, setComposerEmpty] = useState(true)
@@ -2322,7 +2394,22 @@ export function MessageInput({
                     </div>
                   )}
                 </div>
-                <div className="shrink-0">{actionButtons}</div>
+                <div className="flex shrink-0 items-center gap-1">
+                  {!isEditingQueueItem && (
+                    <Button
+                      onClick={openVoiceLive}
+                      disabled={disabled}
+                      variant="ghost"
+                      size="icon"
+                      className="h-8 w-8"
+                      title={t("voice.openLive")}
+                      aria-label={t("voice.openLive")}
+                    >
+                      <Mic className="size-4" />
+                    </Button>
+                  )}
+                  {actionButtons}
+                </div>
               </div>
               {showDragActive && (
                 <div className="pointer-events-none absolute inset-1 z-20 flex items-center justify-center rounded-md border border-dashed border-primary/50 bg-background/80 text-xs text-muted-foreground">
@@ -2447,6 +2534,20 @@ export function MessageInput({
           initialPath={defaultPath ?? undefined}
         />
       )}
+      {voiceOverlayOpen &&
+        voicePortalTarget &&
+        createPortal(
+          <VoiceLiveOverlay
+            voiceLive={{
+              ...voiceLive,
+              close: closeVoiceLive,
+              endVoiceMode: closeVoiceLive,
+            }}
+            agentType={agentType}
+            agentName={agentName}
+          />,
+          voicePortalTarget
+        )}
     </div>
   )
 }

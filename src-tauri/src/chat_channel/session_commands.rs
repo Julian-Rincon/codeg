@@ -17,7 +17,8 @@ use crate::acp::registry::all_acp_agents;
 use crate::acp::types::PromptInputBlock;
 use crate::db::entities::{chat_channel_thread_binding, conversation};
 use crate::db::service::{
-    conversation_service, folder_service, sender_context_service, thread_binding_service,
+    chat_channel_service, conversation_service, folder_service, sender_context_service,
+    thread_binding_service,
 };
 use crate::db::AppDatabase;
 use crate::models::agent::AgentType;
@@ -37,6 +38,11 @@ pub struct FollowupRequest<'a> {
     pub data_dir: &'a Path,
     pub lang: Lang,
     pub prefix: &'a str,
+    /// `Some(lang)` when `text` was transcribed from a voice note — see
+    /// `IncomingCommand::voice_reply_lang`. Set on the (possibly
+    /// newly-registered) `ActiveSession` so its `TurnComplete` reply is also
+    /// synthesized back as a voice message.
+    pub voice_reply_lang: Option<String>,
 }
 
 pub struct CommandMessageResult {
@@ -67,6 +73,10 @@ pub enum CommandPostAction {
         sender_id: String,
         response_target: ChannelMessageTarget,
         lang: Lang,
+        /// `true` for a brand-new Telegram-channel session's first prompt:
+        /// prepends the general-chat preamble (see `chat_preamble`) as its
+        /// own prompt block ahead of `text`.
+        inject_chat_preamble: bool,
     },
 }
 
@@ -438,6 +448,7 @@ pub async fn handle_task(
     lang: Lang,
     prefix: &str,
     data_dir: &Path,
+    voice_reply_lang: Option<String>,
 ) -> CommandMessageResult {
     if task_description.is_empty() {
         return CommandMessageResult::current_target(
@@ -485,16 +496,28 @@ pub async fn handle_task(
         }
     };
 
-    // 3. Resolve agent type
-    let agent_type = match resolve_agent_type(&ctx.current_agent_type, &folder.default_agent_type) {
-        Some(at) => at,
-        None => {
-            return CommandMessageResult::current_target(
-                RichMessage::info(i18n::no_agent_selected(lang, prefix)),
-                target,
-            );
-        }
-    };
+    // 3. Resolve agent type: sender's pick, else folder default, else this
+    // channel's configured (or default) lead agent — see `resolve_agent_type`.
+    let channel = chat_channel_service::get_by_id(db, channel_id)
+        .await
+        .ok()
+        .flatten();
+    let channel_default = channel
+        .as_ref()
+        .map(|c| channel_default_agent_type(&c.config_json))
+        .unwrap_or(AgentType::ClaudeCode);
+    let agent_type = resolve_agent_type(
+        &ctx.current_agent_type,
+        &folder.default_agent_type,
+        channel_default,
+    );
+    // The general-chat preamble (feature: Telegram becomes a general chat
+    // into Phantom) only applies to Telegram channels — it explicitly tells
+    // the agent it is fielding Phantom's Telegram chat.
+    let is_telegram_channel = channel
+        .as_ref()
+        .map(|c| c.channel_type == "telegram")
+        .unwrap_or(false);
 
     let runtime_env = match build_chat_session_runtime_env(db, agent_type, None, data_dir).await {
         Ok(env) => env,
@@ -622,6 +645,7 @@ pub async fn handle_task(
             last_flushed: Instant::now(),
             pending_prompt: None,
             permission_pending: None,
+            pending_voice_reply_lang: voice_reply_lang.clone(),
         };
         bridge.lock().await.register(connection_id.clone(), session);
     }
@@ -663,6 +687,7 @@ pub async fn handle_task(
             sender_id: sender_id.to_string(),
             response_target: session_target,
             lang,
+            inject_chat_preamble: is_telegram_channel,
         }),
     }
 }
@@ -683,6 +708,7 @@ pub async fn handle_post_action(
             sender_id,
             response_target,
             lang,
+            inject_chat_preamble,
         } => {
             if let Err(e) = send_chat_prompt_linked(
                 db,
@@ -691,6 +717,7 @@ pub async fn handle_post_action(
                 folder_id,
                 conversation_id,
                 &text,
+                inject_chat_preamble,
             )
             .await
             {
@@ -923,6 +950,7 @@ pub async fn handle_resume(
             last_flushed: Instant::now(),
             pending_prompt: None,
             permission_pending: None,
+            pending_voice_reply_lang: None,
         };
         bridge.lock().await.register(connection_id.clone(), session);
     }
@@ -1164,6 +1192,12 @@ pub async fn handle_followup(req: FollowupRequest<'_>) -> RichMessage {
         }
     }
 
+    if req.voice_reply_lang.is_some() {
+        if let Some(session) = req.bridge.lock().await.get_mut(&connection_id) {
+            session.pending_voice_reply_lang = req.voice_reply_lang.clone();
+        }
+    }
+
     // Send prompt to agent
     if let Err(e) = send_chat_prompt(req.conn_mgr, &connection_id, req.text).await {
         // A turn is already in flight on this (shared) connection — another
@@ -1263,6 +1297,12 @@ async fn send_followup_to_session(
         }
     }
 
+    if req.voice_reply_lang.is_some() {
+        if let Some(session) = req.bridge.lock().await.get_mut(&connection_id) {
+            session.pending_voice_reply_lang = req.voice_reply_lang.clone();
+        }
+    }
+
     if let Err(e) = send_chat_prompt(req.conn_mgr, &connection_id, req.text).await {
         if matches!(e, crate::acp::error::AcpError::TurnInProgress) {
             return RichMessage::info(i18n::agent_busy_retry(req.lang).to_string());
@@ -1322,6 +1362,7 @@ async fn resume_topic_binding_and_send_followup(
         last_flushed: Instant::now(),
         pending_prompt: None,
         permission_pending: None,
+        pending_voice_reply_lang: req.voice_reply_lang.clone(),
     };
     req.bridge
         .lock()
@@ -1359,6 +1400,10 @@ async fn resume_topic_binding_and_send_followup(
         folder.id,
         conv.id,
         req.text,
+        // Resuming an existing conversation, not a new session — the
+        // preamble (feature: general-chat instruction) only applies to a
+        // session's very first prompt.
+        false,
     )
     .await
     {
@@ -1577,14 +1622,26 @@ async fn send_chat_prompt_linked(
     folder_id: i32,
     conversation_id: i32,
     text: &str,
+    inject_chat_preamble: bool,
 ) -> Result<(), crate::acp::error::AcpError> {
+    let mut blocks = Vec::with_capacity(2);
+    // Instructions first, in natural reading order, so the agent sees them
+    // before the user's ask. Wrapped in its own markers (see
+    // `chat_preamble`) so a title fallback derived from this prompt never
+    // shows the preamble instead of the user's real request.
+    if inject_chat_preamble {
+        blocks.push(PromptInputBlock::Text {
+            text: super::chat_preamble::wrap_chat_preamble(),
+        });
+    }
+    blocks.push(PromptInputBlock::Text {
+        text: text.to_string(),
+    });
     conn_mgr
         .send_prompt_linked(
             &AppDatabase { conn: db.clone() },
             connection_id,
-            vec![PromptInputBlock::Text {
-                text: text.to_string(),
-            }],
+            blocks,
             Some(folder_id),
             Some(conversation_id),
             None,
@@ -1711,16 +1768,34 @@ fn parse_agent_type(name: &str) -> Option<AgentType> {
     }
 }
 
+/// Resolve which agent a `/task` invocation should spawn: the sender's own
+/// pick, else the folder's configured default, else the chat channel's
+/// `default_agent_type` (see [`channel_default_agent_type`]) — which itself
+/// falls back to `claude_code`, so this always resolves to something now.
+/// Feature: a brand new sender with nothing configured "starts on
+/// claude_code" rather than being told to pick an agent first.
 fn resolve_agent_type(
     sender_agent: &Option<String>,
     folder_default: &Option<AgentType>,
-) -> Option<AgentType> {
+    channel_default: AgentType,
+) -> AgentType {
     if let Some(ref at_str) = sender_agent {
         if let Some(at) = parse_agent_type(at_str) {
-            return Some(at);
+            return at;
         }
     }
-    folder_default.as_ref().copied()
+    folder_default.unwrap_or(channel_default)
+}
+
+/// The chat channel's configured default lead agent (`config_json.default_agent_type`),
+/// falling back to `claude_code` when the key is absent, blank, or unparsable —
+/// which covers every channel that predates this setting.
+fn channel_default_agent_type(config_json: &str) -> AgentType {
+    serde_json::from_str::<serde_json::Value>(config_json)
+        .ok()
+        .and_then(|v| v.get("default_agent_type")?.as_str().map(str::to_string))
+        .and_then(|s| parse_agent_type(&s))
+        .unwrap_or(AgentType::ClaudeCode)
 }
 
 fn truncate_title(s: &str) -> String {
@@ -1909,6 +1984,7 @@ mod tests {
                 last_flushed: Instant::now(),
                 pending_prompt: None,
                 permission_pending: None,
+                pending_voice_reply_lang: None,
             },
         );
 
@@ -2027,6 +2103,7 @@ mod tests {
             Lang::En,
             "/",
             std::path::Path::new("/tmp/codeg-topic-disabled-agent-data"),
+            None,
         )
         .await;
 
@@ -2056,6 +2133,7 @@ mod tests {
             folder_id,
             conv_id,
             "first task prompt",
+            false,
         )
         .await
         .expect("linked prompt send");
@@ -2067,6 +2145,50 @@ mod tests {
         assert!(matches!(
             &blocks[0],
             PromptInputBlock::Text { text } if text == "first task prompt"
+        ));
+    }
+
+    #[tokio::test]
+    async fn linked_chat_prompt_prepends_chat_preamble_as_its_own_block_when_requested() {
+        let db = fresh_in_memory_db().await;
+        let folder_id = seed_folder(&db, "/tmp/codeg-topic-linked-preamble").await;
+        let conv_id = seed_conversation(&db, folder_id, AgentType::OpenCode).await;
+        let conn_mgr = ConnectionManager::new();
+        let mut rx = conn_mgr
+            .insert_test_connection_live(
+                "conn-linked-preamble",
+                AgentType::OpenCode,
+                Some(std::path::PathBuf::from("/tmp/codeg-topic-linked-preamble")),
+                EventEmitter::Noop,
+            )
+            .await;
+
+        send_chat_prompt_linked(
+            &db.conn,
+            &conn_mgr,
+            "conn-linked-preamble",
+            folder_id,
+            conv_id,
+            "haz esto",
+            true,
+        )
+        .await
+        .expect("linked prompt send");
+
+        let command = rx.recv().await.expect("prompt command");
+        let ConnectionCommand::Prompt { blocks, .. } = command else {
+            panic!("expected prompt command");
+        };
+        assert_eq!(blocks.len(), 2, "preamble block + user text block");
+        let PromptInputBlock::Text { text: preamble } = &blocks[0] else {
+            panic!("expected text block");
+        };
+        assert!(crate::chat_channel::chat_preamble::contains_chat_preamble(
+            preamble
+        ));
+        assert!(matches!(
+            &blocks[1],
+            PromptInputBlock::Text { text } if text == "haz esto"
         ));
     }
 
@@ -2114,6 +2236,7 @@ mod tests {
                 last_flushed: Instant::now(),
                 pending_prompt: None,
                 permission_pending: None,
+                pending_voice_reply_lang: None,
             },
         );
 
@@ -2129,6 +2252,7 @@ mod tests {
             data_dir: std::path::Path::new("/tmp/codeg-topic-followup-data"),
             lang: Lang::En,
             prefix: "/",
+            voice_reply_lang: None,
         })
         .await;
 
@@ -2198,5 +2322,136 @@ mod tests {
 
         crate::acp::custom_registry::hydrate(&[]);
         assert_eq!(parse_agent_type("chat-cmd-qwen-code"), None);
+    }
+
+    // ── default lead agent (feature: per-channel default_agent_type) ──
+
+    #[test]
+    fn resolve_agent_type_prefers_the_senders_own_pick() {
+        let resolved = resolve_agent_type(
+            &Some("codex".to_string()),
+            &Some(AgentType::OpenCode),
+            AgentType::Cursor,
+        );
+        assert_eq!(resolved, AgentType::Codex);
+    }
+
+    #[test]
+    fn resolve_agent_type_falls_back_to_folder_default_over_channel_default() {
+        let resolved = resolve_agent_type(&None, &Some(AgentType::OpenCode), AgentType::Cursor);
+        assert_eq!(resolved, AgentType::OpenCode);
+    }
+
+    #[test]
+    fn resolve_agent_type_falls_back_to_channel_default_when_nothing_else_is_set() {
+        // This is the "new sender, nothing configured" case: it always
+        // resolves now instead of surfacing a "no agent selected" error.
+        let resolved = resolve_agent_type(&None, &None, AgentType::ClaudeCode);
+        assert_eq!(resolved, AgentType::ClaudeCode);
+    }
+
+    #[test]
+    fn resolve_agent_type_ignores_an_unparsable_sender_agent_string() {
+        let resolved = resolve_agent_type(
+            &Some("not-a-real-agent".to_string()),
+            &Some(AgentType::OpenCode),
+            AgentType::Cursor,
+        );
+        assert_eq!(resolved, AgentType::OpenCode);
+    }
+
+    #[test]
+    fn channel_default_agent_type_defaults_to_claude_code_when_key_absent() {
+        let config = serde_json::json!({ "chat_id": "-100123", "topic_mode": true }).to_string();
+        assert_eq!(channel_default_agent_type(&config), AgentType::ClaudeCode);
+    }
+
+    #[test]
+    fn channel_default_agent_type_respects_an_explicit_value() {
+        let config = serde_json::json!({
+            "chat_id": "-100123",
+            "default_agent_type": "codex",
+        })
+        .to_string();
+        assert_eq!(channel_default_agent_type(&config), AgentType::Codex);
+    }
+
+    #[test]
+    fn channel_default_agent_type_falls_back_on_garbage_config() {
+        assert_eq!(channel_default_agent_type("not json"), AgentType::ClaudeCode);
+        let config = serde_json::json!({ "default_agent_type": "not-a-real-agent" }).to_string();
+        assert_eq!(channel_default_agent_type(&config), AgentType::ClaudeCode);
+    }
+
+    // ── voice-originated turns are flagged for a voice reply ──
+
+    #[tokio::test]
+    async fn followup_from_a_voice_note_marks_the_session_for_a_voice_reply() {
+        let db = fresh_in_memory_db().await;
+        let channel_id = seed_chat_channel(&db).await;
+        let folder_id = seed_folder(&db, "/tmp/codeg-topic-followup-voice").await;
+        let conv_id = seed_conversation(&db, folder_id, AgentType::OpenCode).await;
+        let target = ChannelMessageTarget::telegram_forum_topic(channel_id, "-100123", "3");
+        thread_binding_service::upsert_for_target(
+            &db.conn,
+            &target,
+            "telegram",
+            conv_id,
+            Some("conn-voice-followup".to_string()),
+            "sender-1",
+            Some("Topic session".to_string()),
+        )
+        .await
+        .expect("thread binding");
+        let conn_mgr = ConnectionManager::new();
+        let _rx = conn_mgr
+            .insert_test_connection_live(
+                "conn-voice-followup",
+                AgentType::OpenCode,
+                Some(std::path::PathBuf::from("/tmp/codeg-topic-followup-voice")),
+                EventEmitter::Noop,
+            )
+            .await;
+        let bridge = Arc::new(Mutex::new(SessionBridge::new()));
+        bridge.lock().await.register(
+            "conn-voice-followup".to_string(),
+            ActiveSession {
+                channel_id,
+                sender_id: "sender-1".to_string(),
+                target: target.clone(),
+                conversation_id: conv_id,
+                connection_id: "conn-voice-followup".to_string(),
+                agent_type: AgentType::OpenCode,
+                content_buffer: String::new(),
+                tool_calls: Vec::new(),
+                tool_call_inputs: std::collections::HashMap::new(),
+                delegation_rendered: std::collections::HashSet::new(),
+                last_flushed: Instant::now(),
+                pending_prompt: None,
+                permission_pending: None,
+                pending_voice_reply_lang: None,
+            },
+        );
+
+        let message = handle_followup(FollowupRequest {
+            db: &db.conn,
+            text: "transcribed from voice",
+            channel_id,
+            sender_id: "sender-1",
+            target: &target,
+            conn_mgr: &conn_mgr,
+            emitter: &EventEmitter::Noop,
+            bridge: &bridge,
+            data_dir: std::path::Path::new("/tmp/codeg-topic-followup-voice-data"),
+            lang: Lang::En,
+            prefix: "/",
+            voice_reply_lang: Some("es".to_string()),
+        })
+        .await;
+
+        assert_eq!(message.body, i18n::message_sent(Lang::En));
+        let guard = bridge.lock().await;
+        let session = guard.get("conn-voice-followup").expect("session");
+        assert_eq!(session.pending_voice_reply_lang.as_deref(), Some("es"));
     }
 }

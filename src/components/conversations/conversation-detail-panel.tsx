@@ -2255,6 +2255,15 @@ const ConversationTabView = memo(function ConversationTabView({
       pendingQuestion={conn.pendingQuestion}
       pendingAskQuestion={conn.pendingAskQuestion}
       pendingPlanApproval={conn.pendingPlanApproval}
+      conversationId={effectiveConversationId}
+      // Same four fields as the dialogs above, collapsed to a boolean cue for
+      // the voice-live overlay ("I need your permission on screen").
+      awaitingUserAction={Boolean(
+        conn.pendingPermission ||
+        conn.pendingQuestion ||
+        conn.pendingAskQuestion ||
+        conn.pendingPlanApproval
+      )}
       onFocus={handleFocus}
       onSend={handleSend}
       onCancel={handleCancel}
@@ -2411,6 +2420,13 @@ const ConversationTabView = memo(function ConversationTabView({
                 availableCommands={connectionCommands}
                 attachmentTabId={tabId}
                 draftStorageKey={draftStorageKey}
+                conversationId={effectiveConversationId}
+                awaitingUserAction={Boolean(
+                  conn.pendingPermission ||
+                  conn.pendingQuestion ||
+                  conn.pendingAskQuestion ||
+                  conn.pendingPlanApproval
+                )}
                 isActive={isActive}
                 showActiveFlow={showActiveFlow}
                 onAddFeedback={

@@ -57,6 +57,12 @@ pub struct IncomingCommand {
     pub callback_data: Option<String>,
     pub target: ChannelMessageTarget,
     pub metadata: serde_json::Value,
+    /// `Some(lang)` when `command_text` was transcribed from a Telegram voice
+    /// note / audio message rather than typed — `lang` is the reply language
+    /// picked from the STT response (`speech_service::pick_reply_language`).
+    /// Threaded through to the active session so its `TurnComplete` reply is
+    /// also synthesized back as a voice message.
+    pub voice_reply_lang: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

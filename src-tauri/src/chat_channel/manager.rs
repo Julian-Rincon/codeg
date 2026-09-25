@@ -161,6 +161,82 @@ impl ChatChannelManager {
         backend.send_rich_message_to(message, target).await
     }
 
+    /// Upload a document to a thread/topic target. `Unsupported` on a
+    /// backend without a document-upload API (see
+    /// `ChatChannelBackend::send_document`'s default).
+    pub async fn send_document_to_target(
+        &self,
+        target: &ChannelMessageTarget,
+        bytes: Vec<u8>,
+        filename: &str,
+        caption: Option<&str>,
+    ) -> Result<SentMessageId, ChatChannelError> {
+        let backend = {
+            let channels = self.inner.channels.lock().await;
+            channels
+                .get(&target.channel_id)
+                .ok_or(ChatChannelError::NotFound(target.channel_id))?
+                .backend
+                .clone()
+        };
+        backend.send_document(target, bytes, filename, caption).await
+    }
+
+    /// Upload an image to a thread/topic target.
+    pub async fn send_photo_to_target(
+        &self,
+        target: &ChannelMessageTarget,
+        bytes: Vec<u8>,
+        filename: &str,
+        caption: Option<&str>,
+    ) -> Result<SentMessageId, ChatChannelError> {
+        let backend = {
+            let channels = self.inner.channels.lock().await;
+            channels
+                .get(&target.channel_id)
+                .ok_or(ChatChannelError::NotFound(target.channel_id))?
+                .backend
+                .clone()
+        };
+        backend.send_photo(target, bytes, filename, caption).await
+    }
+
+    /// Upload a playable audio file to a thread/topic target.
+    pub async fn send_audio_to_target(
+        &self,
+        target: &ChannelMessageTarget,
+        bytes: Vec<u8>,
+        filename: &str,
+        caption: Option<&str>,
+    ) -> Result<SentMessageId, ChatChannelError> {
+        let backend = {
+            let channels = self.inner.channels.lock().await;
+            channels
+                .get(&target.channel_id)
+                .ok_or(ChatChannelError::NotFound(target.channel_id))?
+                .backend
+                .clone()
+        };
+        backend.send_audio(target, bytes, filename, caption).await
+    }
+
+    /// Upload a synthesized voice reply (OGG/Opus) to a thread/topic target.
+    pub async fn send_voice_to_target(
+        &self,
+        target: &ChannelMessageTarget,
+        bytes: Vec<u8>,
+    ) -> Result<SentMessageId, ChatChannelError> {
+        let backend = {
+            let channels = self.inner.channels.lock().await;
+            channels
+                .get(&target.channel_id)
+                .ok_or(ChatChannelError::NotFound(target.channel_id))?
+                .backend
+                .clone()
+        };
+        backend.send_voice(target, bytes).await
+    }
+
     pub async fn send_interactive_to_target(
         &self,
         target: &ChannelMessageTarget,

@@ -1,6 +1,8 @@
 pub mod backends;
+pub mod chat_preamble;
 pub mod command_dispatcher;
 pub mod command_handlers;
+pub mod directives;
 pub mod error;
 pub mod event_subscriber;
 pub mod i18n;
@@ -10,6 +12,7 @@ pub mod scheduler;
 pub mod session_bridge;
 pub mod session_commands;
 pub mod session_event_subscriber;
+pub mod speech_service;
 pub mod tool_detail;
 pub mod traits;
 pub mod types;

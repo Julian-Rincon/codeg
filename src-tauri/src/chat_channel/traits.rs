@@ -90,4 +90,58 @@ pub trait ChatChannelBackend: Send + Sync + 'static {
 
     /// Test the connection (used by "Test Connection" button in UI).
     async fn test_connection(&self) -> Result<(), ChatChannelError>;
+
+    /// Upload a generic file as a document attachment to a thread/topic
+    /// target. Default degrades to `Unsupported` for backends with no
+    /// document-upload API (only Telegram implements this today).
+    async fn send_document(
+        &self,
+        _target: &ChannelMessageTarget,
+        _bytes: Vec<u8>,
+        _filename: &str,
+        _caption: Option<&str>,
+    ) -> Result<SentMessageId, ChatChannelError> {
+        Err(ChatChannelError::Unsupported(
+            "document upload is not supported by this channel".to_string(),
+        ))
+    }
+
+    /// Upload an image, rendered inline by the client rather than as a
+    /// generic attachment where the backend distinguishes the two.
+    async fn send_photo(
+        &self,
+        _target: &ChannelMessageTarget,
+        _bytes: Vec<u8>,
+        _filename: &str,
+        _caption: Option<&str>,
+    ) -> Result<SentMessageId, ChatChannelError> {
+        Err(ChatChannelError::Unsupported(
+            "photo upload is not supported by this channel".to_string(),
+        ))
+    }
+
+    /// Upload a playable audio file (as opposed to a generic document).
+    async fn send_audio(
+        &self,
+        _target: &ChannelMessageTarget,
+        _bytes: Vec<u8>,
+        _filename: &str,
+        _caption: Option<&str>,
+    ) -> Result<SentMessageId, ChatChannelError> {
+        Err(ChatChannelError::Unsupported(
+            "audio upload is not supported by this channel".to_string(),
+        ))
+    }
+
+    /// Upload a synthesized spoken reply as a native "voice message" where
+    /// the backend has that concept (Telegram's `sendVoice`, OGG/Opus only).
+    async fn send_voice(
+        &self,
+        _target: &ChannelMessageTarget,
+        _bytes: Vec<u8>,
+    ) -> Result<SentMessageId, ChatChannelError> {
+        Err(ChatChannelError::Unsupported(
+            "voice upload is not supported by this channel".to_string(),
+        ))
+    }
 }

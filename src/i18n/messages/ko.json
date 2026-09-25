@@ -3163,7 +3163,29 @@
         "mentionGroupAgent": "에이전트",
         "mentionGroupSession": "세션",
         "mentionGroupCommit": "커밋",
-        "mentionGroupSkill": "스킬"
+        "mentionGroupSkill": "스킬",
+        "voice": {
+          "openLive": "음성 대화",
+          "title": "음성 대화",
+          "stateChecking": "연결 중…",
+          "stateUnavailable": "음성 기능을 사용할 수 없습니다",
+          "stateListening": "듣는 중",
+          "stateTranscribing": "받아쓰는 중",
+          "stateThinking": "생각 중",
+          "stateSpeaking": "말하는 중",
+          "unavailableServiceDown": "로컬 음성 서비스가 실행되고 있지 않습니다. 다음으로 시작하세요: systemctl --user start phantom-voice",
+          "unavailableMicDenied": "마이크 접근이 거부되었습니다. 브라우저 설정에서 허용한 후 다시 시도하세요.",
+          "mute": "마이크 음소거",
+          "unmute": "마이크 음소거 해제",
+          "stopSpeaking": "말하기 중지",
+          "stopAgent": "에이전트 중지",
+          "endVoiceMode": "음성 대화 종료",
+          "youSaidLabel": "회원님의 말:",
+          "assistantSaysLabel": "어시스턴트의 말:",
+          "permissionCue": "화면에서 권한이 필요합니다.",
+          "permissionPendingCue": "화면에서 권한을 기다리는 중입니다.",
+          "codeBlockNote": "코드 블록."
+        }
       },
       "messageQueue": {
         "addToQueue": "대기열에 추가",

@@ -3163,7 +3163,29 @@
         "mentionGroupAgent": "智能体",
         "mentionGroupSession": "会话",
         "mentionGroupCommit": "提交",
-        "mentionGroupSkill": "技能"
+        "mentionGroupSkill": "技能",
+        "voice": {
+          "openLive": "语音对话",
+          "title": "语音对话",
+          "stateChecking": "连接中…",
+          "stateUnavailable": "语音功能不可用",
+          "stateListening": "正在聆听",
+          "stateTranscribing": "正在转写",
+          "stateThinking": "思考中",
+          "stateSpeaking": "正在说话",
+          "unavailableServiceDown": "本地语音服务未运行。请使用以下命令启动：systemctl --user start phantom-voice",
+          "unavailableMicDenied": "麦克风访问被拒绝。请在浏览器设置中允许后重试。",
+          "mute": "静音麦克风",
+          "unmute": "取消麦克风静音",
+          "stopSpeaking": "停止说话",
+          "stopAgent": "停止代理",
+          "endVoiceMode": "结束语音对话",
+          "youSaidLabel": "你说：",
+          "assistantSaysLabel": "助手说：",
+          "permissionCue": "我需要你在屏幕上授权。",
+          "permissionPendingCue": "正在等待你在屏幕上授权。",
+          "codeBlockNote": "代码块。"
+        }
       },
       "messageQueue": {
         "addToQueue": "加入队列",

@@ -3163,7 +3163,29 @@
         "mentionGroupAgent": "Agentes",
         "mentionGroupSession": "Sesiones",
         "mentionGroupCommit": "Commits",
-        "mentionGroupSkill": "Habilidades"
+        "mentionGroupSkill": "Habilidades",
+        "voice": {
+          "openLive": "Conversación por voz",
+          "title": "Conversación por voz",
+          "stateChecking": "Conectando…",
+          "stateUnavailable": "Voz no disponible",
+          "stateListening": "Escuchando",
+          "stateTranscribing": "Transcribiendo",
+          "stateThinking": "Pensando",
+          "stateSpeaking": "Hablando",
+          "unavailableServiceDown": "El servicio de voz local no está en ejecución. Inícialo con: systemctl --user start phantom-voice",
+          "unavailableMicDenied": "Se denegó el acceso al micrófono. Permítelo en la configuración del navegador e inténtalo de nuevo.",
+          "mute": "Silenciar micrófono",
+          "unmute": "Activar micrófono",
+          "stopSpeaking": "Dejar de hablar",
+          "stopAgent": "Detener al agente",
+          "endVoiceMode": "Terminar conversación por voz",
+          "youSaidLabel": "Dijiste:",
+          "assistantSaysLabel": "El asistente dice:",
+          "permissionCue": "Necesito tu permiso en pantalla.",
+          "permissionPendingCue": "Esperando tu permiso en pantalla.",
+          "codeBlockNote": "Bloque de código."
+        }
       },
       "messageQueue": {
         "addToQueue": "Agregar a la cola",

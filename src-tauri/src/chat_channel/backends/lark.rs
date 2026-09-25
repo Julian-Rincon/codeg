@@ -515,6 +515,7 @@ async fn handle_lark_event(
                 callback_data: None,
                 target: ChannelMessageTarget::channel(channel_id),
                 metadata: event.clone(),
+                voice_reply_lang: None,
             })
             .await;
     }

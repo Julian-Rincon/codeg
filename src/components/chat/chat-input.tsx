@@ -98,6 +98,10 @@ interface ChatInputProps {
    *  (new-conversation) composer, which sits in a roomy empty state; active and
    *  historical conversations keep the compact default. */
   tall?: boolean
+  /** Pass-through: see `MessageInput.conversationId`. */
+  conversationId?: number | null
+  /** Pass-through: see `MessageInput.awaitingUserAction`. */
+  awaitingUserAction?: boolean
 }
 
 export const ChatInput = memo(function ChatInput({
@@ -145,6 +149,8 @@ export const ChatInput = memo(function ChatInput({
   onInjectConsumed,
   flush = false,
   tall = false,
+  conversationId,
+  awaitingUserAction,
 }: ChatInputProps) {
   const t = useTranslations("Folder.chat.chatInput")
   const isConnected = status === "connected"
@@ -241,6 +247,9 @@ export const ChatInput = memo(function ChatInput({
         feedbackAddDisabled={feedbackAddDisabled}
         injectContent={injectContent}
         onInjectConsumed={onInjectConsumed}
+        conversationId={conversationId}
+        awaitingUserAction={awaitingUserAction}
+        agentName={agentName}
         placeholder={
           isConnecting
             ? t("connecting")

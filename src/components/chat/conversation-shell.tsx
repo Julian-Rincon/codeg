@@ -145,6 +145,10 @@ interface ConversationShellProps {
    *  once the composer has taken it. */
   injectContent?: ComposerInjectContent | null
   onInjectConsumed?: () => void
+  /** Pass-through: see `MessageInput.conversationId`. */
+  conversationId?: number | null
+  /** Pass-through: see `MessageInput.awaitingUserAction`. */
+  awaitingUserAction?: boolean
 }
 
 export function ConversationShell({
@@ -207,9 +211,17 @@ export function ConversationShell({
   topBanner,
   injectContent,
   onInjectConsumed,
+  conversationId,
+  awaitingUserAction,
 }: ConversationShellProps) {
   return (
-    <div className="relative flex h-full min-h-0 flex-col">
+    <div
+      className="relative flex h-full min-h-0 flex-col"
+      // Anchor for the voice-live overlay's portal (`message-input.tsx`):
+      // it covers this whole conversation area (transcript + composer)
+      // rather than only the composer box, and never the whole app.
+      data-conversation-shell-root
+    >
       {topBanner}
 
       {/* Above the transcript, not down in the composer dock: this is the state
@@ -310,6 +322,8 @@ export function ConversationShell({
               feedbackAddDisabled={feedbackAddDisabled}
               injectContent={injectContent}
               onInjectConsumed={onInjectConsumed}
+              conversationId={conversationId}
+              awaitingUserAction={awaitingUserAction}
             />
           </div>
         )}

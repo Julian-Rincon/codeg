@@ -5,6 +5,7 @@ use async_trait::async_trait;
 use tokio::sync::{mpsc, Mutex, OnceCell};
 
 use crate::chat_channel::error::ChatChannelError;
+use crate::chat_channel::i18n::{self, Lang};
 use crate::chat_channel::traits::ChatChannelBackend;
 use crate::chat_channel::types::*;
 
@@ -193,6 +194,85 @@ impl TelegramBackend {
             }
         }
     }
+
+    /// Shared multipart upload for `sendDocument` / `sendPhoto` /
+    /// `sendAudio` / `sendVoice`: `field_name` is the Bot API's file field
+    /// for that method (`document`, `photo`, `audio`, `voice`) and `method`
+    /// is the endpoint name.
+    #[allow(clippy::too_many_arguments)]
+    async fn upload_media(
+        &self,
+        method: &str,
+        field_name: &str,
+        target: &ChannelMessageTarget,
+        bytes: Vec<u8>,
+        filename: &str,
+        mime: Option<&str>,
+        caption: Option<&str>,
+    ) -> Result<SentMessageId, ChatChannelError> {
+        let chat_id = target
+            .chat_id
+            .clone()
+            .unwrap_or_else(|| self.chat_id.clone());
+
+        let mut part = reqwest::multipart::Part::bytes(bytes).file_name(filename.to_string());
+        if let Some(mime) = mime {
+            part = part
+                .mime_str(mime)
+                .map_err(|e| ChatChannelError::SendFailed(format!("invalid mime type: {e}")))?;
+        }
+
+        let mut form = reqwest::multipart::Form::new()
+            .text("chat_id", chat_id)
+            .part(field_name.to_string(), part);
+        if target.is_telegram_forum_topic() {
+            let thread_id = target
+                .thread_key
+                .as_deref()
+                .and_then(|s| s.parse::<i64>().ok())
+                .ok_or_else(|| {
+                    ChatChannelError::SendFailed(
+                        "invalid Telegram message_thread_id target".to_string(),
+                    )
+                })?;
+            form = form.text("message_thread_id", thread_id.to_string());
+        }
+        if let Some(caption) = caption {
+            form = form.text("caption", caption.to_string());
+        }
+
+        let resp = self
+            .client
+            .post(self.api_url(method))
+            .multipart(form)
+            .send()
+            .await
+            .map_err(|e| {
+                ChatChannelError::SendFailed(redact_token(e.to_string(), &self.bot_token))
+            })?;
+
+        let result: serde_json::Value = resp
+            .json()
+            .await
+            .map_err(|e| {
+                ChatChannelError::SendFailed(redact_token(e.to_string(), &self.bot_token))
+            })?;
+
+        if result.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+            let desc = result
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
+            return Err(ChatChannelError::SendFailed(desc.to_string()));
+        }
+
+        let message_id = result
+            .pointer("/result/message_id")
+            .and_then(|v| v.as_i64())
+            .map(|id| id.to_string())
+            .unwrap_or_default();
+        Ok(SentMessageId(message_id))
+    }
 }
 
 #[async_trait]
@@ -256,6 +336,7 @@ impl ChatChannelBackend for TelegramBackend {
             .unwrap_or_else(|_| self.chat_id.clone());
         let topic_mode = self.topic_mode;
         let status = self.status.clone();
+        let speech_client = crate::chat_channel::speech_service::SpeechServiceClient::from_env();
 
         tokio::spawn(async move {
             let mut offset: i64 = 0;
@@ -349,6 +430,111 @@ impl ChatChannelBackend for TelegramBackend {
                                                     callback_data: None,
                                                     target,
                                                     metadata: update.clone(),
+                                                    voice_reply_lang: None,
+                                                })
+                                                .await;
+                                            if let Err(e) = send_result {
+                                                tracing::error!(
+                                                    "[Telegram] command_tx.send failed: {e}"
+                                                );
+                                            }
+                                        } else if let Some(voice_ref) =
+                                            extract_voice_file(message)
+                                        {
+                                            let chat_type = message
+                                                .pointer("/chat/type")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("private");
+                                            if !telegram_should_process_voice_message(
+                                                chat_type, topic_mode,
+                                            ) {
+                                                tracing::debug!(
+                                                    "[Telegram] skipped voice msg in unbound group"
+                                                );
+                                                continue;
+                                            }
+
+                                            let sender_id = message
+                                                .pointer("/from/id")
+                                                .and_then(json_scalar_to_string)
+                                                .unwrap_or_default();
+                                            let target = telegram_message_target(
+                                                channel_id,
+                                                &configured_chat_id,
+                                                topic_mode,
+                                                message,
+                                            );
+
+                                            tracing::debug!(
+                                                "[Telegram] downloading voice file {}",
+                                                voice_ref.file_id
+                                            );
+                                            let audio_bytes = download_telegram_file(
+                                                &client,
+                                                &bot_token,
+                                                &voice_ref.file_id,
+                                            )
+                                            .await;
+                                            let audio_bytes = match audio_bytes {
+                                                Ok(bytes) => bytes,
+                                                Err(e) => {
+                                                    tracing::warn!(
+                                                        "[Telegram] voice file download failed: {e}"
+                                                    );
+                                                    send_plain_text_direct(
+                                                        &client,
+                                                        &bot_token,
+                                                        &configured_chat_id,
+                                                        &target,
+                                                        i18n::voice_download_failed(Lang::Es),
+                                                    )
+                                                    .await;
+                                                    continue;
+                                                }
+                                            };
+
+                                            let transcription =
+                                                speech_client.transcribe(audio_bytes).await;
+                                            let stt = match transcription {
+                                                Ok(stt) => stt,
+                                                Err(e) => {
+                                                    tracing::warn!(
+                                                        "[Telegram] speech-to-text failed: {e}"
+                                                    );
+                                                    send_plain_text_direct(
+                                                        &client,
+                                                        &bot_token,
+                                                        &configured_chat_id,
+                                                        &target,
+                                                        i18n::voice_service_unavailable(Lang::Es),
+                                                    )
+                                                    .await;
+                                                    continue;
+                                                }
+                                            };
+                                            if stt.text.trim().is_empty() {
+                                                tracing::debug!(
+                                                    "[Telegram] voice transcription was empty"
+                                                );
+                                                continue;
+                                            }
+
+                                            let reply_lang = crate::chat_channel::speech_service::pick_reply_language(
+                                                stt.language.as_deref(),
+                                            );
+                                            tracing::debug!(
+                                                "[Telegram] dispatching voice transcript: {}",
+                                                stt.text
+                                            );
+                                            let send_result = command_tx
+                                                .send(IncomingCommand {
+                                                    channel_id,
+                                                    sender_id,
+                                                    command_text: stt.text,
+                                                    callback_data: None,
+                                                    target,
+                                                    metadata: update.clone(),
+                                                    voice_reply_lang: Some(reply_lang.to_string()),
                                                 })
                                                 .await;
                                             if let Err(e) = send_result {
@@ -358,7 +544,7 @@ impl ChatChannelBackend for TelegramBackend {
                                             }
                                         } else {
                                             tracing::info!(
-                                                "[Telegram] message update without text"
+                                                "[Telegram] message update without text or voice"
                                             );
                                         }
                                     } else if let Some(callback) = update.get("callback_query") {
@@ -410,6 +596,7 @@ impl ChatChannelBackend for TelegramBackend {
                                                 callback_data: Some(data.to_string()),
                                                 target,
                                                 metadata: update.clone(),
+                                                voice_reply_lang: None,
                                             })
                                             .await;
                                         if let Err(e) = send_result {
@@ -616,6 +803,89 @@ impl ChatChannelBackend for TelegramBackend {
             Err(ChatChannelError::AuthenticationFailed(desc.to_string()))
         }
     }
+
+    async fn send_document(
+        &self,
+        target: &ChannelMessageTarget,
+        bytes: Vec<u8>,
+        filename: &str,
+        caption: Option<&str>,
+    ) -> Result<SentMessageId, ChatChannelError> {
+        let mime = guess_mime(filename);
+        self.upload_media(
+            "sendDocument",
+            "document",
+            target,
+            bytes,
+            filename,
+            mime,
+            caption,
+        )
+        .await
+    }
+
+    async fn send_photo(
+        &self,
+        target: &ChannelMessageTarget,
+        bytes: Vec<u8>,
+        filename: &str,
+        caption: Option<&str>,
+    ) -> Result<SentMessageId, ChatChannelError> {
+        let mime = guess_mime(filename);
+        self.upload_media("sendPhoto", "photo", target, bytes, filename, mime, caption)
+            .await
+    }
+
+    async fn send_audio(
+        &self,
+        target: &ChannelMessageTarget,
+        bytes: Vec<u8>,
+        filename: &str,
+        caption: Option<&str>,
+    ) -> Result<SentMessageId, ChatChannelError> {
+        let mime = guess_mime(filename);
+        self.upload_media("sendAudio", "audio", target, bytes, filename, mime, caption)
+            .await
+    }
+
+    async fn send_voice(
+        &self,
+        target: &ChannelMessageTarget,
+        bytes: Vec<u8>,
+    ) -> Result<SentMessageId, ChatChannelError> {
+        self.upload_media(
+            "sendVoice",
+            "voice",
+            target,
+            bytes,
+            "voice.ogg",
+            Some("audio/ogg"),
+            None,
+        )
+        .await
+    }
+}
+
+/// Best-effort mime type from a file's extension, for the multipart upload's
+/// `Content-Type`. `None` lets Telegram infer it from the file name instead
+/// of failing the upload over an unrecognized extension.
+fn guess_mime(filename: &str) -> Option<&'static str> {
+    let ext = filename.rsplit('.').next()?.to_ascii_lowercase();
+    Some(match ext.as_str() {
+        "png" => "image/png",
+        "jpg" | "jpeg" => "image/jpeg",
+        "webp" => "image/webp",
+        "gif" => "image/gif",
+        "mp3" => "audio/mpeg",
+        "wav" => "audio/wav",
+        "ogg" | "opus" => "audio/ogg",
+        "m4a" => "audio/mp4",
+        "pdf" => "application/pdf",
+        "txt" => "text/plain",
+        "json" => "application/json",
+        "zip" => "application/zip",
+        _ => return None,
+    })
 }
 
 /// Scrub the bot token from an error/log string before it escapes.
@@ -695,6 +965,88 @@ async fn answer_callback_query(client: &reqwest::Client, bot_token: &str, callba
     }
 }
 
+/// Bot API's own cap on files a bot may download via `getFile`.
+const TELEGRAM_MAX_DOWNLOAD_BYTES: usize = 20 * 1024 * 1024;
+
+/// Download a voice/audio/video-note file's raw bytes: `getFile` to resolve
+/// `file_id` into a `file_path`, then GET the file itself. Defensive about
+/// the 20MB Bot API cap even though Telegram itself already enforces it on
+/// `getFile`.
+async fn download_telegram_file(
+    client: &reqwest::Client,
+    bot_token: &str,
+    file_id: &str,
+) -> Result<Vec<u8>, ChatChannelError> {
+    let get_file_body = serde_json::json!({ "file_id": file_id });
+    let resp = client
+        .post(format!("https://api.telegram.org/bot{bot_token}/getFile"))
+        .json(&get_file_body)
+        .send()
+        .await
+        .map_err(|e| ChatChannelError::SendFailed(redact_token(e.to_string(), bot_token)))?;
+    let result: serde_json::Value = resp
+        .json()
+        .await
+        .map_err(|e| ChatChannelError::SendFailed(redact_token(e.to_string(), bot_token)))?;
+    if result.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+        let desc = result
+            .get("description")
+            .and_then(|v| v.as_str())
+            .unwrap_or("getFile failed");
+        return Err(ChatChannelError::SendFailed(desc.to_string()));
+    }
+    let file_path = result
+        .pointer("/result/file_path")
+        .and_then(|v| v.as_str())
+        .ok_or_else(|| {
+            ChatChannelError::SendFailed("Telegram getFile returned no file_path".to_string())
+        })?;
+
+    let download_url = format!("https://api.telegram.org/file/bot{bot_token}/{file_path}");
+    let resp = client
+        .get(&download_url)
+        .send()
+        .await
+        .map_err(|e| ChatChannelError::SendFailed(redact_token(e.to_string(), bot_token)))?;
+    let bytes = resp
+        .bytes()
+        .await
+        .map_err(|e| ChatChannelError::SendFailed(redact_token(e.to_string(), bot_token)))?;
+    if bytes.len() > TELEGRAM_MAX_DOWNLOAD_BYTES {
+        return Err(ChatChannelError::SendFailed(format!(
+            "voice file too large ({} bytes, limit {})",
+            bytes.len(),
+            TELEGRAM_MAX_DOWNLOAD_BYTES
+        )));
+    }
+    Ok(bytes.to_vec())
+}
+
+/// Send a plain text message directly, bypassing the command dispatcher —
+/// used for out-of-band notices (e.g. "voice service unavailable") about an
+/// inbound update that never became an `IncomingCommand`.
+async fn send_plain_text_direct(
+    client: &reqwest::Client,
+    bot_token: &str,
+    default_chat_id: &str,
+    target: &ChannelMessageTarget,
+    text: &str,
+) {
+    let Ok(body) = telegram_send_message_body(default_chat_id, text, None, Some(target), None)
+    else {
+        return;
+    };
+    let result = client
+        .post(format!("https://api.telegram.org/bot{bot_token}/sendMessage"))
+        .json(&body)
+        .send()
+        .await;
+    if let Err(e) = result {
+        let msg = redact_token(e.to_string(), bot_token);
+        tracing::warn!("[Telegram] direct sendMessage failed: {msg}");
+    }
+}
+
 fn telegram_message_chat_matches(message: &serde_json::Value, configured_chat_id: &str) -> bool {
     let configured = configured_chat_id.trim();
     if configured.is_empty() {
@@ -758,6 +1110,35 @@ fn telegram_should_process_text_message(
     // that will actually be stripped, and neither allocates a lowercased copy
     // of every group message on the long-poll path.
     find_bot_mention(text, &at_bot).is_some()
+}
+
+/// A voice note (`message.voice`), audio file (`message.audio`), or video
+/// note (`message.video_note`) can never carry an `@bot` mention the way a
+/// text message can, so in an unbound group (no topic mode) there is no way
+/// for the sender to address the bot explicitly — those are skipped rather
+/// than guessed at. Everything else (private chats, topic-mode groups)
+/// processes normally, same as `telegram_should_process_text_message`.
+fn telegram_should_process_voice_message(chat_type: &str, topic_mode: bool) -> bool {
+    topic_mode || (chat_type != "group" && chat_type != "supergroup")
+}
+
+/// A Telegram `file_id` pulled from `message.voice`, `message.audio`, or
+/// `message.video_note`, whichever is present (checked in that order).
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TelegramVoiceRef {
+    file_id: String,
+}
+
+fn extract_voice_file(message: &serde_json::Value) -> Option<TelegramVoiceRef> {
+    for field in ["voice", "audio", "video_note"] {
+        if let Some(file_id) = message.pointer(&format!("/{field}/file_id")).and_then(|v| v.as_str())
+        {
+            return Some(TelegramVoiceRef {
+                file_id: file_id.to_string(),
+            });
+        }
+    }
+    None
 }
 
 fn json_scalar_to_string(value: &serde_json::Value) -> Option<String> {
@@ -1130,5 +1511,85 @@ mod tests {
             keyboard["inline_keyboard"][1][0]["callback_data"],
             "cfg:folder:3"
         );
+    }
+
+    #[test]
+    fn guess_mime_recognizes_common_extensions_case_insensitively() {
+        assert_eq!(guess_mime("photo.PNG"), Some("image/png"));
+        assert_eq!(guess_mime("clip.jpg"), Some("image/jpeg"));
+        assert_eq!(guess_mime("clip.jpeg"), Some("image/jpeg"));
+        assert_eq!(guess_mime("note.ogg"), Some("audio/ogg"));
+        assert_eq!(guess_mime("report.pdf"), Some("application/pdf"));
+    }
+
+    #[test]
+    fn guess_mime_is_none_for_unknown_or_missing_extension() {
+        assert_eq!(guess_mime("no_extension"), None);
+        assert_eq!(guess_mime("archive.tar.gz"), None);
+    }
+
+    #[test]
+    fn extract_voice_file_reads_voice_field() {
+        let message = serde_json::json!({ "voice": { "file_id": "abc123", "duration": 5 } });
+        assert_eq!(
+            extract_voice_file(&message),
+            Some(TelegramVoiceRef {
+                file_id: "abc123".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn extract_voice_file_reads_audio_field_when_no_voice() {
+        let message = serde_json::json!({ "audio": { "file_id": "aud1" } });
+        assert_eq!(
+            extract_voice_file(&message),
+            Some(TelegramVoiceRef {
+                file_id: "aud1".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn extract_voice_file_reads_video_note_field_as_last_resort() {
+        let message = serde_json::json!({ "video_note": { "file_id": "vn1" } });
+        assert_eq!(
+            extract_voice_file(&message),
+            Some(TelegramVoiceRef {
+                file_id: "vn1".to_string()
+            })
+        );
+    }
+
+    #[test]
+    fn extract_voice_file_prefers_voice_over_audio_and_video_note() {
+        let message = serde_json::json!({
+            "voice": { "file_id": "v" },
+            "audio": { "file_id": "a" },
+            "video_note": { "file_id": "vn" },
+        });
+        assert_eq!(
+            extract_voice_file(&message).map(|r| r.file_id),
+            Some("v".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_voice_file_is_none_for_a_text_message() {
+        let message = serde_json::json!({ "text": "hello" });
+        assert_eq!(extract_voice_file(&message), None);
+    }
+
+    #[test]
+    fn should_process_voice_in_private_chats_and_topic_mode_groups() {
+        assert!(telegram_should_process_voice_message("private", false));
+        assert!(telegram_should_process_voice_message("supergroup", true));
+        assert!(telegram_should_process_voice_message("group", true));
+    }
+
+    #[test]
+    fn should_skip_voice_in_a_plain_group_without_topic_mode() {
+        assert!(!telegram_should_process_voice_message("group", false));
+        assert!(!telegram_should_process_voice_message("supergroup", false));
     }
 }

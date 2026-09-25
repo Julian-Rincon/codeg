@@ -34,6 +34,12 @@ pub struct ActiveSession {
     pub last_flushed: Instant,
     pub pending_prompt: Option<String>,
     pub permission_pending: Option<PendingPermission>,
+    /// Set right before a prompt originating from a Telegram voice note is
+    /// sent, to the reply language picked from the STT response ("es"/"en").
+    /// The `TurnComplete` handler takes it (resets to `None`) when the turn
+    /// ends, and — if still set — synthesizes the text reply back as a voice
+    /// message in that language.
+    pub pending_voice_reply_lang: Option<String>,
 }
 
 #[derive(Default)]

@@ -402,6 +402,11 @@ fn sanitize_summary(summary: &mut ConversationSummary) {
         // straddle the cut and survive `sanitize_text`, which only removes whole
         // frames. Anything from a leftover marker on is truncated frame.
         crate::acp::agent_mentions::cut_at_route_frame_marker(title);
+        // Same idea for the chat-channel general-chat preamble
+        // (`chat_channel::chat_preamble`): it is placed ahead of the user's
+        // real text in a new session's first prompt, so a capped title that
+        // starts inside it can only ever be preamble noise.
+        crate::chat_channel::chat_preamble::cut_at_chat_preamble_marker(title);
         if title.trim().is_empty() {
             summary.title = None;
         }
@@ -419,10 +424,17 @@ fn sanitize_summary(summary: &mut ConversationSummary) {
 fn sanitize_text(text: &mut String) -> bool {
     // Single scan short-circuit: history with no frame pays one memchr per
     // string, not a parse attempt.
-    if !crate::acp::agent_mentions::contains_internal_agent_routes(text) {
+    let has_route_frame = crate::acp::agent_mentions::contains_internal_agent_routes(text);
+    let has_chat_preamble = crate::chat_channel::chat_preamble::contains_chat_preamble(text);
+    if !has_route_frame && !has_chat_preamble {
         return false;
     }
-    *text = crate::acp::agent_mentions::strip_internal_agent_routes(text);
+    if has_route_frame {
+        *text = crate::acp::agent_mentions::strip_internal_agent_routes(text);
+    }
+    if has_chat_preamble {
+        *text = crate::chat_channel::chat_preamble::strip_chat_preamble(text);
+    }
     text.truncate(text.trim_end().len());
     true
 }

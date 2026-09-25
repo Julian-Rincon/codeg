@@ -3163,7 +3163,29 @@
         "mentionGroupAgent": "الوكلاء",
         "mentionGroupSession": "الجلسات",
         "mentionGroupCommit": "عمليات الإيداع",
-        "mentionGroupSkill": "المهارات"
+        "mentionGroupSkill": "المهارات",
+        "voice": {
+          "openLive": "محادثة صوتية",
+          "title": "محادثة صوتية",
+          "stateChecking": "جارٍ الاتصال…",
+          "stateUnavailable": "الصوت غير متاح",
+          "stateListening": "يستمع",
+          "stateTranscribing": "يُفرّغ الصوت",
+          "stateThinking": "يفكر",
+          "stateSpeaking": "يتحدث",
+          "unavailableServiceDown": "خدمة الصوت المحلية لا تعمل. ابدأها باستخدام: systemctl --user start phantom-voice",
+          "unavailableMicDenied": "تم رفض الوصول إلى الميكروفون. اسمح به في إعدادات المتصفح وحاول مرة أخرى.",
+          "mute": "كتم الميكروفون",
+          "unmute": "إلغاء كتم الميكروفون",
+          "stopSpeaking": "إيقاف الكلام",
+          "stopAgent": "إيقاف الوكيل",
+          "endVoiceMode": "إنهاء المحادثة الصوتية",
+          "youSaidLabel": "قلت:",
+          "assistantSaysLabel": "يقول المساعد:",
+          "permissionCue": "أحتاج إلى إذنك على الشاشة.",
+          "permissionPendingCue": "في انتظار إذنك على الشاشة.",
+          "codeBlockNote": "كتلة برمجية."
+        }
       },
       "messageQueue": {
         "addToQueue": "إضافة للقائمة",

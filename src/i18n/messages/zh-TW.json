@@ -3163,7 +3163,29 @@
         "mentionGroupAgent": "智能體",
         "mentionGroupSession": "工作階段",
         "mentionGroupCommit": "提交",
-        "mentionGroupSkill": "技能"
+        "mentionGroupSkill": "技能",
+        "voice": {
+          "openLive": "語音對話",
+          "title": "語音對話",
+          "stateChecking": "連線中…",
+          "stateUnavailable": "語音功能無法使用",
+          "stateListening": "正在聆聽",
+          "stateTranscribing": "正在轉錄",
+          "stateThinking": "思考中",
+          "stateSpeaking": "正在說話",
+          "unavailableServiceDown": "本機語音服務未執行。請使用以下指令啟動：systemctl --user start phantom-voice",
+          "unavailableMicDenied": "麥克風存取遭拒。請在瀏覽器設定中允許後再試一次。",
+          "mute": "靜音麥克風",
+          "unmute": "取消麥克風靜音",
+          "stopSpeaking": "停止說話",
+          "stopAgent": "停止代理",
+          "endVoiceMode": "結束語音對話",
+          "youSaidLabel": "你說：",
+          "assistantSaysLabel": "助理說：",
+          "permissionCue": "我需要你在畫面上授權。",
+          "permissionPendingCue": "正在等待你在畫面上授權。",
+          "codeBlockNote": "程式碼區塊。"
+        }
       },
       "messageQueue": {
         "addToQueue": "加入佇列",

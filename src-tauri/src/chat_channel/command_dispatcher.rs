@@ -116,6 +116,7 @@ pub fn spawn_command_dispatcher(
                 &cmd.target,
                 cmd.callback_data.as_deref(),
                 config.lang,
+                cmd.voice_reply_lang.clone(),
             )
             .await;
 
@@ -216,6 +217,7 @@ async fn dispatch_command(
     target: &ChannelMessageTarget,
     callback_data: Option<&str>,
     lang: Lang,
+    voice_reply_lang: Option<String>,
 ) -> DispatchResponse {
     if let Some(data) = callback_data {
         return DispatchResponse::current(
@@ -246,6 +248,7 @@ async fn dispatch_command(
                         data_dir,
                         lang,
                         prefix,
+                        voice_reply_lang,
                     })
                     .await,
                     target,
@@ -271,6 +274,7 @@ async fn dispatch_command(
                         data_dir,
                         lang,
                         prefix,
+                        voice_reply_lang,
                     })
                     .await,
                     target,
@@ -344,7 +348,7 @@ async fn dispatch_command(
         "task" | "do" => {
             let result = session_commands::handle_task(
                 db, args, channel_id, sender_id, target, manager, conn_mgr, emitter, bridge, lang,
-                prefix, data_dir,
+                prefix, data_dir, voice_reply_lang,
             )
             .await;
             DispatchResponse {
@@ -521,6 +525,7 @@ mod tests {
             &target,
             Some(&format!("cfg:folder:{folder_id}")),
             Lang::En,
+            None,
         )
         .await;
         let ctx = sender_context_service::get_or_create(&db.conn, channel_id, "sender-1")
@@ -552,6 +557,7 @@ mod tests {
             &target,
             None,
             Lang::En,
+            None,
         )
         .await;
 

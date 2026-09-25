@@ -1467,6 +1467,75 @@ pub fn failed_to_send_message_label(lang: Lang) -> &'static str {
     }
 }
 
+/// Shown to the sender of a voice note when the local speech service
+/// (`/stt`) is unreachable or errors — the voice message itself is dropped
+/// (no text was recovered to act on), so this is the whole reply.
+pub fn voice_service_unavailable(lang: Lang) -> &'static str {
+    match lang {
+        Lang::ZhCn => "语音服务当前不可用，请直接输入文字。",
+        Lang::ZhTw => "語音服務目前無法使用，請直接輸入文字。",
+        Lang::Ja => "音声サービスが利用できません。テキストで送信してください。",
+        Lang::Ko => "음성 서비스를 사용할 수 없습니다. 텍스트로 보내주세요.",
+        Lang::Es => "El servicio de voz no está disponible ahora mismo; escribe tu mensaje en texto.",
+        Lang::De => "Der Sprachdienst ist gerade nicht verfügbar; bitte als Text senden.",
+        Lang::Fr => "Le service vocal est indisponible ; écris ton message en texte.",
+        Lang::Pt => "O serviço de voz não está disponível agora; envie sua mensagem em texto.",
+        Lang::Ar => "خدمة الصوت غير متاحة الآن؛ يرجى كتابة رسالتك نصًا.",
+        Lang::En => "The voice service isn't running right now; please type your message instead.",
+    }
+}
+
+/// Shown when a voice/audio file fails to download from Telegram (distinct
+/// from the STT service being down).
+pub fn voice_download_failed(lang: Lang) -> &'static str {
+    match lang {
+        Lang::ZhCn => "无法下载语音文件。",
+        Lang::ZhTw => "無法下載語音檔案。",
+        Lang::Ja => "音声ファイルをダウンロードできませんでした。",
+        Lang::Ko => "음성 파일을 다운로드할 수 없습니다.",
+        Lang::Es => "No pude descargar la nota de voz.",
+        Lang::De => "Die Sprachnachricht konnte nicht heruntergeladen werden.",
+        Lang::Fr => "Impossible de télécharger le message vocal.",
+        Lang::Pt => "Não foi possível baixar a mensagem de voz.",
+        Lang::Ar => "تعذر تنزيل الرسالة الصوتية.",
+        Lang::En => "Couldn't download the voice note.",
+    }
+}
+
+/// Reported instead of sending, when a `[[phantom:send_file ...]]` directive
+/// fails path validation (see `chat_channel::directives::PathPolicyError`).
+pub fn send_file_validation_failed(lang: Lang, reason: &str) -> String {
+    match lang {
+        Lang::ZhCn => format!("无法发送文件：{reason}"),
+        Lang::ZhTw => format!("無法傳送檔案：{reason}"),
+        Lang::Ja => format!("ファイルを送信できません: {reason}"),
+        Lang::Ko => format!("파일을 보낼 수 없습니다: {reason}"),
+        Lang::Es => format!("No pude enviar el archivo: {reason}"),
+        Lang::De => format!("Datei konnte nicht gesendet werden: {reason}"),
+        Lang::Fr => format!("Impossible d'envoyer le fichier : {reason}"),
+        Lang::Pt => format!("Não foi possível enviar o arquivo: {reason}"),
+        Lang::Ar => format!("تعذر إرسال الملف: {reason}"),
+        Lang::En => format!("Couldn't send the file: {reason}"),
+    }
+}
+
+/// Reported when uploading a validated file to the channel itself fails
+/// (network/API error, as opposed to a path policy rejection).
+pub fn send_file_upload_failed(lang: Lang, reason: &str) -> String {
+    match lang {
+        Lang::ZhCn => format!("文件上传失败：{reason}"),
+        Lang::ZhTw => format!("檔案上傳失敗：{reason}"),
+        Lang::Ja => format!("ファイルのアップロードに失敗しました: {reason}"),
+        Lang::Ko => format!("파일 업로드에 실패했습니다: {reason}"),
+        Lang::Es => format!("Error al subir el archivo: {reason}"),
+        Lang::De => format!("Datei-Upload fehlgeschlagen: {reason}"),
+        Lang::Fr => format!("Échec de l'envoi du fichier : {reason}"),
+        Lang::Pt => format!("Falha ao enviar o arquivo: {reason}"),
+        Lang::Ar => format!("فشل رفع الملف: {reason}"),
+        Lang::En => format!("File upload failed: {reason}"),
+    }
+}
+
 pub fn message_sent(lang: Lang) -> &'static str {
     match lang {
         Lang::ZhCn => "消息已发送。",

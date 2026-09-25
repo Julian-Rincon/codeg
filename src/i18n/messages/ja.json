@@ -3163,7 +3163,29 @@
         "mentionGroupAgent": "エージェント",
         "mentionGroupSession": "セッション",
         "mentionGroupCommit": "コミット",
-        "mentionGroupSkill": "スキル"
+        "mentionGroupSkill": "スキル",
+        "voice": {
+          "openLive": "音声会話",
+          "title": "音声会話",
+          "stateChecking": "接続中…",
+          "stateUnavailable": "音声機能は利用できません",
+          "stateListening": "聞いています",
+          "stateTranscribing": "文字起こし中",
+          "stateThinking": "考え中",
+          "stateSpeaking": "話しています",
+          "unavailableServiceDown": "ローカル音声サービスが起動していません。次のコマンドで起動してください: systemctl --user start phantom-voice",
+          "unavailableMicDenied": "マイクへのアクセスが拒否されました。ブラウザの設定で許可してから、もう一度お試しください。",
+          "mute": "マイクをミュート",
+          "unmute": "マイクのミュートを解除",
+          "stopSpeaking": "発話を停止",
+          "stopAgent": "エージェントを停止",
+          "endVoiceMode": "音声会話を終了",
+          "youSaidLabel": "あなたの発言:",
+          "assistantSaysLabel": "アシスタントの発言:",
+          "permissionCue": "画面で許可が必要です。",
+          "permissionPendingCue": "画面での許可待ちです。",
+          "codeBlockNote": "コードブロック。"
+        }
       },
       "messageQueue": {
         "addToQueue": "キューに追加",

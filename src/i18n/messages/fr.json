@@ -3163,7 +3163,29 @@
         "mentionGroupAgent": "Agents",
         "mentionGroupSession": "Sessions",
         "mentionGroupCommit": "Commits",
-        "mentionGroupSkill": "Compétences"
+        "mentionGroupSkill": "Compétences",
+        "voice": {
+          "openLive": "Conversation vocale",
+          "title": "Conversation vocale",
+          "stateChecking": "Connexion…",
+          "stateUnavailable": "Voix indisponible",
+          "stateListening": "Écoute",
+          "stateTranscribing": "Transcription",
+          "stateThinking": "Réflexion",
+          "stateSpeaking": "Parle",
+          "unavailableServiceDown": "Le service vocal local n'est pas en cours d'exécution. Démarrez-le avec : systemctl --user start phantom-voice",
+          "unavailableMicDenied": "L'accès au microphone a été refusé. Autorisez-le dans les paramètres du navigateur et réessayez.",
+          "mute": "Couper le microphone",
+          "unmute": "Activer le microphone",
+          "stopSpeaking": "Arrêter de parler",
+          "stopAgent": "Arrêter l'agent",
+          "endVoiceMode": "Terminer la conversation vocale",
+          "youSaidLabel": "Vous avez dit :",
+          "assistantSaysLabel": "L'assistant dit :",
+          "permissionCue": "J'ai besoin de votre autorisation à l'écran.",
+          "permissionPendingCue": "En attente de votre autorisation à l'écran.",
+          "codeBlockNote": "Bloc de code."
+        }
       },
       "messageQueue": {
         "addToQueue": "Mettre en file",
