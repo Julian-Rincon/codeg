@@ -29,7 +29,12 @@ const INSERT_CHUNK: usize = 200;
 
 /// One turn's usage, ready to persist. The service assigns nothing itself —
 /// the caller (which owns the parser) fills every field.
-#[derive(Debug, Clone)]
+///
+/// `Default` gives every tool-quality counter (and every other field) zero /
+/// empty, so a caller that doesn't care about them — an older test, or a
+/// parser branch that can't derive per-tool counts (the session-total
+/// fallback) — can build one with `..Default::default()`.
+#[derive(Debug, Clone, Default)]
 pub struct UsageFact {
     pub turn_key: String,
     pub occurred_at: DateTime<Utc>,
@@ -39,6 +44,22 @@ pub struct UsageFact {
     pub cache_creation_tokens: i64,
     pub cache_read_tokens: i64,
     pub duration_ms: i64,
+    /// Tool-quality counters. See the `token_usage_turn` entity doc for what
+    /// each pair means; zero for facts the parser layer can't derive them for
+    /// (e.g. the whole-session fallback row — see
+    /// `commands::token_usage::facts_from_detail`).
+    pub tool_calls: i64,
+    pub tool_errors: i64,
+    pub edit_calls: i64,
+    pub edit_errors: i64,
+    pub read_calls: i64,
+    pub read_errors: i64,
+    pub shell_calls: i64,
+    pub shell_errors: i64,
+    pub web_calls: i64,
+    pub web_errors: i64,
+    pub agent_calls: i64,
+    pub agent_errors: i64,
 }
 
 impl UsageFact {
@@ -64,6 +85,18 @@ pub struct UsageFactRow {
     pub cache_read_tokens: i64,
     pub total_tokens: i64,
     pub duration_ms: i64,
+    pub tool_calls: i64,
+    pub tool_errors: i64,
+    pub edit_calls: i64,
+    pub edit_errors: i64,
+    pub read_calls: i64,
+    pub read_errors: i64,
+    pub shell_calls: i64,
+    pub shell_errors: i64,
+    pub web_calls: i64,
+    pub web_errors: i64,
+    pub agent_calls: i64,
+    pub agent_errors: i64,
 }
 
 /// A conversation the sync pass may need to (re-)parse.
@@ -195,6 +228,18 @@ pub async fn fetch_facts(
         .column(token_usage_turn::Column::CacheReadTokens)
         .column(token_usage_turn::Column::TotalTokens)
         .column(token_usage_turn::Column::DurationMs)
+        .column(token_usage_turn::Column::ToolCalls)
+        .column(token_usage_turn::Column::ToolErrors)
+        .column(token_usage_turn::Column::EditCalls)
+        .column(token_usage_turn::Column::EditErrors)
+        .column(token_usage_turn::Column::ReadCalls)
+        .column(token_usage_turn::Column::ReadErrors)
+        .column(token_usage_turn::Column::ShellCalls)
+        .column(token_usage_turn::Column::ShellErrors)
+        .column(token_usage_turn::Column::WebCalls)
+        .column(token_usage_turn::Column::WebErrors)
+        .column(token_usage_turn::Column::AgentCalls)
+        .column(token_usage_turn::Column::AgentErrors)
         .order_by_desc(token_usage_turn::Column::OccurredAt)
         .limit(limit)
         .into_model::<UsageFactRow>()
@@ -359,6 +404,18 @@ pub async fn replace_conversation_facts(
                 cache_read_tokens: Set(f.cache_read_tokens),
                 total_tokens: Set(f.total_tokens()),
                 duration_ms: Set(f.duration_ms),
+                tool_calls: Set(f.tool_calls),
+                tool_errors: Set(f.tool_errors),
+                edit_calls: Set(f.edit_calls),
+                edit_errors: Set(f.edit_errors),
+                read_calls: Set(f.read_calls),
+                read_errors: Set(f.read_errors),
+                shell_calls: Set(f.shell_calls),
+                shell_errors: Set(f.shell_errors),
+                web_calls: Set(f.web_calls),
+                web_errors: Set(f.web_errors),
+                agent_calls: Set(f.agent_calls),
+                agent_errors: Set(f.agent_errors),
             })
             .collect();
         token_usage_turn::Entity::insert_many(models)
@@ -762,6 +819,18 @@ mod tests {
             cache_creation_tokens: 0,
             cache_read_tokens: 0,
             duration_ms: 100,
+            tool_calls: 0,
+            tool_errors: 0,
+            edit_calls: 0,
+            edit_errors: 0,
+            read_calls: 0,
+            read_errors: 0,
+            shell_calls: 0,
+            shell_errors: 0,
+            web_calls: 0,
+            web_errors: 0,
+            agent_calls: 0,
+            agent_errors: 0,
         }
     }
 

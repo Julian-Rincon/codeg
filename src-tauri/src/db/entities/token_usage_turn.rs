@@ -29,6 +29,25 @@ pub struct Model {
     /// Sum of the four counters above.
     pub total_tokens: i64,
     pub duration_ms: i64,
+    /// Tool-quality counters, populated from the turn's `ToolUse`/`ToolResult`
+    /// content blocks (see `commands::token_usage::tool_counters_from_blocks`).
+    /// All `NOT NULL DEFAULT 0` — a pre-existing row reads as "no tool calls
+    /// recorded" until the next full sync re-derives it. `tool_calls` /
+    /// `tool_errors` count every tool call regardless of category; the five
+    /// category pairs are a subset of that total (a tool whose normalized name
+    /// matches no category still counts only toward the overall pair).
+    pub tool_calls: i64,
+    pub tool_errors: i64,
+    pub edit_calls: i64,
+    pub edit_errors: i64,
+    pub read_calls: i64,
+    pub read_errors: i64,
+    pub shell_calls: i64,
+    pub shell_errors: i64,
+    pub web_calls: i64,
+    pub web_errors: i64,
+    pub agent_calls: i64,
+    pub agent_errors: i64,
 }
 
 #[derive(Copy, Clone, Debug, EnumIter, DeriveRelation)]

@@ -1771,6 +1771,7 @@ export function MessageInput({
                 key={option.id}
                 option={option}
                 groups={listGroups}
+                agentType={agentType}
                 onSelect={(configId, valueId) =>
                   onConfigOptionChange?.(configId, valueId)
                 }
@@ -1783,6 +1784,7 @@ export function MessageInput({
               option={option}
               derivedGroups={deriveModelGroups(option)}
               recommendedLabel={t("recommendedBadge")}
+              agentType={agentType}
               onSelect={(configId, valueId) =>
                 onConfigOptionChange?.(configId, valueId)
               }

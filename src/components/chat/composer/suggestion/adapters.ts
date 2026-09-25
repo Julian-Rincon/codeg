@@ -40,8 +40,17 @@ export function fileToSuggestion(
  * renders as a badge in the transcript. The readable link IS the routing
  * anchor: the backend derives the delegation reminder from it at send time, so
  * nothing has to travel out-of-band alongside the prompt.
+ *
+ * `mentionHint` is the measured "best at …" line built by
+ * {@link buildAgentMentionHints} for this agent's type, or `null` when the
+ * scorecard has no win for it (an old server, or simply no data yet). It's a
+ * pure display hint layered onto `detail` — it never touches `reference`, so
+ * it can't change what gets delegated, only what the row says about it.
  */
-export function agentToSuggestion(agent: AcpAgentInfo): SuggestionItem {
+export function agentToSuggestion(
+  agent: AcpAgentInfo,
+  mentionHint?: string | null
+): SuggestionItem {
   return {
     reference: {
       refType: "agent",
@@ -50,7 +59,7 @@ export function agentToSuggestion(agent: AcpAgentInfo): SuggestionItem {
       uri: `codeg://agent/${agent.agent_type}`,
       meta: { agentType: agent.agent_type, available: agent.available },
     },
-    detail: agent.description || null,
+    detail: mentionHint || agent.description || null,
     keywords: agent.agent_type,
   }
 }

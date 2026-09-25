@@ -1,6 +1,13 @@
-import { act, renderHook } from "@testing-library/react"
+import { createElement } from "react"
+import {
+  act,
+  renderHook as rtlRenderHook,
+  type RenderHookOptions,
+} from "@testing-library/react"
+import { NextIntlClientProvider } from "next-intl"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
+import enMessages from "@/i18n/messages/en.json"
 import type { FlatFileEntry } from "@/hooks/use-file-tree"
 import type {
   AcpAgentInfo,
@@ -16,6 +23,42 @@ import {
   useReferenceSearch,
   type ReferenceSearchSources,
 } from "./use-reference-search"
+
+// `useReferenceSearch` now reads the `ModelScorecard` i18n namespace to build
+// the mention hint (`useTranslations` throws without a provider) — wrap every
+// `renderHook()` call below with the real `en` catalog instead of touching
+// each of this file's call sites. Plain `.ts` (no JSX), so the wrapper is
+// built with `createElement`.
+function renderHook<TResult, TProps>(
+  render: (initialProps: TProps) => TResult,
+  options?: RenderHookOptions<TProps>
+) {
+  return rtlRenderHook(render, {
+    wrapper: ({ children }) =>
+      // The provider's props type requires `children`, so it has to go in the
+      // props object; there is no JSX in this `.ts` file.
+      // eslint-disable-next-line react/no-children-prop
+      createElement(NextIntlClientProvider, {
+        locale: "en",
+        messages: enMessages,
+        children,
+      }),
+    ...options,
+  })
+}
+
+// The scorecard cache does its own fetching/polling (see
+// `lib/model-scorecard.ts`) — irrelevant to this hook's own file/agent/
+// session/commit merge logic, and its `fetchModelScorecard()` would otherwise
+// hit the real transport layer under jsdom. Stub it to a stable empty result.
+vi.mock("@/lib/model-scorecard", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@/lib/model-scorecard")>()),
+  useModelScorecard: () => ({
+    scorecard: null,
+    loading: false,
+    refresh: vi.fn(),
+  }),
+}))
 
 // --- fixtures ---------------------------------------------------------------
 

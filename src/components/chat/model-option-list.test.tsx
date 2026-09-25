@@ -58,7 +58,10 @@ vi.mock("@/components/ui/scroll-area", () => ({
   },
 }))
 
+import { NextIntlClientProvider } from "next-intl"
+
 import { ModelOptionList } from "./model-option-list"
+import enMessages from "@/i18n/messages/en.json"
 import type { ModelOptionGroup } from "@/lib/model-config-groups"
 
 const GROUPS: ModelOptionGroup[] = [
@@ -82,16 +85,18 @@ function renderList(
 ) {
   const onSelect = vi.fn()
   render(
-    <ModelOptionList
-      groups={GROUPS}
-      currentValue="anthropic/opus"
-      onSelect={onSelect}
-      searchPlaceholder="Search models"
-      searchAriaLabel="Search models"
-      listAriaLabel="Models"
-      emptyLabel="No models found"
-      {...overrides}
-    />
+    <NextIntlClientProvider locale="en" messages={enMessages}>
+      <ModelOptionList
+        groups={GROUPS}
+        currentValue="anthropic/opus"
+        onSelect={onSelect}
+        searchPlaceholder="Search models"
+        searchAriaLabel="Search models"
+        listAriaLabel="Models"
+        emptyLabel="No models found"
+        {...overrides}
+      />
+    </NextIntlClientProvider>
   )
   return { onSelect }
 }

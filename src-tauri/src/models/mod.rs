@@ -6,6 +6,7 @@ pub mod chat_channel;
 pub mod conversation;
 pub mod folder;
 pub mod message;
+pub mod model_scorecard;
 pub mod model_provider;
 pub mod pet;
 pub mod quick_message;
@@ -35,6 +36,10 @@ pub use folder::{
 pub use message::{
     AgentExecutionStats, AgentToolCall, ContentBlock, ImageData, MessageRole, MessageTurn,
     TurnRole, TurnUsage, UnifiedMessage,
+};
+pub use model_scorecard::{
+    BestForEntry, CategoryCounts, CategoryErrorPct, ModelScorecard, ModelScorecardEntry, ModelSpec,
+    RunnerUp,
 };
 pub use quick_message::QuickMessageInfo;
 pub use remote_workspace_connection::{

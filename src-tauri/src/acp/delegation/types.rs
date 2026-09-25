@@ -71,6 +71,12 @@ pub struct DelegationRequest {
     pub requested_working_dir: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_handle: Option<String>,
+    /// Model the lead explicitly asked the child to run on (the
+    /// `delegate_to_agent` `model` argument). Overrides the per-agent
+    /// delegation default; an id the child does not offer is skipped at
+    /// connect, so the child falls back to its own default model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
 }
 
 /// Everything the broker needs to resume one interrupted delegation task.

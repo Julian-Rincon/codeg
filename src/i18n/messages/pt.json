@@ -77,6 +77,7 @@
       "sectionDescription": "Escolha uma paleta de cores para acentos, botões e destaques.",
       "current": "Cor atual: {color}",
       "options": {
+        "phantom": "Phantom",
         "neutral": "Neutral",
         "zinc": "Zinc",
         "slate": "Slate",
@@ -1749,11 +1750,16 @@
   "LoginPage": {
     "documentTitle": "Entrar - Phantom",
     "brand": "Phantom",
-    "subtitle": "Digite seu token de acesso para conectar ao aplicativo de desktop",
-    "tokenPlaceholder": "Token de acesso",
+    "agentsLabel": "Agentes",
+    "hideToken": "Ocultar token",
+    "showToken": "Mostrar token",
+    "tokenLabel": "Token de acesso",
+    "tagline": "Sua central de IA",
+    "subtitle": "Conecte-se ao seu servidor Phantom local",
+    "tokenPlaceholder": "Cole seu token",
     "connect": "Conectar",
     "connecting": "Conectando...",
-    "helpText": "Encontre seu token no app de desktop em Configurações → Serviço Web",
+    "helpText": "Instalação local: copie CODEG_TOKEN de ~/.config/codeg/server.env. App desktop: Configurações → Serviço web.",
     "invalidToken": "Token inválido. Verifique e tente novamente.",
     "connectionFailed": "Falha na conexão (HTTP {status})",
     "networkError": "Não foi possível conectar ao servidor"
@@ -5944,7 +5950,26 @@
     "emptyHint": "O codeg lê os tokens direto da transcrição de cada agente. Atualize para contabilizar o que já existe nesta máquina.",
     "emptyAction": "Contabilizar minhas sessões",
     "loadFailed": "Não foi possível carregar o uso",
-    "truncatedNotice": "Este período é muito amplo — os números cobrem apenas o trecho mais recente."
+    "truncatedNotice": "Este período é muito amplo — os números cobrem apenas o trecho mais recente.",
+    "tabDashboard": "Painel",
+    "tabModels": "Modelos",
+    "modelsGeneratedAt": "Gerado {time}",
+    "modelsExplain": "Métricas medidas no seu histórico local; atualizam ao sincronizar.",
+    "modelsSyncAction": "Sincronizar",
+    "modelsEmpty": "Ainda não há modelos medidos",
+    "modelsColAgent": "Agente",
+    "modelsColModel": "Modelo",
+    "modelsColConversations": "Conversas",
+    "modelsColTurns": "Turnos",
+    "modelsColAvgTurn": "Turno médio",
+    "modelsColTokPerSec": "Tok/s",
+    "modelsColCacheHit": "Acerto de cache",
+    "modelsColToolErrors": "Erros de ferramentas",
+    "modelsColContext": "Contexto",
+    "modelsColLastUsed": "Último uso",
+    "modelsColStrengths": "Melhor em",
+    "modelsBestForTitle": "Melhor modelo por categoria",
+    "modelsRunnerUp": "segundo lugar: {agent} · {model} ({value})"
   },
   "Forge": {
     "title": "Painel do repositório",
@@ -6528,5 +6553,21 @@
         "probeFailed": "O navegador integrado não conseguiu confirmar que alcança o host remoto pelo túnel. Tente novamente em instantes."
       }
     }
+  },
+  "ModelScorecard": {
+    "categoryEdit": "Editar",
+    "categoryExplore": "Explorar",
+    "categoryShell": "Shell",
+    "categoryResearch": "Pesquisar",
+    "categoryFast": "Rápido",
+    "categoryLongContext": "Contexto longo",
+    "categoryFree": "Gratuito",
+    "noData": "Dados insuficientes",
+    "unavailable": "Indisponível",
+    "metricDuration": "{value}s/turno",
+    "metricTokPerSec": "{value} tok/s",
+    "metricErrorPct": "{value}% de erros",
+    "metricContext": "{value} ctx",
+    "mentionHint": "{agent} · {model} — melhor em {category} ({metric}, n={sample})"
   }
 }

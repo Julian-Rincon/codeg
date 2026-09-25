@@ -6,6 +6,8 @@
 @import "@fontsource-variable/inter";
 @import "@fontsource-variable/geist";
 @import "@fontsource-variable/jetbrains-mono";
+/* Wide geometric face used only for the Phantom wordmark (lazy like the rest). */
+@import "@fontsource/michroma/latin-400.css";
 @import "@fontsource-variable/fira-code";
 @import "@fontsource-variable/geist-mono";
 @custom-variant dark (&:is(.dark *));
@@ -75,6 +77,81 @@
    the .dark class. The inline script sets the data-theme attribute on <html>
    before hydration.
    ========================================================================= */
+
+/* ---------- phantom (default) ----------
+   Phantom's own world: cool neutrals tinted toward the product blue (hue
+   ~262-265, chroma <= 0.02) so greys read as one family with the model
+   accent. Dark mode layers like a workbench: the sidebar sits a step below the
+   canvas, cards and popovers a step above, separated by hairline borders
+   instead of heavy fills. Primary here is the general blue; the model accent
+   overrides it through html[data-phantom-accent] below. */
+[data-theme="phantom"] {
+  --background: oklch(0.992 0.002 262);
+  --foreground: oklch(0.2 0.016 264);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.2 0.016 264);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.2 0.016 264);
+  --primary: oklch(0.488 0.217 264.4);
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.964 0.006 262);
+  --secondary-foreground: oklch(0.24 0.018 264);
+  --muted: oklch(0.964 0.006 262);
+  --muted-foreground: oklch(0.5 0.018 262);
+  --accent: oklch(0.952 0.009 262);
+  --accent-foreground: oklch(0.2 0.016 264);
+  --destructive: oklch(0.577 0.245 27.325);
+  --border: oklch(0.912 0.008 262);
+  --input: oklch(0.895 0.01 262);
+  --ring: oklch(0.56 0.19 264);
+  --chart-1: oklch(0.809 0.105 251.813);
+  --chart-2: oklch(0.623 0.214 259.815);
+  --chart-3: oklch(0.546 0.245 262.881);
+  --chart-4: oklch(0.488 0.243 264.376);
+  --chart-5: oklch(0.424 0.199 265.638);
+  --sidebar: oklch(0.974 0.005 262);
+  --sidebar-foreground: oklch(0.22 0.016 264);
+  --sidebar-primary: oklch(0.488 0.217 264.4);
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.934 0.012 262);
+  --sidebar-accent-foreground: oklch(0.2 0.016 264);
+  --sidebar-border: oklch(0.912 0.008 262);
+  --sidebar-ring: oklch(0.56 0.19 264);
+}
+
+[data-theme="phantom"].dark {
+  --background: oklch(0.162 0.012 266);
+  --foreground: oklch(0.952 0.006 262);
+  --card: oklch(0.196 0.014 266);
+  --card-foreground: oklch(0.952 0.006 262);
+  --popover: oklch(0.212 0.016 266);
+  --popover-foreground: oklch(0.952 0.006 262);
+  --primary: oklch(0.714 0.143 254.6);
+  --primary-foreground: oklch(0.16 0.02 266);
+  --secondary: oklch(0.245 0.016 266);
+  --secondary-foreground: oklch(0.952 0.006 262);
+  --muted: oklch(0.232 0.015 266);
+  --muted-foreground: oklch(0.715 0.02 262);
+  --accent: oklch(0.272 0.02 266);
+  --accent-foreground: oklch(0.952 0.006 262);
+  --destructive: oklch(0.704 0.191 22.216);
+  --border: oklch(0.86 0.03 262 / 9%);
+  --input: oklch(0.86 0.03 262 / 13%);
+  --ring: oklch(0.62 0.16 258);
+  --chart-1: oklch(0.809 0.105 251.813);
+  --chart-2: oklch(0.623 0.214 259.815);
+  --chart-3: oklch(0.546 0.245 262.881);
+  --chart-4: oklch(0.488 0.243 264.376);
+  --chart-5: oklch(0.424 0.199 265.638);
+  --sidebar: oklch(0.142 0.011 266);
+  --sidebar-foreground: oklch(0.93 0.008 262);
+  --sidebar-primary: oklch(0.714 0.143 254.6);
+  --sidebar-primary-foreground: oklch(0.16 0.02 266);
+  --sidebar-accent: oklch(0.222 0.018 266);
+  --sidebar-accent-foreground: oklch(0.952 0.006 262);
+  --sidebar-border: oklch(0.86 0.03 262 / 7%);
+  --sidebar-ring: oklch(0.62 0.16 258);
+}
 
 /* ---------- neutral (default) ---------- */
 [data-theme="neutral"] {
@@ -3174,12 +3251,14 @@ div.monaco-diff-editor.side-by-side .editor.modified {
   --phantom-accent-foreground: var(--phantom-accent-dark-foreground);
 }
 
-/* The model accent only recolors shadcn tokens on the neutral base preset.
+/* The model accent only recolors shadcn tokens on the Phantom and neutral
+   base presets.
    An explicit color preset (data-theme other than neutral) is the user's
    choice and wins; custom token overrides are inline on <html> and win over
    this rule regardless. The repeated attribute lifts specificity to (0,3,1)
    so it also beats the `:root:not([data-theme]).dark` fallback (0,3,0). */
 html[data-phantom-accent][data-phantom-accent]:is(
+    [data-theme="phantom"],
     [data-theme="neutral"],
     :not([data-theme])
   ) {
@@ -3204,4 +3283,37 @@ html[data-phantom-accent] [data-slot="agent-pill"][aria-pressed="true"] {
 .phantom-model-trigger:hover {
   background: var(--phantom-accent-soft);
   color: var(--foreground);
+}
+
+/* Browser-drawn surfaces carry the palette too: selection, caret, focus and
+   scrollbars follow the active primary/accent instead of platform defaults. */
+::selection {
+  background-color: color-mix(in srgb, var(--primary) 26%, transparent);
+}
+
+input,
+textarea,
+[contenteditable="true"] {
+  caret-color: var(--primary);
+}
+
+html {
+  scrollbar-color: color-mix(in srgb, var(--foreground) 20%, transparent)
+    transparent;
+}
+
+/* Inter's straight-sided alternates (open digits, single-storey a, flat-top
+   l/t) read calmer at the dense sizes this workbench runs at. Only applies
+   when the UI font is the default Inter stack. */
+:root {
+  font-feature-settings: "cv01", "cv02", "cv03", "cv04", "cv11", "calt";
+}
+
+/* Phantom wordmark: wide, uppercase, tracked out like the logo lettering.
+   Reserved for the product name; never body or UI text. */
+@utility font-wordmark {
+  font-family: "Michroma", var(--font-sans);
+  font-weight: 400;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
 }

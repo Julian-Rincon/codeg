@@ -7,6 +7,8 @@ import {
 /** The public product name. Internal protocol/data keys intentionally remain `codeg` for compatibility. */
 export const PHANTOM_UI_NAME = "Phantom"
 export const PHANTOM_UI_SHORT_NAME = "Phantom"
+/** Brand emblem used on the login page and other first-impression surfaces. */
+export const PHANTOM_EMBLEM_SRC = "/phantom-emblem-256.png"
 
 export type PhantomAccentId =
   | "general-blue"

@@ -13,7 +13,8 @@ import { ModelOptionList } from "@/components/chat/model-option-list"
 import { SelectorTooltip } from "@/components/chat/selector-tooltip"
 import { useScrollbarSafeDismiss } from "@/hooks/use-scrollbar-safe-dismiss"
 import type { ModelOptionGroup } from "@/lib/model-config-groups"
-import type { SessionConfigOptionInfo } from "@/lib/types"
+import { useModelScorecard } from "@/lib/model-scorecard"
+import type { AgentType, SessionConfigOptionInfo } from "@/lib/types"
 
 interface ModelOptionPickerProps {
   option: SessionConfigOptionInfo
@@ -21,6 +22,10 @@ interface ModelOptionPickerProps {
    *  headerless group for a long flat list). */
   groups: ModelOptionGroup[]
   onSelect: (configId: string, valueId: string) => void
+  /** The agent this picker's options belong to — resolves each row against
+   *  the measured scorecard (badges + metric line). Omit it (e.g. a future
+   *  non-model select reusing this component) and rows render unchanged. */
+  agentType?: AgentType | null
 }
 
 // Wide-form model picker for LONG model lists: a trigger button opening a
@@ -36,8 +41,10 @@ export function ModelOptionPicker({
   option,
   groups,
   onSelect,
+  agentType,
 }: ModelOptionPickerProps) {
   const t = useTranslations("Folder.chat.messageInput")
+  const { scorecard } = useModelScorecard()
   const [open, setOpen] = useState(false)
   const { contentRef, onPointerDownOutside, onFocusOutside } =
     useScrollbarSafeDismiss()
@@ -100,6 +107,8 @@ export function ModelOptionPicker({
           currentValue={currentValue}
           recommendedValue={option.recommended_value}
           recommendedLabel={t("recommendedBadge")}
+          agentType={agentType}
+          scorecard={scorecard}
           onSelect={(value) => {
             onSelect(option.id, value)
             setOpen(false)

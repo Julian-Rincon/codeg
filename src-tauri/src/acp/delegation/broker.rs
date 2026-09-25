@@ -2463,11 +2463,20 @@ impl DelegationBroker {
         // Pull per-agent overrides from the broker config (defaults to empty).
         // Cloning is cheap — `AgentDelegationDefaults` is at most one Option<String>
         // and a small BTreeMap, and the spawner consumes both fields by value.
-        let (preferred_mode_id, preferred_config_values) = cfg
+        let (preferred_mode_id, mut preferred_config_values) = cfg
             .agent_defaults
             .get(&req.agent_type)
             .map(|d: &AgentDelegationDefaults| (d.mode_id.clone(), d.config_values.clone()))
             .unwrap_or((None, BTreeMap::new()));
+        // A model the lead named on this call wins over the configured default.
+        // The broker cannot know the child's model option id yet, so it uses
+        // the category alias resolved at connect.
+        if let Some(model) = req.model.as_deref() {
+            preferred_config_values.insert(
+                crate::acp::connection::MODEL_CATEGORY_CONFIG_KEY.to_string(),
+                model.to_string(),
+            );
+        }
         // Checkpoint #1 (opportunistic): if a parent cancel already landed
         // during the claim/depth phase, bail before spawning a child the parent
         // has abandoned. No child exists yet, so there's nothing to tear down.
@@ -4657,6 +4666,7 @@ mod tests {
             working_dir: None,
             requested_working_dir: None,
             external_handle: None,
+            model: None,
         }
     }
 

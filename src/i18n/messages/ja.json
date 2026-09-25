@@ -77,6 +77,7 @@
       "sectionDescription": "ボタンやアクセント、ハイライトに使用する色を選択します。",
       "current": "現在のカラー：{color}",
       "options": {
+        "phantom": "Phantom",
         "neutral": "Neutral",
         "zinc": "Zinc",
         "slate": "Slate",
@@ -1749,11 +1750,16 @@
   "LoginPage": {
     "documentTitle": "ログイン - Phantom",
     "brand": "Phantom",
-    "subtitle": "デスクトップアプリに接続するためのアクセストークンを入力してください",
-    "tokenPlaceholder": "アクセストークン",
+    "agentsLabel": "エージェント",
+    "hideToken": "トークンを隠す",
+    "showToken": "トークンを表示",
+    "tokenLabel": "アクセストークン",
+    "tagline": "あなたの AI 司令塔",
+    "subtitle": "ローカルの Phantom サーバーに接続",
+    "tokenPlaceholder": "トークンを貼り付け",
     "connect": "接続",
     "connecting": "接続中...",
-    "helpText": "トークンはデスクトップアプリの 設定 → Web サービス で取得できます",
+    "helpText": "ローカル環境: ~/.config/codeg/server.env の CODEG_TOKEN をコピー。デスクトップアプリ: 設定 → Web サービス。",
     "invalidToken": "トークンが無効です。確認して再度お試しください",
     "connectionFailed": "接続失敗 (HTTP {status})",
     "networkError": "サーバーに接続できません"
@@ -5944,7 +5950,26 @@
     "emptyHint": "codeg は各エージェント自身のセッション記録から直接トークン数を読み取ります。更新すると、このマシンにある記録を集計します。",
     "emptyAction": "セッションを集計",
     "loadFailed": "使用量を読み込めませんでした",
-    "truncatedNotice": "期間が非常に長いため、表示中の数値は直近の一部のみを対象としています。"
+    "truncatedNotice": "期間が非常に長いため、表示中の数値は直近の一部のみを対象としています。",
+    "tabDashboard": "ダッシュボード",
+    "tabModels": "モデル",
+    "modelsGeneratedAt": "生成日時 {time}",
+    "modelsExplain": "ローカルの履歴から測定した指標です。同期すると更新されます。",
+    "modelsSyncAction": "同期",
+    "modelsEmpty": "まだ測定されたモデルがありません",
+    "modelsColAgent": "エージェント",
+    "modelsColModel": "モデル",
+    "modelsColConversations": "会話数",
+    "modelsColTurns": "ターン数",
+    "modelsColAvgTurn": "平均ターン",
+    "modelsColTokPerSec": "Tok/s",
+    "modelsColCacheHit": "キャッシュ命中率",
+    "modelsColToolErrors": "ツールエラー",
+    "modelsColContext": "コンテキスト",
+    "modelsColLastUsed": "最終使用",
+    "modelsColStrengths": "得意分野",
+    "modelsBestForTitle": "カテゴリ別ベストモデル",
+    "modelsRunnerUp": "次点: {agent} · {model}（{value}）"
   },
   "Forge": {
     "title": "リポジトリパネル",
@@ -6528,5 +6553,21 @@
         "probeFailed": "内蔵ブラウザーがトンネル経由でリモートホストに届くことを確認できませんでした。しばらくしてからもう一度お試しください。"
       }
     }
+  },
+  "ModelScorecard": {
+    "categoryEdit": "編集",
+    "categoryExplore": "探索",
+    "categoryShell": "シェル",
+    "categoryResearch": "調査",
+    "categoryFast": "高速",
+    "categoryLongContext": "長いコンテキスト",
+    "categoryFree": "無料",
+    "noData": "データがまだ不足しています",
+    "unavailable": "利用不可",
+    "metricDuration": "{value}秒/ターン",
+    "metricTokPerSec": "{value} tok/s",
+    "metricErrorPct": "エラー{value}%",
+    "metricContext": "コンテキスト{value}",
+    "mentionHint": "{agent} · {model} — {category}が得意（{metric}、n={sample}）"
   }
 }

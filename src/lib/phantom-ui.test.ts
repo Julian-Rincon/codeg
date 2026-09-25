@@ -15,7 +15,9 @@ import {
 // light background/card are white; dark background is oklch(0.145 0 0) and
 // dark card/sidebar is oklch(0.205 0 0), which is the harder case.
 const LIGHT_SURFACES = ["#ffffff"]
-const DARK_SURFACES = ["#0a0a0a", "#171717"]
+// The Phantom preset adds its own dark canvas/card/popover (#0b0e13, #12151c,
+// #151920); the popover is the lightest, so the hardest case.
+const DARK_SURFACES = ["#0a0a0a", "#171717", "#0b0e13", "#12151c", "#151920"]
 
 function channel(value: number): number {
   const normalized = value / 255

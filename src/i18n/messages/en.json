@@ -77,6 +77,7 @@
       "sectionDescription": "Pick a color palette for accents, buttons, and highlights.",
       "current": "Current color: {color}",
       "options": {
+        "phantom": "Phantom",
         "neutral": "Neutral",
         "zinc": "Zinc",
         "slate": "Slate",
@@ -1749,11 +1750,16 @@
   "LoginPage": {
     "documentTitle": "Login - Phantom",
     "brand": "Phantom",
-    "subtitle": "Enter your access token to connect to the desktop app",
-    "tokenPlaceholder": "Access Token",
+    "agentsLabel": "Agents",
+    "hideToken": "Hide token",
+    "showToken": "Show token",
+    "tokenLabel": "Access token",
+    "tagline": "Your AI command center",
+    "subtitle": "Connect to your local Phantom server",
+    "tokenPlaceholder": "Paste your token",
     "connect": "Connect",
     "connecting": "Connecting...",
-    "helpText": "Find your token in the desktop app under Settings → Web Service",
+    "helpText": "Local install: copy CODEG_TOKEN from ~/.config/codeg/server.env. Desktop app: Settings → Web Service.",
     "invalidToken": "Invalid token. Please check and try again.",
     "connectionFailed": "Connection failed (HTTP {status})",
     "networkError": "Unable to connect to the server"
@@ -5944,7 +5950,26 @@
     "emptyHint": "Phantom reads token counts straight from each agent's own transcript. Run a refresh to count what's already on this machine.",
     "emptyAction": "Count my sessions",
     "loadFailed": "Could not load usage",
-    "truncatedNotice": "This range is very large — the numbers cover only the most recent slice of it."
+    "truncatedNotice": "This range is very large — the numbers cover only the most recent slice of it.",
+    "tabDashboard": "Dashboard",
+    "tabModels": "Models",
+    "modelsGeneratedAt": "Generated {time}",
+    "modelsExplain": "Metrics measured from your local history; they refresh when you sync.",
+    "modelsSyncAction": "Sync",
+    "modelsEmpty": "No models measured yet",
+    "modelsColAgent": "Agent",
+    "modelsColModel": "Model",
+    "modelsColConversations": "Conversations",
+    "modelsColTurns": "Turns",
+    "modelsColAvgTurn": "Avg turn",
+    "modelsColTokPerSec": "Tok/s",
+    "modelsColCacheHit": "Cache hit",
+    "modelsColToolErrors": "Tool errors",
+    "modelsColContext": "Context",
+    "modelsColLastUsed": "Last used",
+    "modelsColStrengths": "Best for",
+    "modelsBestForTitle": "Best model per category",
+    "modelsRunnerUp": "runner-up {agent} · {model} ({value})"
   },
   "Forge": {
     "title": "Repository panel",
@@ -6528,5 +6553,21 @@
         "probeFailed": "The built-in browser couldn't confirm that it reaches the remote host through the tunnel. Try again in a moment."
       }
     }
+  },
+  "ModelScorecard": {
+    "categoryEdit": "Edit",
+    "categoryExplore": "Explore",
+    "categoryShell": "Shell",
+    "categoryResearch": "Research",
+    "categoryFast": "Fast",
+    "categoryLongContext": "Long context",
+    "categoryFree": "Free",
+    "noData": "Not enough data yet",
+    "unavailable": "Not available",
+    "metricDuration": "{value}s/turn",
+    "metricTokPerSec": "{value} tok/s",
+    "metricErrorPct": "{value}% errors",
+    "metricContext": "{value} ctx",
+    "mentionHint": "{agent} · {model} — best at {category} ({metric}, n={sample})"
   }
 }

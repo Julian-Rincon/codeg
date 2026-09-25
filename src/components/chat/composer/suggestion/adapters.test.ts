@@ -57,6 +57,28 @@ describe("agentToSuggestion", () => {
       meta: { agentType: "claude_code", available: true },
     })
   })
+
+  it("falls back to the agent's own description with no mention hint", () => {
+    const agent = {
+      agent_type: "claude_code",
+      name: "Claude Code",
+      description: "Anthropic CLI",
+      available: true,
+    } as AcpAgentInfo
+    expect(agentToSuggestion(agent).detail).toBe("Anthropic CLI")
+    expect(agentToSuggestion(agent, null).detail).toBe("Anthropic CLI")
+  })
+
+  it("prefers the measured delegation hint over the static description", () => {
+    const agent = {
+      agent_type: "claude_code",
+      name: "Claude Code",
+      description: "Anthropic CLI",
+      available: true,
+    } as AcpAgentInfo
+    const hint = "Claude Code · Opus 5.5 — best at Edit (1.2% errors, n=340)"
+    expect(agentToSuggestion(agent, hint).detail).toBe(hint)
+  })
 })
 
 describe("sessionToSuggestion", () => {

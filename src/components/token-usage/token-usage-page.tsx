@@ -42,6 +42,7 @@ import {
 import { Progress } from "@/components/ui/progress"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { WorkbenchPageTitle } from "@/components/workbench/workbench-page-title"
+import { ModelScorecardView } from "@/components/token-usage/model-scorecard-view"
 import { FolderAliasLabel } from "@/components/conversations/folder-alias-label"
 import { formatFolderLabelWithAlias } from "@/lib/folder-display"
 import {
@@ -314,7 +315,38 @@ function LoadingSkeleton() {
  * top sessions) comes from that single response, so nothing on the page can
  * disagree with anything else on it.
  */
+type TokenUsageTab = "dashboard" | "models"
+
+/**
+ * Usage dashboard plus the measured per-model scorecard. The two views share
+ * the synced `token_usage_turn` facts, so they live under one page as tabs.
+ */
 export function TokenUsagePage() {
+  const t = useTranslations("TokenUsage")
+  const [tab, setTab] = useState<TokenUsageTab>("dashboard")
+  return (
+    <div className="flex h-full min-h-0 flex-col">
+      <div className="shrink-0 px-4 pt-4">
+        <div className="mx-auto w-full max-w-6xl">
+          <SegmentedFilter<TokenUsageTab>
+            ariaLabel={t("title")}
+            value={tab}
+            onChange={setTab}
+            options={[
+              { value: "dashboard", label: t("tabDashboard") },
+              { value: "models", label: t("tabModels") },
+            ]}
+          />
+        </div>
+      </div>
+      <div className="min-h-0 flex-1">
+        {tab === "dashboard" ? <TokenUsageDashboard /> : <ModelScorecardView />}
+      </div>
+    </div>
+  )
+}
+
+function TokenUsageDashboard() {
   const t = useTranslations("TokenUsage")
   const locale = useLocale()
 

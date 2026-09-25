@@ -1,12 +1,20 @@
 "use client"
 
-import { useCallback, useEffect, useLayoutEffect, useRef } from "react"
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef } from "react"
+import { useLocale, useTranslations } from "next-intl"
 
 import { useAcpAgents } from "@/hooks/use-acp-agents"
 import { useFileTree, type FlatFileEntry } from "@/hooks/use-file-tree"
 import { gitLog, listAllConversations } from "@/lib/api"
+import { getAgentLabel } from "@/lib/custom-agents"
+import {
+  buildAgentMentionHints,
+  useModelScorecard,
+  type AnyTranslate,
+} from "@/lib/model-scorecard"
 import type {
   AcpAgentInfo,
+  AgentType,
   DbConversationSummary,
   GitLogEntry,
 } from "@/lib/types"
@@ -67,6 +75,14 @@ export interface ReferenceSearchSources {
   commits: GitLogEntry[]
   /** Repo identity for commit URIs; null disables the commit group. */
   repoKey: string | null
+  /**
+   * Precomputed "best at …" delegation hint per agent type, from
+   * `buildAgentMentionHints` — kept as an already-localized map (rather than
+   * threading a translator into this pure function) so the group builder
+   * stays test-friendly without next-intl. Absent/empty agent types simply
+   * fall back to the agent's own description.
+   */
+  agentHints?: Map<AgentType, string>
 }
 
 /** Case-insensitive substring match against an adapted item's searchable text. */
@@ -119,7 +135,9 @@ export function buildReferenceGroups(
   // tab count and `truncated` flag follow from this filtered set too).
   const agentMatches = sources.agents
     .filter((agent) => agent.enabled)
-    .map(agentToSuggestion)
+    .map((agent) =>
+      agentToSuggestion(agent, sources.agentHints?.get(agent.agent_type))
+    )
     .filter((item) => suggestionMatches(item, q))
   const agentItems = agentMatches.slice(0, MAX_PER_GROUP)
 
@@ -218,6 +236,23 @@ export function useReferenceSearch({
   })
   const { agents } = useAcpAgents()
 
+  // Delegation hint source: the measured scorecard, resolved into one
+  // localized "best at …" string per agent type. `useModelScorecard` is the
+  // shared module-level cache (see `lib/model-scorecard.ts`) — this doesn't
+  // trigger its own fetch, it just reads whatever the app already has.
+  const { scorecard } = useModelScorecard()
+  const tScorecard = useTranslations("ModelScorecard") as AnyTranslate
+  const locale = useLocale()
+  const agentHints = useMemo(() => {
+    const agentLabels = new Map<AgentType, string>(
+      agents.map((agent) => [
+        agent.agent_type,
+        agent.name || getAgentLabel(agent.agent_type),
+      ])
+    )
+    return buildAgentMentionHints(scorecard, agentLabels, tScorecard, locale)
+  }, [agents, scorecard, tScorecard, locale])
+
   // Mirror every changing source into a ref so `search` can stay identity-stable
   // (see the doc comment). Initialized from the first render so the refs are
   // sane even before the sync effect below runs.
@@ -226,6 +261,7 @@ export function useReferenceSearch({
     files: [],
   })
   const agentsRef = useRef(agents)
+  const agentHintsRef = useRef(agentHints)
   const pathRef = useRef(path)
   const enabledRef = useRef(enabled)
   const labelsRef = useRef(labels)
@@ -250,8 +286,9 @@ export function useReferenceSearch({
         ? { root: path, files: allFiles }
         : { root: null, files: [] }
     agentsRef.current = agents
+    agentHintsRef.current = agentHints
     labelsRef.current = labels
-  }, [allFiles, loaded, path, agents, labels])
+  }, [allFiles, loaded, path, agents, agentHints, labels])
 
   // Lazily-fetched network sources, key-cached so repeat searches reuse the
   // in-flight/resolved promise while a folder switch refetches.
@@ -343,6 +380,7 @@ export function useReferenceSearch({
         sessions,
         commits,
         repoKey: path,
+        agentHints: agentHintsRef.current,
       },
       labelsRef.current ?? DEFAULT_GROUP_LABELS
     )

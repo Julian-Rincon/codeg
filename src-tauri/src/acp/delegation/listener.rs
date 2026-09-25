@@ -1072,6 +1072,14 @@ impl DelegationListener {
             .clone()
             .or_else(|| Some(entry.working_dir.to_string_lossy().to_string()));
 
+        let model = req
+            .input
+            .get("model")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .filter(|m| !m.is_empty())
+            .map(str::to_string);
+
         let delegation_req = DelegationRequest {
             parent_connection_id: req.parent_connection_id,
             parent_conversation_id,
@@ -1081,6 +1089,7 @@ impl DelegationListener {
             working_dir,
             requested_working_dir,
             external_handle: req.external_handle,
+            model,
         };
         self.broker.start_delegation(delegation_req).await
     }
@@ -2078,6 +2087,7 @@ mod tests {
                 working_dir: None,
                 requested_working_dir: None,
                 external_handle: None,
+                model: None,
             })
             .await;
         let task_id = ack.task_id.clone().expect("running task carries an id");
@@ -2231,6 +2241,7 @@ mod tests {
                         working_dir: None,
                         requested_working_dir: None,
                         external_handle: None,
+                        model: None,
                     })
                     .await
                     .task_id
@@ -2333,6 +2344,7 @@ mod tests {
                 working_dir: None,
                 requested_working_dir: None,
                 external_handle: None,
+                model: None,
             })
             .await;
         let task_id = ack.task_id.clone().unwrap();
@@ -2384,6 +2396,7 @@ mod tests {
                     working_dir: None,
                     requested_working_dir: None,
                     external_handle: Some("h-1".into()),
+                    model: None,
                 };
                 broker.handle_request(req).await
             })

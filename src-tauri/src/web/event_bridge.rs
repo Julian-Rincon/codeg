@@ -482,6 +482,13 @@ where
             return false;
         }
         s.apply_event(&payload);
+        // Cheap, synchronous extraction + a spawned (non-awaited) DB write —
+        // see `acp::model_catalog` for why this is the one choke point every
+        // producer of the event funnels through. Never blocks this critical
+        // section and never fails the emit even if it errors internally.
+        if let AcpEvent::SessionConfigOptions { config_options } = &payload {
+            crate::acp::model_catalog::record_seen(s.agent_type, config_options);
+        }
         s.event_seq += 1;
         let envelope = Arc::new(EventEnvelope {
             seq: s.event_seq,

@@ -94,7 +94,8 @@ mod tauri_app {
         experts as experts_commands, feedback as feedback_commands, file_io, folder_commands,
         folder_links, office_tools as office_tools_commands, open_in,
         folders, logging as logging_commands, mcp as mcp_commands,
-        model_provider as model_provider_commands, notification, pet as pet_commands, project_boot,
+        model_provider as model_provider_commands,
+        model_scorecard as model_scorecard_commands, notification, pet as pet_commands, project_boot,
         question as question_commands, quick_messages as quick_messages_commands,
         remote_proxy as remote_proxy_commands,
         remote_workspace as remote_workspace_commands, science as science_commands,
@@ -655,6 +656,12 @@ mod tauri_app {
                 ))
                 .map_err(|e| e.to_string())?;
                 app.manage(database);
+
+                // Wire up the live model-catalog sink (see
+                // `acp::model_catalog`) as early as possible — before any ACP
+                // connection can spawn — so the first `SessionConfigOptions`
+                // report of the run is never dropped for lacking a database.
+                crate::acp::model_catalog::init(app.state::<db::AppDatabase>().conn.clone());
 
                 // Restore and apply saved system proxy settings before any network operation.
                 let db = app.state::<db::AppDatabase>();
@@ -1908,6 +1915,7 @@ mod tauri_app {
                 token_usage_commands::token_usage_facets,
                 token_usage_commands::token_usage_status,
                 token_usage_commands::token_usage_sync,
+                model_scorecard_commands::model_scorecard,
                 work_task_commands::work_task_list,
                 work_task_commands::work_task_get,
                 work_task_commands::work_task_events,

@@ -37,6 +37,10 @@
         "working_dir": {
           "type": "string",
           "description": "Absolute path the sub-agent runs in. Defaults to this session's working directory."
+        },
+        "model": {
+          "type": "string",
+          "description": "Optional model id for the sub-agent. It must be one of THAT agent's own models: each agent keeps its own model list (Claude Code runs Claude models, OpenCode runs its own OpenCode models, Hermes its own) and they are never mixed, so never pass one agent's model to another agent. Use it when the routing guide in this tool's description (built from the user's own measured history, listed as agent/model pairs) shows that agent/model pair measurably better for this slice of work. Omit it to use the agent's default. An id the target agent does not offer is ignored and its default model runs instead."
         }
       }
     }

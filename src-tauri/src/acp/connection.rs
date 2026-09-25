@@ -5340,6 +5340,15 @@ where
         args.push("--disabled-agents".to_string());
         args.push(disabled_builtins.join(","));
     }
+    // Measured model routing guide (Phantom): lets the lead pick the agent and
+    // model that did best on this kind of work in the user's own history.
+    // Omitted when there is no data, like the flags above.
+    if flags.delegation {
+        if let Some(path) = crate::acp::model_catalog::refresh_routing_guide_file().await {
+            args.push("--routing-guide-file".to_string());
+            args.push(path.to_string_lossy().to_string());
+        }
+    }
     server = server.args(args);
     servers.push(McpServer::Stdio(server));
     Some(CompanionInjection {
@@ -8144,6 +8153,62 @@ fn is_model_config_option(option: &SessionConfigOption) -> bool {
 /// A preferred id the agent never advertised is ordered as a non-model option
 /// unless it is literally `model` — the fallback stays deliberately narrow
 /// because an unadvertised id is still sent (see `apply_preferred_session_options`).
+/// Reserved `preferred_config_values` key meaning "whatever option this agent
+/// advertises as its model selector". Delegation uses it because the broker
+/// picks a model before the child session exists and cannot know the child's
+/// option id; it is rewritten to the real id against the advertised list.
+pub(crate) const MODEL_CATEGORY_CONFIG_KEY: &str = "@model";
+
+/// Rewrite [`MODEL_CATEGORY_CONFIG_KEY`] to the id of the advertised model
+/// option. `None` when the alias is absent (callers keep the original map).
+/// An agent without a model selector simply drops the alias.
+fn resolve_model_category_alias(
+    options: &[SessionConfigOption],
+    preferred: &BTreeMap<String, String>,
+) -> Option<BTreeMap<String, String>> {
+    let model = preferred.get(MODEL_CATEGORY_CONFIG_KEY)?;
+    let mut resolved = preferred.clone();
+    resolved.remove(MODEL_CATEGORY_CONFIG_KEY);
+    if let Some(option) = options.iter().find(|o| is_model_config_option(o)) {
+        let value = advertised_model_value(option, model).unwrap_or_else(|| model.clone());
+        resolved.insert(option.id.to_string(), value);
+    }
+    Some(resolved)
+}
+
+/// Map a model id as recorded in transcripts (`space-bunny-free`) onto the
+/// value the agent's selector actually accepts (`opencode/space-bunny-free`):
+/// exact value first, then a unique value whose last `/` segment matches.
+/// `None` leaves the requested id as-is (the connect path then skips a value
+/// the agent does not offer).
+fn advertised_model_value(option: &SessionConfigOption, model: &str) -> Option<String> {
+    let SessionConfigKind::Select(select) = &option.kind else {
+        return None;
+    };
+    let values: Vec<String> = match &select.options {
+        SessionConfigSelectOptions::Ungrouped(options) => {
+            options.iter().map(|o| o.value.to_string()).collect()
+        }
+        SessionConfigSelectOptions::Grouped(groups) => groups
+            .iter()
+            .flat_map(|group| group.options.iter().map(|o| o.value.to_string()))
+            .collect(),
+        _ => Vec::new(),
+    };
+    let wanted = model.trim();
+    if values.iter().any(|v| v == wanted) {
+        return Some(wanted.to_string());
+    }
+    let tail = wanted.rsplit('/').next().unwrap_or(wanted);
+    let mut by_tail = values
+        .iter()
+        .filter(|v| v.rsplit('/').next() == Some(tail));
+    match (by_tail.next(), by_tail.next()) {
+        (Some(only), None) => Some(only.clone()),
+        _ => None,
+    }
+}
+
 fn order_preferred_config_values<'a>(
     options: &[SessionConfigOption],
     preferred: &'a BTreeMap<String, String>,
@@ -8276,6 +8341,8 @@ async fn apply_preferred_session_options(
 
     let session_id = session.session_id().clone();
     let mut options = initial_config_options;
+    let aliased = resolve_model_category_alias(&options, preferred_config_values);
+    let preferred_config_values = aliased.as_ref().unwrap_or(preferred_config_values);
     // Ids this launch must not replay a saved preference for. Two rules:
     //
     //   * what this launch's environment froze — a set can only fail, and it is
@@ -26952,6 +27019,66 @@ mod tests {
             .map(|(id, _)| id.as_str())
             .collect();
         assert_eq!(ordered, vec!["a_thing", "z_thing"]);
+    }
+
+    #[test]
+    fn model_category_alias_targets_the_advertised_model_option() {
+        let options: Vec<SessionConfigOption> = serde_json::from_value(serde_json::json!([
+            {
+                "type": "select",
+                "id": "llm",
+                "name": "Model",
+                "category": "model",
+                "currentValue": "a",
+                "options": [{"value": "a", "name": "A"}, {"value": "b", "name": "B"}]
+            },
+        ]))
+        .expect("parses");
+
+        // Delegation names the model through the alias; it lands on `llm`.
+        let preferred = BTreeMap::from([
+            (MODEL_CATEGORY_CONFIG_KEY.to_string(), "b".to_string()),
+            ("effort".to_string(), "high".to_string()),
+        ]);
+        let resolved = resolve_model_category_alias(&options, &preferred).expect("alias present");
+        assert_eq!(resolved.get("llm").map(String::as_str), Some("b"));
+        assert!(!resolved.contains_key(MODEL_CATEGORY_CONFIG_KEY));
+        assert_eq!(resolved.get("effort").map(String::as_str), Some("high"));
+
+        // No alias: callers keep their map untouched.
+        let plain = BTreeMap::from([("llm".to_string(), "a".to_string())]);
+        assert!(resolve_model_category_alias(&options, &plain).is_none());
+
+        // A transcript id without the provider prefix maps onto the
+        // advertised value.
+        let prefixed: Vec<SessionConfigOption> = serde_json::from_value(serde_json::json!([
+            {
+                "type": "select",
+                "id": "model",
+                "name": "Model",
+                "category": "model",
+                "currentValue": "opencode/big-pickle",
+                "options": [
+                    {"value": "opencode/big-pickle", "name": "Big Pickle"},
+                    {"value": "opencode/space-bunny-free", "name": "Space Bunny"}
+                ]
+            },
+        ]))
+        .expect("parses");
+        let wanted = BTreeMap::from([(
+            MODEL_CATEGORY_CONFIG_KEY.to_string(),
+            "space-bunny-free".to_string(),
+        )]);
+        let resolved = resolve_model_category_alias(&prefixed, &wanted).expect("alias present");
+        assert_eq!(
+            resolved.get("model").map(String::as_str),
+            Some("opencode/space-bunny-free")
+        );
+
+        // An agent without a model selector just drops the alias.
+        let dropped = resolve_model_category_alias(&[], &preferred).expect("alias present");
+        assert!(!dropped.contains_key(MODEL_CATEGORY_CONFIG_KEY));
+        assert_eq!(dropped.len(), 1);
     }
 
     /// The claude shape: a model select plus the effort option that hangs off it.

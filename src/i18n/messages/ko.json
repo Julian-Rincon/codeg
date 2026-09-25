@@ -77,6 +77,7 @@
       "sectionDescription": "버튼, 강조 색상, 하이라이트에 사용할 색상 팔레트를 선택하세요.",
       "current": "현재 색상: {color}",
       "options": {
+        "phantom": "Phantom",
         "neutral": "Neutral",
         "zinc": "Zinc",
         "slate": "Slate",
@@ -1749,11 +1750,16 @@
   "LoginPage": {
     "documentTitle": "로그인 - Phantom",
     "brand": "Phantom",
-    "subtitle": "데스크톱 앱에 연결하려면 액세스 토큰을 입력하세요",
-    "tokenPlaceholder": "액세스 토큰",
+    "agentsLabel": "에이전트",
+    "hideToken": "토큰 숨기기",
+    "showToken": "토큰 표시",
+    "tokenLabel": "액세스 토큰",
+    "tagline": "당신의 AI 허브",
+    "subtitle": "로컬 Phantom 서버에 연결",
+    "tokenPlaceholder": "토큰 붙여넣기",
     "connect": "연결",
     "connecting": "연결 중...",
-    "helpText": "토큰은 데스크톱 앱의 설정 → 웹 서비스에서 확인할 수 있습니다",
+    "helpText": "로컬 설치: ~/.config/codeg/server.env 의 CODEG_TOKEN 을 복사하세요. 데스크톱 앱: 설정 → 웹 서비스.",
     "invalidToken": "유효하지 않은 토큰입니다. 확인 후 다시 시도하세요",
     "connectionFailed": "연결 실패 (HTTP {status})",
     "networkError": "서버에 연결할 수 없습니다"
@@ -5944,7 +5950,26 @@
     "emptyHint": "codeg는 각 에이전트의 세션 기록에서 토큰 수를 직접 읽습니다. 새로 고침하면 이 컴퓨터에 있는 기록을 집계합니다.",
     "emptyAction": "내 세션 집계",
     "loadFailed": "사용량을 불러오지 못했습니다",
-    "truncatedNotice": "기간이 매우 길어 표시된 수치는 가장 최근 구간만 반영합니다."
+    "truncatedNotice": "기간이 매우 길어 표시된 수치는 가장 최근 구간만 반영합니다.",
+    "tabDashboard": "대시보드",
+    "tabModels": "모델",
+    "modelsGeneratedAt": "생성됨 {time}",
+    "modelsExplain": "로컬 사용 기록으로 측정한 지표이며 동기화하면 갱신됩니다.",
+    "modelsSyncAction": "동기화",
+    "modelsEmpty": "아직 측정된 모델이 없음",
+    "modelsColAgent": "에이전트",
+    "modelsColModel": "모델",
+    "modelsColConversations": "대화",
+    "modelsColTurns": "턴",
+    "modelsColAvgTurn": "평균 턴",
+    "modelsColTokPerSec": "Tok/s",
+    "modelsColCacheHit": "캐시 적중률",
+    "modelsColToolErrors": "도구 오류",
+    "modelsColContext": "컨텍스트",
+    "modelsColLastUsed": "마지막 사용",
+    "modelsColStrengths": "강점",
+    "modelsBestForTitle": "카테고리별 최고 모델",
+    "modelsRunnerUp": "차점: {agent} · {model} ({value})"
   },
   "Forge": {
     "title": "리포지토리 패널",
@@ -6528,5 +6553,21 @@
         "probeFailed": "내장 브라우저가 터널을 통해 원격 호스트에 도달하는지 확인할 수 없습니다. 잠시 후 다시 시도하세요."
       }
     }
+  },
+  "ModelScorecard": {
+    "categoryEdit": "편집",
+    "categoryExplore": "탐색",
+    "categoryShell": "쉘",
+    "categoryResearch": "조사",
+    "categoryFast": "빠름",
+    "categoryLongContext": "긴 컨텍스트",
+    "categoryFree": "무료",
+    "noData": "데이터가 아직 부족함",
+    "unavailable": "사용 불가",
+    "metricDuration": "{value}초/턴",
+    "metricTokPerSec": "{value} tok/s",
+    "metricErrorPct": "오류 {value}%",
+    "metricContext": "컨텍스트 {value}",
+    "mentionHint": "{agent} · {model} — {category}에 최적 ({metric}, n={sample})"
   }
 }

@@ -2,6 +2,7 @@
 
 import { useCallback, useId, useMemo, useRef, useState } from "react"
 import { Check, Search } from "lucide-react"
+import { useLocale, useTranslations } from "next-intl"
 import { Virtualizer, type VirtualizerHandle } from "virtua"
 import { useImeGuard } from "@/hooks/use-ime-guard"
 import { useZoomLevel } from "@/hooks/use-appearance"
@@ -13,6 +14,15 @@ import {
   flattenModelGroups,
   type ModelOptionGroup,
 } from "@/lib/model-config-groups"
+import {
+  findModelScore,
+  hasScorecardData,
+  scorecardStatusLine,
+  scorecardStrengthLabels,
+  type AnyTranslate,
+  type ModelScorecardResponse,
+} from "@/lib/model-scorecard"
+import type { AgentType } from "@/lib/types"
 
 interface ModelOptionListProps {
   groups: ModelOptionGroup[]
@@ -31,6 +41,15 @@ interface ModelOptionListProps {
   emptyLabel: string
   /** Focus the search box on mount (the wide popover opens straight into it). */
   autoFocus?: boolean
+  /**
+   * The agent this list's options belong to, and the measured scorecard to
+   * resolve them against ({@link findModelScore}). Both are needed to show
+   * anything; omit either and rows render exactly as before (no badges, no
+   * metric line) — a caller that isn't the model picker (e.g. Codex's
+   * approval-preset select) simply never passes them.
+   */
+  agentType?: AgentType | null
+  scorecard?: ModelScorecardResponse | null
 }
 
 // Coarse per-row viewport estimate (headers are shorter, two-line options
@@ -63,9 +82,18 @@ export function ModelOptionList({
   listAriaLabel,
   emptyLabel,
   autoFocus = false,
+  agentType,
+  scorecard,
 }: ModelOptionListProps) {
   const ime = useImeGuard()
   const { zoomLevel } = useZoomLevel()
+  // next-intl's `Translator` narrows `key` to that namespace's literal keys,
+  // which is stricter than the structural `AnyTranslate` the pure scorecard
+  // helpers accept (they're written against a plain-string key so they stay
+  // testable without next-intl) — the cast is safe, every key passed to it
+  // below is one of `ModelScorecard`'s own.
+  const tScorecard = useTranslations("ModelScorecard") as AnyTranslate
+  const locale = useLocale()
   const [query, setQuery] = useState("")
   const [activeIndex, setActiveIndex] = useState(0)
   const virtualizerRef = useRef<VirtualizerHandle>(null)
@@ -264,6 +292,18 @@ export function ModelOptionList({
                     const optionIndex = optionIndexByRow.get(flatIndex) ?? 0
                     const selected = row.option.value === currentValue
                     const active = optionIndex === activeIndexClamped
+                    // Measured-data hint for this row (see the prop doc):
+                    // resolved fresh per row since the matcher is cheap and
+                    // the row set is bounded, same as `selected`/`active`.
+                    const scoreEntry =
+                      agentType && scorecard
+                        ? findModelScore(
+                            scorecard,
+                            agentType,
+                            row.option.value,
+                            row.option.name
+                          )
+                        : null
                     return (
                       <button
                         key={row.key}
@@ -289,6 +329,21 @@ export function ModelOptionList({
                           recommendedLabel={
                             row.option.value === recommendedValue
                               ? recommendedLabel
+                              : null
+                          }
+                          scorecardBadges={
+                            scoreEntry && hasScorecardData(scoreEntry)
+                              ? scorecardStrengthLabels(scoreEntry, tScorecard)
+                              : null
+                          }
+                          unavailableLabel={null}
+                          scorecardLine={
+                            scoreEntry
+                              ? scorecardStatusLine(
+                                  scoreEntry,
+                                  tScorecard,
+                                  locale
+                                )
                               : null
                           }
                         />

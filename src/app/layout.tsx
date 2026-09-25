@@ -24,14 +24,18 @@ export const viewport: Viewport = {
 
 export const metadata: Metadata = {
   title: PHANTOM_UI_NAME,
-  description: "Phantom · AI coding agent workspace",
+  description: "Phantom · Tu central de IA",
   icons: {
     icon: [
-      { url: "/phantom-ui.svg", type: "image/svg+xml" },
-      { url: "/icon-32x32.png", sizes: "32x32", type: "image/png" },
-      { url: "/icon.svg", type: "image/svg+xml" },
+      { url: "/phantom-emblem-32.png", sizes: "32x32", type: "image/png" },
+      { url: "/phantom-emblem-64.png", sizes: "64x64", type: "image/png" },
+      { url: "/phantom-emblem-192.png", sizes: "192x192", type: "image/png" },
     ],
-    apple: { url: "/icon-128x128.png", sizes: "128x128", type: "image/png" },
+    apple: {
+      url: "/phantom-emblem-192.png",
+      sizes: "192x192",
+      type: "image/png",
+    },
   },
 }
 

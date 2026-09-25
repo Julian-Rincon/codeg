@@ -20,6 +20,7 @@ export const EDITOR_CANVAS_BG: Record<
   ThemeColor,
   { light: string; dark: string }
 > = {
+  phantom: { light: "#ffffff", dark: "#12151c" },
   neutral: { light: "#ffffff", dark: "#171717" },
   zinc: { light: "#ffffff", dark: "#18181b" },
   slate: { light: "#ffffff", dark: "#0f172b" },
@@ -44,6 +45,7 @@ export const EDITOR_LINE_HIGHLIGHT: Record<
   ThemeColor,
   { light: string; dark: string }
 > = {
+  phantom: { light: "#f1f3f7", dark: "#1a1d25" },
   neutral: { light: "#f5f5f5", dark: "#262626" },
   zinc: { light: "#f4f4f5", dark: "#27272a" },
   slate: { light: "#f1f5f9", dark: "#1d293d" },

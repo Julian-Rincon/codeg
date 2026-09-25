@@ -54,7 +54,7 @@ use crate::db::service::token_usage_service::{
     self as usage_service, FactQuery, UsageFact, UsageFactRow,
 };
 use crate::models::conversation::DbConversationDetail;
-use crate::models::message::MessageTurn;
+use crate::models::message::{ContentBlock, MessageTurn};
 use crate::models::token_usage::{
     TokenUsageBreakdownItem, TokenUsageBucket, TokenUsageConversationItem, TokenUsageFacets,
     TokenUsageFilter, TokenUsageFolderFacet, TokenUsageHeatCell, TokenUsagePoint,
@@ -110,12 +110,21 @@ const TOP_CONVERSATIONS: usize = 8;
 ///   the two (which every shared helper does, because for Claude they are
 ///   disjoint) inflated input and total by the cached amount. See
 ///   `parsers::qoder::qoder_turn_usage`.
+/// * `4` — added the twelve tool-quality counters (`tool_calls`/`tool_errors`
+///   and the five category pairs — see `tool_counters_from_blocks`). Every row
+///   written under `1`–`3` has them at their column default (`0`), which reads
+///   as "no tool calls recorded" rather than "recorded and empty" — wrong for
+///   any conversation that actually used tools. Bumping the version is what
+///   gets real counts into rows that already exist; a fresh row from a
+///   conversation with genuinely no tool calls (a short chat) is unaffected
+///   either way.
 ///
 /// Only the accounting stored in `token_usage_turn` counts: the four token
-/// counters, the duration and the timestamp. A conversation's context WINDOW is
-/// not stored here (nor anywhere else — `SessionStats` is recomputed by the
-/// parser on every read), so changing how a window is inferred needs no bump;
-/// it reaches every existing session the moment it ships.
+/// counters, the duration, the timestamp, and (from schema `4`) the
+/// tool-quality counters. A conversation's context WINDOW is not stored here
+/// (nor anywhere else — `SessionStats` is recomputed by the parser on every
+/// read), so changing how a window is inferred needs no bump; it reaches every
+/// existing session the moment it ships.
 ///
 /// Nor does a change to the DATA a transcript carries: shipping Qoder's
 /// `QODER_EXPOSE_TOKEN_USAGE` launch env only affects turns recorded after it,
@@ -124,7 +133,7 @@ const TOP_CONVERSATIONS: usize = 8;
 /// counters predate it, since a custom/BYO model has always exposed them and
 /// the parser reads every session under `~/.qoder/projects`, not just the ones
 /// codeg launched.
-const FACT_SCHEMA_VERSION: &str = "3";
+const FACT_SCHEMA_VERSION: &str = "4";
 
 const FACT_SCHEMA_VERSION_KEY: &str = "token_usage_fact_schema_version";
 
@@ -209,6 +218,7 @@ pub(crate) fn facts_from_turns(
                 .map(|m| m.trim().to_string())
                 .filter(|m| !m.is_empty())
                 .or_else(|| session_model.map(String::from));
+            let counters = tool_counters_from_blocks(&turn.blocks);
             Some(UsageFact {
                 turn_key,
                 occurred_at: turn.timestamp,
@@ -218,9 +228,207 @@ pub(crate) fn facts_from_turns(
                 cache_creation_tokens: cache_create,
                 cache_read_tokens: cache_read,
                 duration_ms: clamp_i64(turn.duration_ms.unwrap_or(0)),
+                tool_calls: counters.tool_calls,
+                tool_errors: counters.tool_errors,
+                edit_calls: counters.edit_calls,
+                edit_errors: counters.edit_errors,
+                read_calls: counters.read_calls,
+                read_errors: counters.read_errors,
+                shell_calls: counters.shell_calls,
+                shell_errors: counters.shell_errors,
+                web_calls: counters.web_calls,
+                web_errors: counters.web_errors,
+                agent_calls: counters.agent_calls,
+                agent_errors: counters.agent_errors,
             })
         })
         .collect()
+}
+
+/// Which quality-tracked category a tool belongs to. A tool that matches none
+/// still counts toward the turn's overall `tool_calls`/`tool_errors`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ToolCategory {
+    Edit,
+    Read,
+    Shell,
+    Web,
+    Agent,
+}
+
+/// Tokens (some with a single `*` wildcard) that classify a normalized
+/// (lowercased) tool name into a category. Checked in this exact order —
+/// `Web` before `Read` matters: `websearch` and a hypothetical
+/// `web_search`-style id both contain `search` (a `Read` token), so `Web`'s
+/// more specific compound tokens must win first. Every other pair of lists is
+/// collision-free for the tool names agents actually emit.
+const EDIT_TOKENS: &[&str] = &[
+    "edit",
+    "write",
+    "multiedit",
+    "apply_patch",
+    "str_replace*",
+    "notebookedit",
+    "patch",
+];
+const SHELL_TOKENS: &[&str] = &["bash", "shell", "execute", "terminal", "run*command"];
+const WEB_TOKENS: &[&str] = &["webfetch", "websearch", "fetch", "browse*", "web_*"];
+const READ_TOKENS: &[&str] = &[
+    "read",
+    "grep",
+    "glob",
+    "ls",
+    "list",
+    "search",
+    "find",
+    "codesearch",
+];
+const AGENT_TOKENS: &[&str] = &["agent", "task", "subagent", "delegate_to_agent"];
+/// Planning / meta tools whose names collide with the tokens above (`TodoWrite`
+/// contains `write`, `ToolSearch` contains `search`) but say nothing about a
+/// model's editing, reading or shell reliability. Matched exactly, first.
+const UNCATEGORIZED_TOOLS: &[&str] = &[
+    "todowrite",
+    "todo_write",
+    "todoread",
+    "todo_read",
+    "toolsearch",
+    "enterplanmode",
+    "exitplanmode",
+    "askuserquestion",
+    "skill",
+];
+
+/// Does `name` match a glob-ish `pattern` containing at most one `*`
+/// wildcard? `*` at the end means "starts with the prefix"; `*` in the middle
+/// means "contains both halves, in order"; no `*` means a plain substring
+/// test. Good enough for the short, hand-written token lists above — not a
+/// general glob engine.
+fn glob_contains(name: &str, pattern: &str) -> bool {
+    match pattern.split_once('*') {
+        None => name.contains(pattern),
+        Some((before, "")) => name.contains(before),
+        Some((before, after)) => match name.find(before) {
+            Some(pos) => name[pos + before.len()..].contains(after),
+            None => false,
+        },
+    }
+}
+
+fn matches_any(name: &str, tokens: &[&str]) -> bool {
+    tokens.iter().any(|t| glob_contains(name, t))
+}
+
+/// Classify a tool's name (case-insensitive) into a quality-tracked category,
+/// or `None` when it matches none of them — such a call still counts toward
+/// the turn's overall `tool_calls`/`tool_errors`.
+pub(crate) fn categorize_tool(tool_name: &str) -> Option<ToolCategory> {
+    let name = tool_name.trim().to_lowercase();
+    if name.is_empty() || UNCATEGORIZED_TOOLS.contains(&name.as_str()) {
+        return None;
+    }
+    if matches_any(&name, EDIT_TOKENS) {
+        Some(ToolCategory::Edit)
+    } else if matches_any(&name, WEB_TOKENS) {
+        Some(ToolCategory::Web)
+    } else if matches_any(&name, SHELL_TOKENS) {
+        Some(ToolCategory::Shell)
+    } else if matches_any(&name, READ_TOKENS) {
+        Some(ToolCategory::Read)
+    } else if matches_any(&name, AGENT_TOKENS) {
+        Some(ToolCategory::Agent)
+    } else {
+        None
+    }
+}
+
+/// Tool-quality counters for one turn, folded from its content blocks.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct ToolCounters {
+    pub tool_calls: i64,
+    pub tool_errors: i64,
+    pub edit_calls: i64,
+    pub edit_errors: i64,
+    pub read_calls: i64,
+    pub read_errors: i64,
+    pub shell_calls: i64,
+    pub shell_errors: i64,
+    pub web_calls: i64,
+    pub web_errors: i64,
+    pub agent_calls: i64,
+    pub agent_errors: i64,
+}
+
+impl ToolCounters {
+    fn bump_call(&mut self, category: Option<ToolCategory>) {
+        self.tool_calls += 1;
+        match category {
+            Some(ToolCategory::Edit) => self.edit_calls += 1,
+            Some(ToolCategory::Read) => self.read_calls += 1,
+            Some(ToolCategory::Shell) => self.shell_calls += 1,
+            Some(ToolCategory::Web) => self.web_calls += 1,
+            Some(ToolCategory::Agent) => self.agent_calls += 1,
+            None => {}
+        }
+    }
+
+    fn bump_error(&mut self, category: Option<ToolCategory>) {
+        self.tool_errors += 1;
+        match category {
+            Some(ToolCategory::Edit) => self.edit_errors += 1,
+            Some(ToolCategory::Read) => self.read_errors += 1,
+            Some(ToolCategory::Shell) => self.shell_errors += 1,
+            Some(ToolCategory::Web) => self.web_errors += 1,
+            Some(ToolCategory::Agent) => self.agent_errors += 1,
+            None => {}
+        }
+    }
+}
+
+/// Count tool calls and tool errors in one turn's content blocks.
+///
+/// A call is a `ToolUse` block — counted immediately, whether or not a result
+/// ever shows up. An error is a `ToolResult` block with `is_error: true`,
+/// matched back to its call by `tool_use_id` so it is attributed to the right
+/// tool name and category; a result with no matching call (shouldn't happen,
+/// but a malformed transcript is not this function's problem) is silently
+/// skipped rather than guessed at.
+pub(crate) fn tool_counters_from_blocks(blocks: &[ContentBlock]) -> ToolCounters {
+    let mut names_by_id: HashMap<&str, &str> = HashMap::new();
+    let mut counters = ToolCounters::default();
+
+    for block in blocks {
+        if let ContentBlock::ToolUse {
+            tool_use_id,
+            tool_name,
+            ..
+        } = block
+        {
+            if let Some(id) = tool_use_id.as_deref() {
+                names_by_id.insert(id, tool_name.as_str());
+            }
+            counters.bump_call(categorize_tool(tool_name));
+        }
+    }
+
+    for block in blocks {
+        if let ContentBlock::ToolResult {
+            tool_use_id,
+            is_error,
+            ..
+        } = block
+        {
+            if !*is_error {
+                continue;
+            }
+            let Some(name) = tool_use_id.as_deref().and_then(|id| names_by_id.get(id)) else {
+                continue;
+            };
+            counters.bump_error(categorize_tool(name));
+        }
+    }
+
+    counters
 }
 
 /// `turn_key` of the whole-session fallback row. Distinct enough from any
@@ -293,6 +501,11 @@ pub(crate) fn facts_from_detail(
         cache_creation_tokens: cache_create,
         cache_read_tokens: cache_read,
         duration_ms: clamp_i64(stats.total_duration_ms),
+        // No per-turn blocks to count for a whole-session fallback row — the
+        // agent never reported per-turn usage in the first place, so there is
+        // nothing to attribute tool calls to at finer granularity than "the
+        // session as a whole", which this row already is.
+        ..Default::default()
     }]
 }
 
@@ -1228,6 +1441,18 @@ mod tests {
             cache_read_tokens: 0,
             total_tokens: tokens,
             duration_ms: 0,
+            tool_calls: 0,
+            tool_errors: 0,
+            edit_calls: 0,
+            edit_errors: 0,
+            read_calls: 0,
+            read_errors: 0,
+            shell_calls: 0,
+            shell_errors: 0,
+            web_calls: 0,
+            web_errors: 0,
+            agent_calls: 0,
+            agent_errors: 0,
         }
     }
 
@@ -1334,6 +1559,163 @@ mod tests {
         blank.model = None;
         let facts = facts_from_turns(&[blank], Some("   "));
         assert_eq!(facts[0].model, None);
+    }
+
+    // ─── Tool categorization ────────────────────────────────────────────
+
+    #[test]
+    fn categorize_tool_skips_planning_tools_that_share_tokens() {
+        assert_eq!(categorize_tool("TodoWrite"), None);
+        assert_eq!(categorize_tool("ToolSearch"), None);
+        assert_eq!(categorize_tool("ExitPlanMode"), None);
+        assert_eq!(categorize_tool("Write"), Some(ToolCategory::Edit));
+    }
+
+    #[test]
+    fn categorize_tool_matches_every_documented_token() {
+        assert_eq!(categorize_tool("Edit"), Some(ToolCategory::Edit));
+        assert_eq!(categorize_tool("Write"), Some(ToolCategory::Edit));
+        assert_eq!(categorize_tool("MultiEdit"), Some(ToolCategory::Edit));
+        assert_eq!(categorize_tool("apply_patch"), Some(ToolCategory::Edit));
+        assert_eq!(
+            categorize_tool("str_replace_based_edit_tool"),
+            Some(ToolCategory::Edit)
+        );
+        assert_eq!(categorize_tool("NotebookEdit"), Some(ToolCategory::Edit));
+        assert_eq!(categorize_tool("patch"), Some(ToolCategory::Edit));
+
+        assert_eq!(categorize_tool("Read"), Some(ToolCategory::Read));
+        assert_eq!(categorize_tool("Grep"), Some(ToolCategory::Read));
+        assert_eq!(categorize_tool("Glob"), Some(ToolCategory::Read));
+        assert_eq!(categorize_tool("ls"), Some(ToolCategory::Read));
+        assert_eq!(categorize_tool("list_dir"), Some(ToolCategory::Read));
+        assert_eq!(categorize_tool("search_files"), Some(ToolCategory::Read));
+        assert_eq!(categorize_tool("find"), Some(ToolCategory::Read));
+        assert_eq!(categorize_tool("codesearch"), Some(ToolCategory::Read));
+
+        assert_eq!(categorize_tool("Bash"), Some(ToolCategory::Shell));
+        assert_eq!(categorize_tool("shell"), Some(ToolCategory::Shell));
+        assert_eq!(categorize_tool("execute"), Some(ToolCategory::Shell));
+        assert_eq!(categorize_tool("terminal"), Some(ToolCategory::Shell));
+        assert_eq!(
+            categorize_tool("run_shell_command"),
+            Some(ToolCategory::Shell)
+        );
+
+        assert_eq!(categorize_tool("WebFetch"), Some(ToolCategory::Web));
+        assert_eq!(categorize_tool("WebSearch"), Some(ToolCategory::Web));
+        assert_eq!(categorize_tool("fetch"), Some(ToolCategory::Web));
+        assert_eq!(categorize_tool("browse_page"), Some(ToolCategory::Web));
+        assert_eq!(categorize_tool("web_search"), Some(ToolCategory::Web));
+
+        assert_eq!(categorize_tool("Agent"), Some(ToolCategory::Agent));
+        assert_eq!(categorize_tool("Task"), Some(ToolCategory::Agent));
+        assert_eq!(categorize_tool("subagent"), Some(ToolCategory::Agent));
+        assert_eq!(
+            categorize_tool("delegate_to_agent"),
+            Some(ToolCategory::Agent)
+        );
+
+        // Unknown tools count only toward the overall pair. ("TodoRead" is
+        // NOT such an example — it contains "read" and correctly classifies
+        // as Read; "ExitPlanMode" matches no category token at all.)
+        assert_eq!(categorize_tool("ExitPlanMode"), None);
+        assert_eq!(categorize_tool(""), None);
+        assert_eq!(categorize_tool("   "), None);
+    }
+
+    #[test]
+    fn categorize_tool_prefers_web_over_the_overlapping_read_token() {
+        // "websearch" contains "search" (a Read token) but must classify as
+        // Web — the whole point of checking Web before Read.
+        assert_eq!(categorize_tool("websearch"), Some(ToolCategory::Web));
+        assert_eq!(categorize_tool("WebSearchTool"), Some(ToolCategory::Web));
+    }
+
+    #[test]
+    fn categorize_tool_is_case_insensitive_and_trims() {
+        assert_eq!(categorize_tool("  EDIT  "), Some(ToolCategory::Edit));
+        assert_eq!(categorize_tool("BASH"), Some(ToolCategory::Shell));
+    }
+
+    fn tool_use(id: &str, name: &str) -> ContentBlock {
+        ContentBlock::ToolUse {
+            tool_use_id: Some(id.into()),
+            tool_name: name.into(),
+            input_preview: None,
+            status: None,
+            meta: None,
+        }
+    }
+
+    fn tool_result(id: &str, is_error: bool) -> ContentBlock {
+        ContentBlock::ToolResult {
+            tool_use_id: Some(id.into()),
+            output_preview: None,
+            is_error,
+            agent_stats: None,
+            images: vec![],
+        }
+    }
+
+    #[test]
+    fn tool_counters_count_calls_regardless_of_a_result_and_errors_only_when_matched() {
+        let blocks = vec![
+            tool_use("1", "Edit"),
+            tool_result("1", false),
+            tool_use("2", "Bash"),
+            tool_result("2", true),
+            tool_use("3", "UnknownTool"),
+            // No matching result for call 3 — still a call, never an error.
+        ];
+        let c = tool_counters_from_blocks(&blocks);
+        assert_eq!(c.tool_calls, 3);
+        assert_eq!(c.tool_errors, 1);
+        assert_eq!(c.edit_calls, 1);
+        assert_eq!(c.edit_errors, 0);
+        assert_eq!(c.shell_calls, 1);
+        assert_eq!(c.shell_errors, 1);
+        // The uncategorized call bumps only the overall pair.
+        assert_eq!(c.read_calls, 0);
+        assert_eq!(c.agent_calls, 0);
+        assert_eq!(c.web_calls, 0);
+    }
+
+    #[test]
+    fn tool_counters_ignore_a_result_with_no_matching_call() {
+        let blocks = vec![tool_result("orphan", true)];
+        let c = tool_counters_from_blocks(&blocks);
+        assert_eq!(c.tool_calls, 0);
+        assert_eq!(c.tool_errors, 0);
+    }
+
+    #[test]
+    fn tool_counters_ignore_a_successful_result() {
+        let blocks = vec![tool_use("1", "Read"), tool_result("1", false)];
+        let c = tool_counters_from_blocks(&blocks);
+        assert_eq!(c.tool_calls, 1);
+        assert_eq!(c.read_calls, 1);
+        assert_eq!(c.tool_errors, 0);
+        assert_eq!(c.read_errors, 0);
+    }
+
+    #[test]
+    fn facts_from_turns_carries_tool_counters_onto_the_fact() {
+        let mut t = turn("a", Some(usage(10, 5, 0, 0)), "2026-08-01T10:00:00Z");
+        t.blocks = vec![
+            tool_use("1", "Write"),
+            tool_result("1", true),
+            tool_use("2", "Grep"),
+            tool_result("2", false),
+        ];
+        let facts = facts_from_turns(&[t], None);
+        assert_eq!(facts.len(), 1);
+        assert_eq!(facts[0].tool_calls, 2);
+        assert_eq!(facts[0].tool_errors, 1);
+        assert_eq!(facts[0].edit_calls, 1);
+        assert_eq!(facts[0].edit_errors, 1);
+        assert_eq!(facts[0].read_calls, 1);
+        assert_eq!(facts[0].read_errors, 0);
     }
 
     fn detail(turns: Vec<MessageTurn>, stats: Option<SessionStats>) -> DbConversationDetail {
@@ -1836,6 +2218,7 @@ mod tests {
                 cache_creation_tokens: 0,
                 cache_read_tokens: 0,
                 duration_ms: 0,
+                ..Default::default()
             }],
         )
         .await
@@ -1924,6 +2307,7 @@ mod tests {
                 cache_creation_tokens: 0,
                 cache_read_tokens: 0,
                 duration_ms: 0,
+                ..Default::default()
             }],
         )
         .await

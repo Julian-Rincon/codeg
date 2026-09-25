@@ -248,6 +248,11 @@ async fn async_main() -> ExitCode {
         });
     }
 
+    // Wire up the live model-catalog sink (see `acp::model_catalog`) before
+    // any connection can spawn, so the first `SessionConfigOptions` report of
+    // the run is never dropped for lacking a database to write through.
+    codeg_lib::acp::model_catalog::init(db.conn.clone());
+
     // Create shared broadcaster + internal ACP event bus.
     let broadcaster = Arc::new(WebEventBroadcaster::new());
     let event_bus_metrics = Arc::new(codeg_lib::acp::EventBusMetrics::default());

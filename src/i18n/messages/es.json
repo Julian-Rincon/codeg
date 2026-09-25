@@ -77,6 +77,7 @@
       "sectionDescription": "Elige una paleta de colores para acentos, botones y resaltados.",
       "current": "Color actual: {color}",
       "options": {
+        "phantom": "Phantom",
         "neutral": "Neutral",
         "zinc": "Zinc",
         "slate": "Slate",
@@ -1749,11 +1750,16 @@
   "LoginPage": {
     "documentTitle": "Iniciar sesión - Phantom",
     "brand": "Phantom",
-    "subtitle": "Introduce tu token de acceso para conectarte a la aplicación de escritorio",
-    "tokenPlaceholder": "Token de acceso",
+    "agentsLabel": "Agentes",
+    "hideToken": "Ocultar token",
+    "showToken": "Mostrar token",
+    "tokenLabel": "Token de acceso",
+    "tagline": "Tu central de IA",
+    "subtitle": "Conecta con tu servidor local de Phantom",
+    "tokenPlaceholder": "Pega tu token",
     "connect": "Conectar",
     "connecting": "Conectando...",
-    "helpText": "Encuentra tu token en la aplicación de escritorio en Configuración → Servicio web",
+    "helpText": "Instalación local: copia CODEG_TOKEN de ~/.config/codeg/server.env. App de escritorio: Configuración → Servicio web.",
     "invalidToken": "Token no válido. Por favor, comprueba e inténtalo de nuevo.",
     "connectionFailed": "Error de conexión (HTTP {status})",
     "networkError": "No se puede conectar al servidor"
@@ -5944,7 +5950,26 @@
     "emptyHint": "Phantom lee los tokens directamente de la transcripción de cada agente. Actualiza para contabilizar lo que ya hay en esta máquina.",
     "emptyAction": "Contabilizar mis sesiones",
     "loadFailed": "No se pudo cargar el uso",
-    "truncatedNotice": "Este periodo es muy amplio: las cifras cubren solo su tramo más reciente."
+    "truncatedNotice": "Este periodo es muy amplio: las cifras cubren solo su tramo más reciente.",
+    "tabDashboard": "Panel",
+    "tabModels": "Modelos",
+    "modelsGeneratedAt": "Generado {time}",
+    "modelsExplain": "Métricas medidas en tu historial local; se actualizan al sincronizar el uso.",
+    "modelsSyncAction": "Sincronizar",
+    "modelsEmpty": "Aún no hay modelos medidos",
+    "modelsColAgent": "Agente",
+    "modelsColModel": "Modelo",
+    "modelsColConversations": "Conversaciones",
+    "modelsColTurns": "Turnos",
+    "modelsColAvgTurn": "Turno prom.",
+    "modelsColTokPerSec": "Tok/s",
+    "modelsColCacheHit": "Aciertos de caché",
+    "modelsColToolErrors": "Errores de herramientas",
+    "modelsColContext": "Contexto",
+    "modelsColLastUsed": "Último uso",
+    "modelsColStrengths": "Mejor en",
+    "modelsBestForTitle": "Mejor modelo por categoría",
+    "modelsRunnerUp": "sigue {agent} · {model} ({value})"
   },
   "Forge": {
     "title": "Panel del repositorio",
@@ -6528,5 +6553,21 @@
         "probeFailed": "El navegador integrado no pudo confirmar que llega al host remoto a través del túnel. Vuelve a intentarlo en un momento."
       }
     }
+  },
+  "ModelScorecard": {
+    "categoryEdit": "Editar",
+    "categoryExplore": "Explorar",
+    "categoryShell": "Shell",
+    "categoryResearch": "Investigar",
+    "categoryFast": "Rápido",
+    "categoryLongContext": "Contexto largo",
+    "categoryFree": "Gratis",
+    "noData": "Sin datos suficientes",
+    "unavailable": "No disponible",
+    "metricDuration": "{value} s/turno",
+    "metricTokPerSec": "{value} tok/s",
+    "metricErrorPct": "{value}% errores",
+    "metricContext": "{value} ctx",
+    "mentionHint": "{agent} · {model} — mejor en {category} ({metric}, n={sample})"
   }
 }

@@ -2,6 +2,7 @@
 
 import { Fragment } from "react"
 import { ChevronDown, ToggleLeft, ToggleRight } from "lucide-react"
+import { useLocale, useTranslations } from "next-intl"
 import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import {
@@ -15,8 +16,19 @@ import {
 } from "@/components/ui/dropdown-menu"
 import { DropdownRadioItemContent } from "@/components/chat/dropdown-radio-item-content"
 import { SelectorTooltip } from "@/components/chat/selector-tooltip"
-import type { ModelOptionGroup } from "@/lib/model-config-groups"
-import type { SessionConfigOptionInfo } from "@/lib/types"
+import {
+  isModelConfigOption,
+  type ModelOptionGroup,
+} from "@/lib/model-config-groups"
+import {
+  findModelScore,
+  hasScorecardData,
+  scorecardStatusLine,
+  scorecardStrengthLabels,
+  useModelScorecard,
+  type AnyTranslate,
+} from "@/lib/model-scorecard"
+import type { AgentType, SessionConfigOptionInfo } from "@/lib/types"
 
 interface SessionConfigSelectorProps {
   option: SessionConfigOptionInfo
@@ -31,6 +43,11 @@ interface SessionConfigSelectorProps {
   /** Localized chip text for the agent's `recommended_value` row. Omit it and
    *  the recommendation is simply not shown. */
   recommendedLabel?: string
+  /** The agent this selector's options belong to — resolves each model row
+   *  against the measured scorecard (badges + metric line). Only applied
+   *  when `option` is actually the model picker (`isModelConfigOption`); a
+   *  mode/approval-preset select never shows scorecard data. */
+  agentType?: AgentType | null
 }
 
 export function InlineSessionConfigSelector({
@@ -38,7 +55,16 @@ export function InlineSessionConfigSelector({
   onSelect,
   derivedGroups,
   recommendedLabel,
+  agentType,
 }: SessionConfigSelectorProps) {
+  // See the matching comment in `model-option-list.tsx`: `Translator`'s `key`
+  // is narrowed to this namespace's own keys, stricter than the structural
+  // `AnyTranslate` the pure scorecard helpers accept.
+  const tScorecard = useTranslations("ModelScorecard") as AnyTranslate
+  const locale = useLocale()
+  const { scorecard } = useModelScorecard()
+  const showScorecard = agentType && isModelConfigOption(option)
+
   if (option.kind.type !== "select") return null
 
   // Unified group list rendered in the dropdown body. Derived (model) groups
@@ -72,6 +98,28 @@ export function InlineSessionConfigSelector({
   const recommendedValue = recommendedLabel ? option.recommended_value : null
   const badgeFor = (value: string) =>
     value === recommendedValue ? recommendedLabel : null
+
+  // Measured-data props for one row, or an all-null spread when this isn't
+  // the model picker / no agent was named — `DropdownRadioItemContent`
+  // renders nothing extra for null props, so every other select stays
+  // pixel-identical to before this feature.
+  const scorecardPropsFor = (value: string, name: string) => {
+    const entry = showScorecard
+      ? findModelScore(scorecard, agentType!, value, name)
+      : null
+    return {
+      scorecardBadges:
+        entry && hasScorecardData(entry)
+          ? scorecardStrengthLabels(entry, tScorecard)
+          : null,
+      // Every option here comes from the agent's live list, so it is
+      // available by definition; the catalog flag only matters elsewhere.
+      unavailableLabel: null,
+      scorecardLine: entry
+        ? scorecardStatusLine(entry, tScorecard, locale)
+        : null,
+    }
+  }
 
   return (
     <DropdownMenu>
@@ -125,6 +173,7 @@ export function InlineSessionConfigSelector({
                         label={item.name}
                         description={item.description}
                         recommendedLabel={badgeFor(item.value)}
+                        {...scorecardPropsFor(item.value, item.name)}
                       />
                     </DropdownMenuRadioItem>
                   ))}
@@ -140,6 +189,7 @@ export function InlineSessionConfigSelector({
                     label={item.name}
                     description={item.description}
                     recommendedLabel={badgeFor(item.value)}
+                    {...scorecardPropsFor(item.value, item.name)}
                   />
                 </DropdownMenuRadioItem>
               ))}

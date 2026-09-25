@@ -7,6 +7,7 @@ import type { CSSProperties } from "react"
  * 实际 CSS 变量值定义在 src/app/globals.css 的 [data-theme="..."] 选择器中。
  */
 export const THEME_COLORS = [
+  "phantom",
   "neutral",
   "zinc",
   "slate",
@@ -62,10 +63,11 @@ export function normalizeFolderThemeColor(
 }
 
 /**
- * 默认主题色。选用 "neutral" 是因为它对应当前 globals.css 的现存 :root 值
- * （所有 chroma=0 的纯灰阶），可保证升级后视觉零差异。
+ * Default theme color: Phantom's own cool-tinted preset. Users who explicitly
+ * picked another preset keep it; only a missing/invalid stored value falls
+ * back here (see APPEARANCE_INIT_SCRIPT).
  */
-export const DEFAULT_THEME_COLOR: ThemeColor = "neutral"
+export const DEFAULT_THEME_COLOR: ThemeColor = "phantom"
 
 /**
  * UI 预览用的代表色（OKLch 字符串，对应各预设的 primary 色 light 版本）。
@@ -76,6 +78,7 @@ export const DEFAULT_THEME_COLOR: ThemeColor = "neutral"
  * 自己对应预设的代表色，不能跟随当前激活的主题色。
  */
 export const THEME_COLOR_PREVIEW: Record<ThemeColor, string> = {
+  phantom: "oklch(0.488 0.217 264.4)",
   neutral: "oklch(0.205 0 0)",
   zinc: "oklch(0.21 0.006 285.885)",
   slate: "oklch(0.208 0.042 265.755)",
@@ -108,6 +111,10 @@ export const THEME_COLOR_TITLE: Record<
   ThemeColor,
   { light: string; dark: string }
 > = {
+  phantom: {
+    light: "oklch(0.22 0.016 264)",
+    dark: "oklch(0.9 0.012 262)",
+  },
   neutral: { light: "oklch(0.205 0 0)", dark: "oklch(0.87 0 0)" },
   zinc: {
     light: "oklch(0.21 0.006 285.885)",

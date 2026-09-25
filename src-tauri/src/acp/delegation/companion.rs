@@ -280,6 +280,11 @@ pub struct CompanionContext {
     /// flag). Disabled customs never appear here: the parent just leaves them
     /// out of `custom_agents`.
     pub disabled_agents: Vec<String>,
+    /// Measured model routing guide written by the parent (see
+    /// `commands::model_scorecard::routing_guide_text`). Re-read on every
+    /// `tools/list` so a long-lived session sees fresh numbers; a missing or
+    /// empty file leaves the schema untouched.
+    pub routing_guide_file: Option<std::path::PathBuf>,
 }
 
 /// Per-in-flight-call state. The companion stashes one of these per
@@ -451,11 +456,56 @@ pub async fn dispatch_line(
             };
             remove_disabled_agents_from_delegate_enum(&mut tools, &ctx.disabled_agents);
             append_custom_agents_to_delegate_enum(&mut tools, &ctx.custom_agents);
+            if let Some(guide) = read_routing_guide(ctx.routing_guide_file.as_deref()) {
+                append_routing_guide_to_delegate_description(&mut tools, &guide);
+            }
             LineAction::Respond(ok(id, json!({ "tools": tools })))
         }
         "tools/call" => build_tools_call_spawn(ctx.clone(), inflight, id, req.params).await,
         _ => LineAction::Respond(err(id, -32601, format!("method not found: {}", req.method))),
     }
+}
+
+/// Upper bound on the guide appended to the tool description, so a corrupt
+/// or oversized file cannot bloat every `tools/list` response.
+const ROUTING_GUIDE_MAX_CHARS: usize = 4000;
+
+fn read_routing_guide(path: Option<&std::path::Path>) -> Option<String> {
+    let text = std::fs::read_to_string(path?).ok()?;
+    let text = text.trim();
+    if text.is_empty() {
+        return None;
+    }
+    Some(text.chars().take(ROUTING_GUIDE_MAX_CHARS).collect())
+}
+
+/// Append the measured routing guide to `delegate_to_agent`'s description.
+/// Missing tool / description leaves the tools untouched, same defensive
+/// posture as the enum edits below.
+fn append_routing_guide_to_delegate_description(tools: &mut Value, guide: &str) {
+    let Some(arr) = tools.as_array_mut() else {
+        return;
+    };
+    let Some(tool) = arr
+        .iter_mut()
+        .find(|t| t.get("name").and_then(|n| n.as_str()) == Some("delegate_to_agent"))
+    else {
+        return;
+    };
+    let Some(desc) = tool.get_mut("description") else {
+        return;
+    };
+    let Some(current) = desc.as_str() else {
+        return;
+    };
+    *desc = Value::String(format!(
+        "{current}\n\nROUTING GUIDE — measured on this machine from the user's own history. \
+         When part of your task is clearly one of these categories and another agent/model \
+         measures better at it, delegate that part to it (pass `agent_type` and `model`), then \
+         integrate its result. Stay on your own model for work it handles well; never delegate \
+         just to delegate. Each line is an agent/model PAIR: a model belongs only to the agent \
+         it is listed with, so pass it only together with that agent.\n{guide}"
+    ));
 }
 
 /// Remove the parent-declared disabled agents from `delegate_to_agent`'s
@@ -2598,7 +2648,60 @@ mod tests {
             features,
             custom_agents: Vec::new(),
             disabled_agents: Vec::new(),
+            routing_guide_file: None,
         }
+    }
+
+    #[tokio::test]
+    async fn tools_list_appends_measured_routing_guide() {
+        let dir = std::env::temp_dir().join(format!("codeg-guide-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("guide.txt");
+        std::fs::write(
+            &file,
+            "edit: claude_code/claude-opus-5-5 (1.2% errors, n=340)\n",
+        )
+        .unwrap();
+        let ctx = CompanionContext {
+            routing_guide_file: Some(file.clone()),
+            ..ctx()
+        };
+        let line = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#;
+        let LineAction::Respond(resp) =
+            dispatch_line(&ctx, Arc::new(InflightCalls::new()), line).await
+        else {
+            panic!("tools/list must respond inline");
+        };
+        let result = resp.result.expect("tools/list result");
+        let tools = result["tools"].as_array().unwrap();
+        let delegate = tools
+            .iter()
+            .find(|t| t["name"] == "delegate_to_agent")
+            .unwrap();
+        let desc = delegate["description"].as_str().unwrap();
+        assert!(desc.contains("ROUTING GUIDE"));
+        assert!(desc.contains("claude-opus-5-5 (1.2% errors, n=340)"));
+        assert!(delegate["inputSchema"]["properties"]["model"].is_object());
+
+        // An empty guide leaves the embedded description byte-identical.
+        std::fs::write(&file, "   \n").unwrap();
+        let LineAction::Respond(resp) =
+            dispatch_line(&ctx, Arc::new(InflightCalls::new()), line).await
+        else {
+            panic!("tools/list must respond inline");
+        };
+        let result = resp.result.expect("tools/list result");
+        let desc = result["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "delegate_to_agent")
+            .unwrap()["description"]
+            .as_str()
+            .unwrap()
+            .to_string();
+        assert!(!desc.contains("ROUTING GUIDE"));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     async fn dispatch_for_test(line: &str) -> LineAction {
@@ -4037,6 +4140,7 @@ mod tests {
             features: FEEDBACK_ONLY,
             custom_agents: Vec::new(),
             disabled_agents: Vec::new(),
+            routing_guide_file: None,
         };
         let inflight = Arc::new(InflightCalls::new());
         // tools/call → Spawn (registers the inflight entry).

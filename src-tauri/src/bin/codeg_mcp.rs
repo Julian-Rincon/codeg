@@ -69,6 +69,9 @@ struct Args {
     /// only launchable targets are advertised. Omitted when nothing is
     /// disabled (disabled customs are simply left out of `--custom-agents`).
     disabled_agents: Option<String>,
+    /// File holding the measured model routing guide, re-read on every
+    /// `tools/list` and appended to `delegate_to_agent`'s description.
+    routing_guide_file: Option<String>,
 }
 
 fn parse_args() -> Result<Args, String> {
@@ -79,6 +82,7 @@ fn parse_args() -> Result<Args, String> {
     let mut features = None;
     let mut custom_agents = None;
     let mut disabled_agents = None;
+    let mut routing_guide_file = None;
 
     let mut iter = std::env::args().skip(1);
     while let Some(arg) = iter.next() {
@@ -128,9 +132,15 @@ fn parse_args() -> Result<Args, String> {
                         .ok_or_else(|| "--disabled-agents requires a value".to_string())?,
                 );
             }
+            "--routing-guide-file" => {
+                routing_guide_file = Some(
+                    iter.next()
+                        .ok_or_else(|| "--routing-guide-file requires a value".to_string())?,
+                );
+            }
             "--help" | "-h" => {
                 println!(
-                    "codeg-mcp --parent-connection-id <uuid> --socket-path <path> --token <secret> [--parent-pid <pid>] [--features delegation,feedback,ask,sessions,tasks] [--custom-agents custom:<id>,...] [--disabled-agents <agent>,...]"
+                    "codeg-mcp --parent-connection-id <uuid> --socket-path <path> --token <secret> [--parent-pid <pid>] [--features delegation,feedback,ask,sessions,tasks] [--custom-agents custom:<id>,...] [--disabled-agents <agent>,...] [--routing-guide-file <path>]"
                 );
                 std::process::exit(0);
             }
@@ -146,6 +156,7 @@ fn parse_args() -> Result<Args, String> {
         features,
         custom_agents,
         disabled_agents,
+        routing_guide_file,
     })
 }
 
@@ -197,6 +208,7 @@ async fn main() -> ExitCode {
         features: CompanionFeatures::parse(args.features.as_deref()),
         custom_agents: parse_csv(args.custom_agents.as_deref()),
         disabled_agents: parse_csv(args.disabled_agents.as_deref()),
+        routing_guide_file: args.routing_guide_file.map(std::path::PathBuf::from),
     };
 
     let stdin = tokio::io::stdin();

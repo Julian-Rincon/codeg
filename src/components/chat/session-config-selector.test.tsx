@@ -1,13 +1,37 @@
-import { render, screen, cleanup, within } from "@testing-library/react"
+import {
+  render as rtlRender,
+  screen,
+  cleanup,
+  within,
+  type RenderOptions,
+} from "@testing-library/react"
 import userEvent from "@testing-library/user-event"
+import { NextIntlClientProvider } from "next-intl"
 import { afterEach, describe, expect, it, vi } from "vitest"
+import type { ReactElement } from "react"
 
 import {
   InlineSessionConfigSelector,
   InlineSessionConfigToggle,
 } from "./session-config-selector"
+import enMessages from "@/i18n/messages/en.json"
 import { deriveModelGroups } from "@/lib/model-config-groups"
 import type { SessionConfigOptionInfo } from "@/lib/types"
+
+// `InlineSessionConfigSelector` now reads the `ModelScorecard` namespace
+// (badges + metric line) via `useTranslations`, which throws without a
+// provider — wrap every `render()` call below with the real `en` catalog
+// rather than touching each of this file's many call sites individually.
+function render(ui: ReactElement, options?: RenderOptions) {
+  return rtlRender(ui, {
+    wrapper: ({ children }) => (
+      <NextIntlClientProvider locale="en" messages={enMessages}>
+        {children}
+      </NextIntlClientProvider>
+    ),
+    ...options,
+  })
+}
 
 function modelOption(
   options: { value: string; name: string; description?: string | null }[],

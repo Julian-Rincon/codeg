@@ -77,6 +77,7 @@
       "sectionDescription": "اختر لوحة ألوان للتمييزات والأزرار والإبرازات.",
       "current": "اللون الحالي: {color}",
       "options": {
+        "phantom": "Phantom",
         "neutral": "Neutral",
         "zinc": "Zinc",
         "slate": "Slate",
@@ -1749,11 +1750,16 @@
   "LoginPage": {
     "documentTitle": "تسجيل الدخول - Phantom",
     "brand": "Phantom",
-    "subtitle": "أدخل رمز الوصول للاتصال بتطبيق سطح المكتب",
-    "tokenPlaceholder": "رمز الوصول",
+    "agentsLabel": "الوكلاء",
+    "hideToken": "إخفاء الرمز",
+    "showToken": "إظهار الرمز",
+    "tokenLabel": "رمز الوصول",
+    "tagline": "مركز الذكاء الاصطناعي الخاص بك",
+    "subtitle": "اتصل بخادم Phantom المحلي",
+    "tokenPlaceholder": "الصق الرمز",
     "connect": "اتصال",
     "connecting": "جارٍ الاتصال...",
-    "helpText": "يمكنك الحصول على الرمز من تطبيق سطح المكتب عبر الإعدادات → خدمة الويب",
+    "helpText": "التثبيت المحلي: انسخ CODEG_TOKEN من ~/.config/codeg/server.env. تطبيق سطح المكتب: الإعدادات ← خدمة الويب.",
     "invalidToken": "رمز غير صالح. يرجى التحقق والمحاولة مرة أخرى.",
     "connectionFailed": "فشل الاتصال (HTTP {status})",
     "networkError": "تعذر الاتصال بالخادم"
@@ -5944,7 +5950,26 @@
     "emptyHint": "يقرأ codeg أعداد الرموز مباشرة من سجل كل وكيل. حدّث لتُحسب الجلسات الموجودة على هذا الجهاز.",
     "emptyAction": "احسب جلساتي",
     "loadFailed": "تعذّر تحميل بيانات الاستهلاك",
-    "truncatedNotice": "هذا النطاق واسع جدًا — الأرقام تغطي أحدث جزء منه فقط."
+    "truncatedNotice": "هذا النطاق واسع جدًا — الأرقام تغطي أحدث جزء منه فقط.",
+    "tabDashboard": "لوحة المعلومات",
+    "tabModels": "النماذج",
+    "modelsGeneratedAt": "أنشئ {time}",
+    "modelsExplain": "مقاييس مقاسة من سجلّك المحلي، تتحدّث عند المزامنة.",
+    "modelsSyncAction": "مزامنة",
+    "modelsEmpty": "لا توجد نماذج مقاسة بعد",
+    "modelsColAgent": "الوكيل",
+    "modelsColModel": "النموذج",
+    "modelsColConversations": "المحادثات",
+    "modelsColTurns": "الأدوار",
+    "modelsColAvgTurn": "متوسط الدور",
+    "modelsColTokPerSec": "tok/s",
+    "modelsColCacheHit": "نسبة إصابة الذاكرة المؤقتة",
+    "modelsColToolErrors": "أخطاء الأدوات",
+    "modelsColContext": "السياق",
+    "modelsColLastUsed": "آخر استخدام",
+    "modelsColStrengths": "الأفضل في",
+    "modelsBestForTitle": "أفضل نموذج لكل فئة",
+    "modelsRunnerUp": "التالي: {agent} · {model} ({value})"
   },
   "Forge": {
     "title": "لوحة المستودع",
@@ -6528,5 +6553,21 @@
         "probeFailed": "تعذّر على المتصفح المدمج التأكد من أنه يصل إلى المضيف البعيد عبر النفق. حاول مرة أخرى بعد قليل."
       }
     }
+  },
+  "ModelScorecard": {
+    "categoryEdit": "تحرير",
+    "categoryExplore": "استكشاف",
+    "categoryShell": "الطرفية",
+    "categoryResearch": "بحث",
+    "categoryFast": "سريع",
+    "categoryLongContext": "سياق طويل",
+    "categoryFree": "مجاني",
+    "noData": "لا توجد بيانات كافية بعد",
+    "unavailable": "غير متاح",
+    "metricDuration": "{value} ث/دورة",
+    "metricTokPerSec": "{value} tok/s",
+    "metricErrorPct": "{value}% أخطاء",
+    "metricContext": "{value} سياق",
+    "mentionHint": "{agent} · {model} — الأفضل في {category} ({metric}، n={sample})"
   }
 }
