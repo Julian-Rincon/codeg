@@ -280,6 +280,36 @@ async fn dispatch_command(
                     target,
                 );
             }
+            // General chat: plain text with no session starts one, exactly
+            // like `/task <text>`, instead of answering with the help card.
+            if session_commands::is_general_chat_channel(db, channel_id).await {
+                let result = session_commands::handle_task(
+                    db,
+                    text,
+                    channel_id,
+                    sender_id,
+                    target,
+                    manager,
+                    conn_mgr,
+                    emitter,
+                    bridge,
+                    lang,
+                    prefix,
+                    data_dir,
+                    voice_reply_lang,
+                )
+                .await;
+                return DispatchResponse {
+                    message: Some(DispatchMessage::Rich(result.message)),
+                    target: result.response_target,
+                    extra_messages: result
+                        .extra_responses
+                        .into_iter()
+                        .map(|(message, target)| (DispatchMessage::Rich(message), target))
+                        .collect(),
+                    post_action: result.post_action,
+                };
+            }
             return DispatchResponse::current(command_handlers::handle_help(prefix, lang), target);
         }
     };

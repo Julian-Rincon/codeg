@@ -632,7 +632,7 @@ fn build_lark_card(msg: &RichMessage) -> serde_json::Value {
         MessageLevel::Error => "red",
     };
 
-    let title = msg.title.as_deref().unwrap_or("Codeg");
+    let title = msg.title.as_deref().unwrap_or("Phantom");
 
     let mut elements: Vec<serde_json::Value> = Vec::new();
 

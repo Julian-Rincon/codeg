@@ -477,12 +477,17 @@ pub async fn handle_task(
 
     let folder_id = match ctx.current_folder_id {
         Some(id) => id,
-        None => {
-            return CommandMessageResult::current_target(
-                RichMessage::info(i18n::no_folder_selected(lang, prefix)),
-                target,
-            );
-        }
+        None => match general_chat_default_folder(db, channel_id, sender_id).await {
+            // General chat (Telegram): no `/folder` needed; start in the
+            // channel's default folder and remember it for this sender.
+            Some(id) => id,
+            None => {
+                return CommandMessageResult::current_target(
+                    RichMessage::info(i18n::no_folder_selected(lang, prefix)),
+                    target,
+                );
+            }
+        },
     };
 
     // 2. Get folder info
@@ -1545,7 +1550,7 @@ fn owner_label_for(channel_id: i32, sender_id: &str, target: &ChannelMessageTarg
 
 fn truncate_topic_title(task_description: &str) -> String {
     let title = truncate_title(task_description);
-    format!("Codeg: {title}").chars().take(128).collect()
+    format!("Phantom: {title}").chars().take(128).collect()
 }
 
 async fn build_chat_session_runtime_env(
@@ -1790,6 +1795,47 @@ fn resolve_agent_type(
 /// The chat channel's configured default lead agent (`config_json.default_agent_type`),
 /// falling back to `claude_code` when the key is absent, blank, or unparsable —
 /// which covers every channel that predates this setting.
+/// Whether this channel works as a general chat: plain text with no active
+/// session starts a new one instead of showing the help card. Telegram
+/// channels default to it; `"general_chat": false` in `config_json` restores
+/// the command-only behavior.
+pub(crate) async fn is_general_chat_channel(db: &DatabaseConnection, channel_id: i32) -> bool {
+    let Some(channel) = chat_channel_service::get_by_id(db, channel_id).await.ok().flatten()
+    else {
+        return false;
+    };
+    channel.channel_type == "telegram" && general_chat_enabled(&channel.config_json)
+}
+
+fn general_chat_enabled(config_json: &str) -> bool {
+    serde_json::from_str::<serde_json::Value>(config_json)
+        .ok()
+        .and_then(|v| v.get("general_chat")?.as_bool())
+        .unwrap_or(true)
+}
+
+/// Folder a general-chat sender starts in when they never ran `/folder`:
+/// `default_folder_path` from the channel config, else the user's home. The
+/// folder row is created if missing and stored as the sender's current folder.
+async fn general_chat_default_folder(
+    db: &DatabaseConnection,
+    channel_id: i32,
+    sender_id: &str,
+) -> Option<i32> {
+    if !is_general_chat_channel(db, channel_id).await {
+        return None;
+    }
+    let channel = chat_channel_service::get_by_id(db, channel_id).await.ok().flatten()?;
+    let path = serde_json::from_str::<serde_json::Value>(&channel.config_json)
+        .ok()
+        .and_then(|v| v.get("default_folder_path")?.as_str().map(str::to_string))
+        .filter(|p| std::path::Path::new(p).is_dir())
+        .or_else(|| dirs::home_dir().map(|h| h.to_string_lossy().to_string()))?;
+    let folder = folder_service::ensure_folder_for_path(db, &path).await.ok()?;
+    let _ = sender_context_service::update_folder(db, channel_id, sender_id, Some(folder.id)).await;
+    Some(folder.id)
+}
+
 fn channel_default_agent_type(config_json: &str) -> AgentType {
     serde_json::from_str::<serde_json::Value>(config_json)
         .ok()
@@ -2358,6 +2404,13 @@ mod tests {
             AgentType::Cursor,
         );
         assert_eq!(resolved, AgentType::OpenCode);
+    }
+
+    #[test]
+    fn general_chat_is_on_by_default_and_can_be_turned_off() {
+        assert!(general_chat_enabled(r#"{"chat_id":"1"}"#));
+        assert!(general_chat_enabled("not json"));
+        assert!(!general_chat_enabled(r#"{"chat_id":"1","general_chat":false}"#));
     }
 
     #[test]
