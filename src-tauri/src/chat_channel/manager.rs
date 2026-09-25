@@ -522,7 +522,7 @@ impl ChatChannelManager {
                 }
             };
 
-            let backend = match super::backends::create_backend(ch.id, channel_type, &config, token)
+            let backend = match super::backends::create_backend(ch.id, channel_type, &config, token.clone())
             {
                 Ok(b) => b,
                 Err(e) => {
@@ -534,18 +534,90 @@ impl ChatChannelManager {
                 }
             };
 
-            if let Err(e) = self
+            match self
                 .add_channel(ch.id, ch.name.clone(), channel_type, backend)
                 .await
             {
-                tracing::error!(
-                    "[ChatChannel] failed to auto-connect '{}' (id={}): {e}",
-                    ch.name, ch.id
-                );
-            } else {
-                tracing::info!("[ChatChannel] auto-connected '{}' (id={})", ch.name, ch.id);
+                Ok(()) => {
+                    tracing::info!("[ChatChannel] auto-connected '{}' (id={})", ch.name, ch.id);
+                }
+                // At boot the service can start before the network is up;
+                // a transient failure is retried in the background instead
+                // of leaving the channel dead until the next restart.
+                Err(ChatChannelError::ConnectionFailed(e)) => {
+                    tracing::warn!(
+                        "[ChatChannel] auto-connect '{}' (id={}) failed ({e}); retrying in background",
+                        ch.name, ch.id
+                    );
+                    let manager = self.clone_ref();
+                    tokio::spawn(async move {
+                        manager
+                            .retry_auto_connect(ch.id, ch.name, channel_type, config, token)
+                            .await;
+                    });
+                }
+                Err(e) => {
+                    tracing::error!(
+                        "[ChatChannel] failed to auto-connect '{}' (id={}): {e}",
+                        ch.name, ch.id
+                    );
+                }
             }
         }
+    }
+
+    /// Backoff delays for [`Self::retry_auto_connect`]: 5 s doubling up to a
+    /// 5-minute cap, for about two hours in total.
+    fn auto_connect_retry_delays() -> impl Iterator<Item = std::time::Duration> {
+        (0..30u32).map(|attempt| std::time::Duration::from_secs((5u64 << attempt.min(6)).min(300)))
+    }
+
+    async fn retry_auto_connect(
+        &self,
+        id: i32,
+        name: String,
+        channel_type: ChannelType,
+        config: serde_json::Value,
+        token: String,
+    ) {
+        for delay in Self::auto_connect_retry_delays() {
+            tokio::time::sleep(delay).await;
+            let backend =
+                match super::backends::create_backend(id, channel_type, &config, token.clone()) {
+                    Ok(b) => b,
+                    Err(e) => {
+                        tracing::error!("[ChatChannel] retry: cannot build backend for '{name}' (id={id}): {e}");
+                        return;
+                    }
+                };
+            match self.add_channel(id, name.clone(), channel_type, backend).await {
+                Ok(()) => {
+                    tracing::info!("[ChatChannel] auto-connected '{name}' (id={id}) after retry");
+                    return;
+                }
+                Err(ChatChannelError::ConnectionFailed(_)) => continue,
+                Err(e) => {
+                    tracing::error!("[ChatChannel] retry: giving up on '{name}' (id={id}): {e}");
+                    return;
+                }
+            }
+        }
+        tracing::error!("[ChatChannel] retry: '{name}' (id={id}) still unreachable; giving up");
+    }
+}
+
+#[cfg(test)]
+mod auto_connect_retry_tests {
+    use super::*;
+
+    #[test]
+    fn retry_delays_back_off_to_a_five_minute_cap() {
+        let delays: Vec<u64> = ChatChannelManager::auto_connect_retry_delays()
+            .map(|d| d.as_secs())
+            .collect();
+        assert_eq!(&delays[..7], &[5, 10, 20, 40, 80, 160, 300]);
+        assert!(delays.iter().all(|&d| d <= 300));
+        assert_eq!(delays.len(), 30);
     }
 }
 

@@ -578,6 +578,7 @@ pub fn help_body(lang: Lang, prefix: &str) -> String {
              {prefix}sessions - 当前目录的活跃会话\n\
              {prefix}resume [ID] - 最近会话 / 恢复指定会话\n\
              {prefix}cancel - 取消当前任务\n\
+             {prefix}endchat - 结束对话，下一条消息开始新对话\n\
              {prefix}approve [always] - 批准权限请求\n\
              {prefix}deny - 拒绝权限请求\n\
              \n\
@@ -595,6 +596,7 @@ pub fn help_body(lang: Lang, prefix: &str) -> String {
              {prefix}sessions - 當前目錄的活躍對話\n\
              {prefix}resume [ID] - 最近對話 / 恢復指定對話\n\
              {prefix}cancel - 取消當前任務\n\
+             {prefix}endchat - 結束對話，下一則訊息開始新對話\n\
              {prefix}approve [always] - 批准權限請求\n\
              {prefix}deny - 拒絕權限請求\n\
              \n\
@@ -612,6 +614,7 @@ pub fn help_body(lang: Lang, prefix: &str) -> String {
              {prefix}sessions - フォルダ内のアクティブセッション\n\
              {prefix}resume [ID] - 最近のセッション / セッションを再開\n\
              {prefix}cancel - 現在のタスクをキャンセル\n\
+             {prefix}endchat - 会話を終了し、次のメッセージで新しい会話を開始\n\
              {prefix}approve [always] - 権限を承認\n\
              {prefix}deny - 権限を拒否\n\
              \n\
@@ -629,6 +632,7 @@ pub fn help_body(lang: Lang, prefix: &str) -> String {
              {prefix}sessions - 폴더 내 활성 세션\n\
              {prefix}resume [ID] - 최근 대화 / 세션 재개\n\
              {prefix}cancel - 현재 작업 취소\n\
+             {prefix}endchat - 대화를 끝내고 다음 메시지로 새 대화 시작\n\
              {prefix}approve [always] - 권한 승인\n\
              {prefix}deny - 권한 거부\n\
              \n\
@@ -646,6 +650,7 @@ pub fn help_body(lang: Lang, prefix: &str) -> String {
              {prefix}sessions - Sesiones activas en la carpeta\n\
              {prefix}resume [ID] - Recientes / reanudar una sesion\n\
              {prefix}cancel - Cancelar tarea actual\n\
+             {prefix}endchat - Cerrar el chat; el próximo mensaje empieza uno nuevo\n\
              {prefix}approve [always] - Aprobar permiso\n\
              {prefix}deny - Denegar permiso\n\
              \n\
@@ -663,6 +668,7 @@ pub fn help_body(lang: Lang, prefix: &str) -> String {
              {prefix}sessions - Aktive Sitzungen im Ordner\n\
              {prefix}resume [ID] - Neueste Sitzungen / Sitzung fortsetzen\n\
              {prefix}cancel - Aktuelle Aufgabe abbrechen\n\
+             {prefix}endchat - Chat beenden; die nächste Nachricht startet einen neuen\n\
              {prefix}approve [always] - Berechtigung genehmigen\n\
              {prefix}deny - Berechtigung verweigern\n\
              \n\
@@ -680,6 +686,7 @@ pub fn help_body(lang: Lang, prefix: &str) -> String {
              {prefix}sessions - Sessions actives dans le dossier\n\
              {prefix}resume [ID] - Sessions recentes / reprendre une session\n\
              {prefix}cancel - Annuler la tache en cours\n\
+             {prefix}endchat - Fermer le chat ; le prochain message en ouvre un nouveau\n\
              {prefix}approve [always] - Approuver la permission\n\
              {prefix}deny - Refuser la permission\n\
              \n\
@@ -697,6 +704,7 @@ pub fn help_body(lang: Lang, prefix: &str) -> String {
              {prefix}sessions - Sessoes ativas na pasta\n\
              {prefix}resume [ID] - Recentes / retomar uma sessao\n\
              {prefix}cancel - Cancelar tarefa atual\n\
+             {prefix}endchat - Encerrar o chat; a próxima mensagem inicia outro\n\
              {prefix}approve [always] - Aprovar permissao\n\
              {prefix}deny - Negar permissao\n\
              \n\
@@ -714,6 +722,7 @@ pub fn help_body(lang: Lang, prefix: &str) -> String {
              {prefix}sessions - الجلسات النشطة في المجلد\n\
              {prefix}resume [ID] - الجلسات الاخيرة / استئناف جلسة\n\
              {prefix}cancel - الغاء المهمة الحالية\n\
+             {prefix}endchat - انهاء المحادثة؛ الرسالة التالية تبدأ محادثة جديدة\n\
              {prefix}approve [always] - الموافقة على الاذن\n\
              {prefix}deny - رفض الاذن\n\
              \n\
@@ -731,6 +740,7 @@ pub fn help_body(lang: Lang, prefix: &str) -> String {
              {prefix}sessions - Active sessions in folder\n\
              {prefix}resume [ID] - Recent conversations / resume a session\n\
              {prefix}cancel - Cancel current task\n\
+             {prefix}endchat - End the chat; your next message starts a new one\n\
              {prefix}approve [always] - Approve permission\n\
              {prefix}deny - Deny permission\n\
              \n\

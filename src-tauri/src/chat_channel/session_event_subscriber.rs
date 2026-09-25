@@ -758,9 +758,29 @@ async fn handle_acp_envelope(
                     let channel_id = session.channel_id;
                     let sender_id = session.sender_id.clone();
                     let target = session.target.clone();
+                    let conv_id = session.conversation_id;
                     drop(guard);
 
-                    clear_session_route(db, channel_id, &sender_id, &target).await;
+                    // General chat outlives its connection (restart, reboot,
+                    // idle teardown): keep the conversation, drop only the
+                    // dead connection, so the next message resumes it.
+                    if !target.is_telegram_forum_topic()
+                        && crate::chat_channel::session_commands::is_general_chat_channel(
+                            db, channel_id,
+                        )
+                        .await
+                    {
+                        let _ = sender_context_service::update_session(
+                            db,
+                            channel_id,
+                            &sender_id,
+                            Some(conv_id),
+                            None,
+                        )
+                        .await;
+                    } else {
+                        clear_session_route(db, channel_id, &sender_id, &target).await;
+                    }
                 }
             }
         }

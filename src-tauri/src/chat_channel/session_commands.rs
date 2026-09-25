@@ -1163,6 +1163,9 @@ pub async fn handle_followup(req: FollowupRequest<'_>) -> RichMessage {
     {
         Ok(Some(s)) => s,
         Ok(None) => {
+            if let Some(conversation_id) = persisted_general_chat_conversation(&req).await {
+                return resume_sender_session_and_send_followup(req, conversation_id).await;
+            }
             let body = if req.target.is_telegram_forum_topic() {
                 no_topic_session_use_task_or_resume(req.lang, req.prefix)
             } else {
@@ -1184,8 +1187,19 @@ pub async fn handle_followup(req: FollowupRequest<'_>) -> RichMessage {
     {
         let bridge_guard = req.bridge.lock().await;
         if bridge_guard.get(&connection_id).is_none() {
-            // Connection lost, clear context
             drop(bridge_guard);
+            // General chat keeps one conversation across restarts until
+            // `/endchat`: a lost connection (server restart, reboot) is
+            // resumed from the persisted conversation instead of dropped.
+            if session_ref.binding_id.is_none() {
+                if let Some(conversation_id) = session_ref.conversation_id {
+                    if is_general_chat_channel(req.db, req.channel_id).await {
+                        return resume_sender_session_and_send_followup(req, conversation_id)
+                            .await;
+                    }
+                }
+            }
+            // Connection lost, clear context
             if let Some(binding_id) = session_ref.binding_id {
                 let _ = thread_binding_service::clear_connection(req.db, binding_id).await;
             } else {
@@ -1227,6 +1241,164 @@ pub async fn handle_followup(req: FollowupRequest<'_>) -> RichMessage {
     }
 
     RichMessage::info(i18n::message_sent(req.lang))
+}
+
+/// The conversation a general-chat sender was in before the connection went
+/// away (it survives restarts in the sender context), if any.
+async fn persisted_general_chat_conversation(req: &FollowupRequest<'_>) -> Option<i32> {
+    if req.target.is_telegram_forum_topic() || !is_general_chat_channel(req.db, req.channel_id).await
+    {
+        return None;
+    }
+    sender_context_service::get_or_create(req.db, req.channel_id, req.sender_id)
+        .await
+        .ok()?
+        .current_conversation_id
+}
+
+/// Whether this general-chat sender has a conversation to continue.
+pub(crate) async fn general_chat_has_conversation(
+    db: &DatabaseConnection,
+    channel_id: i32,
+    sender_id: &str,
+) -> bool {
+    sender_context_service::get_or_create(db, channel_id, sender_id)
+        .await
+        .ok()
+        .and_then(|ctx| ctx.current_conversation_id)
+        .is_some()
+}
+
+/// Respawn the agent on a general-chat sender's persisted conversation and
+/// send `req.text` into it — the direct-chat twin of
+/// [`resume_topic_binding_and_send_followup`].
+async fn resume_sender_session_and_send_followup(
+    req: FollowupRequest<'_>,
+    conversation_id: i32,
+) -> RichMessage {
+    let conv = match conversation_service::get_by_id(req.db, conversation_id).await {
+        Ok(conv) => conv,
+        Err(_) => {
+            let _ = sender_context_service::clear_session(req.db, req.channel_id, req.sender_id)
+                .await;
+            return RichMessage::info(i18n::conversation_not_found(req.lang));
+        }
+    };
+    let (connection_id, folder) = match spawn_chat_connection_for_conversation(
+        req.db,
+        &conv,
+        req.channel_id,
+        req.sender_id,
+        req.target,
+        req.conn_mgr,
+        req.emitter,
+        req.data_dir,
+    )
+    .await
+    {
+        Ok(started) => started,
+        Err(e) => return RichMessage::error(topic_resume_failed(req.lang, conv.id, &e)),
+    };
+
+    let session = ActiveSession {
+        channel_id: req.channel_id,
+        sender_id: req.sender_id.to_string(),
+        target: req.target.clone(),
+        conversation_id: conv.id,
+        connection_id: connection_id.clone(),
+        agent_type: conv.agent_type,
+        content_buffer: String::new(),
+        tool_calls: Vec::new(),
+        tool_call_inputs: std::collections::HashMap::new(),
+        delegation_rendered: std::collections::HashSet::new(),
+        last_flushed: Instant::now(),
+        pending_prompt: None,
+        permission_pending: None,
+        pending_voice_reply_lang: req.voice_reply_lang.clone(),
+    };
+    req.bridge
+        .lock()
+        .await
+        .register(connection_id.clone(), session);
+    let _ = sender_context_service::update_session(
+        req.db,
+        req.channel_id,
+        req.sender_id,
+        Some(conv.id),
+        Some(connection_id.clone()),
+    )
+    .await;
+
+    if let Err(e) = send_chat_prompt_linked(
+        req.db,
+        req.conn_mgr,
+        &connection_id,
+        folder.id,
+        conv.id,
+        req.text,
+        false,
+    )
+    .await
+    {
+        req.bridge.lock().await.remove(&connection_id);
+        let _ = req.conn_mgr.cancel(req.db, &connection_id).await;
+        return RichMessage::error(format!(
+            "{}{}",
+            i18n::failed_to_send_message_label(req.lang),
+            e
+        ));
+    }
+
+    RichMessage::info(i18n::message_sent(req.lang))
+}
+
+// ── /endchat ──
+
+/// End the general-chat conversation: stop its agent and forget it, so the
+/// next plain message starts a fresh conversation. The conversation itself
+/// stays in history (resumable with `/resume <id>`).
+pub async fn handle_endchat(
+    db: &DatabaseConnection,
+    channel_id: i32,
+    sender_id: &str,
+    target: &ChannelMessageTarget,
+    conn_mgr: &ConnectionManager,
+    bridge: &Arc<Mutex<SessionBridge>>,
+    lang: Lang,
+) -> RichMessage {
+    let session_ref = command_session_ref(db, bridge, channel_id, sender_id, target)
+        .await
+        .ok()
+        .flatten();
+    let had_conversation = general_chat_has_conversation(db, channel_id, sender_id).await;
+    if let Some(session_ref) = session_ref.as_ref() {
+        let _ = conn_mgr.cancel(db, &session_ref.connection_id).await;
+        bridge.lock().await.remove(&session_ref.connection_id);
+        if let Some(binding_id) = session_ref.binding_id {
+            let _ = thread_binding_service::clear_connection(db, binding_id).await;
+        }
+    }
+    let _ = sender_context_service::clear_session(db, channel_id, sender_id).await;
+    let body = if session_ref.is_some() || had_conversation {
+        endchat_done(lang)
+    } else {
+        endchat_nothing(lang)
+    };
+    RichMessage::info(body)
+}
+
+fn endchat_done(lang: Lang) -> &'static str {
+    match lang {
+        Lang::Es => "Chat cerrado. Tu próximo mensaje empieza una conversación nueva.",
+        _ => "Chat closed. Your next message starts a new conversation.",
+    }
+}
+
+fn endchat_nothing(lang: Lang) -> &'static str {
+    match lang {
+        Lang::Es => "No hay un chat abierto. Escribe cualquier cosa para empezar uno.",
+        _ => "There is no open chat. Write anything to start one.",
+    }
 }
 
 async fn handle_topic_followup(req: FollowupRequest<'_>) -> RichMessage {
@@ -2404,6 +2576,36 @@ mod tests {
             AgentType::Cursor,
         );
         assert_eq!(resolved, AgentType::OpenCode);
+    }
+
+    #[tokio::test]
+    async fn general_chat_conversation_survives_until_endchat() {
+        let db = fresh_in_memory_db().await;
+        let channel_id = seed_chat_channel(&db).await;
+        let folder_id = seed_folder(&db, "/tmp/codeg-general-chat-endchat").await;
+        let conv_id = seed_conversation(&db, folder_id, AgentType::ClaudeCode).await;
+
+        // A restart drops the connection but keeps the conversation.
+        sender_context_service::update_session(&db.conn, channel_id, "u1", Some(conv_id), None)
+            .await
+            .unwrap();
+        assert!(general_chat_has_conversation(&db.conn, channel_id, "u1").await);
+
+        let bridge = Arc::new(Mutex::new(SessionBridge::new()));
+        let conn_mgr = ConnectionManager::new();
+        let target = ChannelMessageTarget::channel(channel_id);
+        let msg = handle_endchat(
+            &db.conn, channel_id, "u1", &target, &conn_mgr, &bridge, Lang::Es,
+        )
+        .await;
+        assert!(msg.body.contains("Chat cerrado"));
+        assert!(!general_chat_has_conversation(&db.conn, channel_id, "u1").await);
+
+        let again = handle_endchat(
+            &db.conn, channel_id, "u1", &target, &conn_mgr, &bridge, Lang::Es,
+        )
+        .await;
+        assert!(again.body.contains("No hay un chat abierto"));
     }
 
     #[test]

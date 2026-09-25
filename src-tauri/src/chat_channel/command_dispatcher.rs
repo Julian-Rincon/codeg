@@ -283,6 +283,29 @@ async fn dispatch_command(
             // General chat: plain text with no session starts one, exactly
             // like `/task <text>`, instead of answering with the help card.
             if session_commands::is_general_chat_channel(db, channel_id).await {
+                // A conversation that outlived its connection (restart,
+                // reboot) is continued until `/endchat`.
+                if session_commands::general_chat_has_conversation(db, channel_id, sender_id).await
+                {
+                    return DispatchResponse::current(
+                        session_commands::handle_followup(session_commands::FollowupRequest {
+                            db,
+                            text,
+                            channel_id,
+                            sender_id,
+                            target,
+                            conn_mgr,
+                            emitter,
+                            bridge,
+                            data_dir,
+                            lang,
+                            prefix,
+                            voice_reply_lang,
+                        })
+                        .await,
+                        target,
+                    );
+                }
                 let result = session_commands::handle_task(
                     db,
                     text,
@@ -392,6 +415,13 @@ async fn dispatch_command(
                 post_action: result.post_action,
             }
         }
+        "endchat" | "end" | "nuevo" | "new" => DispatchResponse::current(
+            session_commands::handle_endchat(
+                db, channel_id, sender_id, target, conn_mgr, bridge, lang,
+            )
+            .await,
+            target,
+        ),
         "sessions" => DispatchResponse::current(
             session_commands::handle_sessions(db, channel_id, sender_id, target, lang, prefix)
                 .await,
