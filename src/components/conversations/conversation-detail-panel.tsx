@@ -53,6 +53,9 @@ import {
 } from "@/components/message/goal-control-context"
 import { useAdvertisedGoalActions } from "@/hooks/use-goal-actions"
 import { ConversationShell } from "@/components/chat/conversation-shell"
+import { ModelFailoverCard } from "@/components/chat/model-failover-card"
+import { detectLimitTrigger, useFailoverOffer } from "@/lib/model-failover"
+import { isModelConfigOption } from "@/lib/model-config-groups"
 import { SessionConfigStaleBanner } from "@/components/chat/session-config-stale-banner"
 import { PiProjectTrustBanner } from "@/components/chat/pi-project-trust-banner"
 import { FeedbackNotesDisplay } from "@/components/chat/feedback-notes-display"
@@ -263,6 +266,7 @@ const ConversationTabView = memo(function ConversationTabView({
   const sharedT = useTranslations("Folder.chat.shared")
   const tMessageList = useTranslations("Folder.chat.messageList")
   const tAsyncTasks = useTranslations("Folder.chat.asyncTasks")
+  const tFailover = useTranslations("Folder.chat.modelFailover")
   const refreshConversations = useAppWorkspaceStore(
     (s) => s.refreshConversations
   )
@@ -297,6 +301,7 @@ const ConversationTabView = memo(function ConversationTabView({
     closeTab,
     confirmDraftAgent,
     setDraftAgentFromFallback,
+    openTab,
   } = useTabActions()
   const {
     appendOptimisticTurn,
@@ -732,6 +737,59 @@ const ConversationTabView = memo(function ConversationTabView({
     () => (connIsForOtherAgent ? [] : (conn.availableCommands ?? [])),
     [connIsForOtherAgent, conn.availableCommands]
   )
+  // Model quota failover: the currently selected model (bare id, matching the
+  // scorecard's own `model` field — see `findModelScore`'s doc), the live
+  // limit trigger for this connection, and the offer/accept/dismiss
+  // lifecycle. `dbConversationId` (not `effectiveConversationId`, which can be
+  // a virtual negative id for an unsaved draft) is what the backend expects.
+  const currentModelValue = useMemo(() => {
+    const modelOption = connectionConfigOptions.find(isModelConfigOption)
+    return modelOption?.kind.type === "select"
+      ? modelOption.kind.current_value
+      : null
+  }, [connectionConfigOptions])
+  const failoverTrigger = useMemo(
+    () => detectLimitTrigger(conn.sessionFailures, conn.error),
+    [conn.sessionFailures, conn.error]
+  )
+  const failover = useFailoverOffer(
+    dbConversationId ?? null,
+    selectedAgent,
+    currentModelValue,
+    failoverTrigger
+  )
+  const handleFailoverAccept = useCallback(
+    async (
+      candidate?: Parameters<typeof failover.accept>[0]
+    ): Promise<void> => {
+      const result = await failover.accept(candidate)
+      if (!result) return
+      openTab(result.folder_id, result.conversation_id, result.agent_type)
+      toast.success(
+        tFailover("toastTitle", {
+          agent: getAgentLabel(result.agent_type),
+          model: result.model ?? result.agent_type,
+        }),
+        { description: tFailover("toastDescription") }
+      )
+    },
+    [failover, openTab, tFailover]
+  )
+  const handoffCard =
+    failoverTrigger &&
+    (failover.loading || failover.offer != null || failover.error != null) ? (
+      <ModelFailoverCard
+        limitedAgentType={selectedAgent}
+        reasonText={failoverTrigger.reasonText}
+        offer={failover.offer}
+        loading={failover.loading}
+        accepting={failover.accepting}
+        error={failover.error}
+        onAccept={(candidate) => void handleFailoverAccept(candidate)}
+        onDismiss={failover.dismiss}
+        onRetry={failover.retry}
+      />
+    ) : null
   const selectedModeId = useMemo(() => {
     if (connectionModes.length === 0) return null
     if (modeId && connectionModes.some((mode) => mode.id === modeId)) {
@@ -2287,6 +2345,7 @@ const ConversationTabView = memo(function ConversationTabView({
       injectContent={composerInject}
       onInjectConsumed={handleComposerInjectConsumed}
       composerBanner={acpLoadErrorBanner}
+      handoffCard={handoffCard}
       feedbackList={
         feedback.showList ? (
           <FeedbackNotesDisplay

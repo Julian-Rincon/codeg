@@ -450,6 +450,52 @@ pub async fn handle_task(
     data_dir: &Path,
     voice_reply_lang: Option<String>,
 ) -> CommandMessageResult {
+    handle_task_with(
+        db,
+        task_description,
+        channel_id,
+        sender_id,
+        target,
+        manager,
+        conn_mgr,
+        emitter,
+        bridge,
+        lang,
+        prefix,
+        data_dir,
+        voice_reply_lang,
+        TaskOverrides::default(),
+    )
+    .await
+}
+
+/// Optional overrides for [`handle_task_with`], used by the quota failover
+/// to start the successor with a chosen agent/model in the source folder.
+#[derive(Debug, Clone, Default)]
+pub struct TaskOverrides {
+    pub agent_type: Option<AgentType>,
+    pub model: Option<String>,
+    pub folder_id: Option<i32>,
+    pub title: Option<String>,
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn handle_task_with(
+    db: &DatabaseConnection,
+    task_description: &str,
+    channel_id: i32,
+    sender_id: &str,
+    target: &ChannelMessageTarget,
+    manager: &ChatChannelManager,
+    conn_mgr: &ConnectionManager,
+    emitter: &EventEmitter,
+    bridge: &Arc<Mutex<SessionBridge>>,
+    lang: Lang,
+    prefix: &str,
+    data_dir: &Path,
+    voice_reply_lang: Option<String>,
+    overrides: TaskOverrides,
+) -> CommandMessageResult {
     if task_description.is_empty() {
         return CommandMessageResult::current_target(
             RichMessage::info(i18n::task_usage(lang, prefix)),
@@ -475,7 +521,7 @@ pub async fn handle_task(
         }
     };
 
-    let folder_id = match ctx.current_folder_id {
+    let folder_id = match overrides.folder_id.or(ctx.current_folder_id) {
         Some(id) => id,
         None => match general_chat_default_folder(db, channel_id, sender_id).await {
             // General chat (Telegram): no `/folder` needed; start in the
@@ -511,11 +557,17 @@ pub async fn handle_task(
         .as_ref()
         .map(|c| channel_default_agent_type(&c.config_json))
         .unwrap_or(AgentType::ClaudeCode);
-    let agent_type = resolve_agent_type(
-        &ctx.current_agent_type,
-        &folder.default_agent_type,
-        channel_default,
-    );
+    let agent_type = overrides.agent_type.unwrap_or_else(|| {
+        resolve_agent_type(
+            &ctx.current_agent_type,
+            &folder.default_agent_type,
+            channel_default,
+        )
+    });
+    let task_title = overrides
+        .title
+        .clone()
+        .unwrap_or_else(|| truncate_title(task_description));
     // The general-chat preamble (feature: Telegram becomes a general chat
     // into Phantom) only applies to Telegram channels — it explicitly tells
     // the agent it is fielding Phantom's Telegram chat.
@@ -537,7 +589,7 @@ pub async fn handle_task(
     let mut session_target = target.clone();
     if target.is_telegram_general_topic() {
         match manager
-            .create_thread(channel_id, &truncate_topic_title(task_description))
+            .create_thread(channel_id, &truncate_topic_title(&task_title))
             .await
         {
             Ok(created) => {
@@ -557,7 +609,7 @@ pub async fn handle_task(
         db,
         folder_id,
         agent_type,
-        Some(truncate_title(task_description)),
+        Some(task_title.clone()),
         folder.git_branch.clone(),
     )
     .await
@@ -574,8 +626,16 @@ pub async fn handle_task(
         }
     };
 
-    // 5. Spawn ACP agent
+    // 5. Spawn ACP agent (a failover picks the successor's model through
+    // the model-category alias, resolved against this agent's own list).
     let owner_label = owner_label_for(channel_id, sender_id, &session_target);
+    let mut preferred_config_values = BTreeMap::new();
+    if let Some(model) = overrides.model.as_ref().filter(|m| !m.trim().is_empty()) {
+        preferred_config_values.insert(
+            crate::acp::connection::MODEL_CATEGORY_CONFIG_KEY.to_string(),
+            model.clone(),
+        );
+    }
     let connection_id = match conn_mgr
         .spawn_agent(
             agent_type,
@@ -585,7 +645,7 @@ pub async fn handle_task(
             owner_label,
             emitter.clone(),
             None,
-            BTreeMap::new(),
+            preferred_config_values,
         )
         .await
     {
@@ -1350,6 +1410,264 @@ async fn resume_sender_session_and_send_followup(
     }
 
     RichMessage::info(i18n::message_sent(req.lang))
+}
+
+// ── Quota failover (Telegram) ──
+
+/// A pending "continue with the successor?" offer. Telegram caps
+/// `callback_data` at 64 bytes, so buttons carry only a short id into this
+/// in-memory table (offers die with the process, which is fine: after a
+/// restart the user simply writes again).
+#[derive(Debug, Clone)]
+struct FailoverOffer {
+    channel_id: i32,
+    sender_id: String,
+    source_conversation_id: i32,
+    primary: (AgentType, String),
+    alternative: Option<(AgentType, String)>,
+    created_at: Instant,
+}
+
+fn failover_offers() -> &'static std::sync::Mutex<(u64, std::collections::HashMap<u64, FailoverOffer>)>
+{
+    static OFFERS: std::sync::OnceLock<
+        std::sync::Mutex<(u64, std::collections::HashMap<u64, FailoverOffer>)>,
+    > = std::sync::OnceLock::new();
+    OFFERS.get_or_init(|| std::sync::Mutex::new((0, std::collections::HashMap::new())))
+}
+
+const FAILOVER_OFFER_TTL: std::time::Duration = std::time::Duration::from_secs(6 * 3600);
+
+/// Build the offer message for a conversation whose agent just ran out of
+/// tokens: the best measured successor (and runner-up) from
+/// `phantom_successor_core`, as buttons. `None` when there is no successor
+/// or an offer for this conversation is already pending.
+pub async fn failover_offer_message(
+    db: &DatabaseConnection,
+    channel_id: i32,
+    sender_id: &str,
+    source_conversation_id: i32,
+    agent_type: AgentType,
+    hit: &crate::acp::model_limits::LimitHit,
+    lang: Lang,
+) -> Option<InteractiveMessage> {
+    {
+        let guard = failover_offers().lock().ok()?;
+        if guard.1.values().any(|o| {
+            o.source_conversation_id == source_conversation_id
+                && o.created_at.elapsed() < FAILOVER_OFFER_TTL
+        }) {
+            return None;
+        }
+    }
+    let response = crate::commands::phantom_successor::phantom_successor_core(
+        db,
+        agent_type,
+        None,
+        Some(source_conversation_id),
+    )
+    .await
+    .ok()?;
+    let successor = response.successor?;
+    let primary_agent = parse_agent_type(&successor.agent_type)?;
+    let alternative = response.runner_up.as_ref().and_then(|r| {
+        parse_agent_type(&r.agent_type).map(|a| (a, r.model.clone(), r.reason.clone()))
+    });
+
+    let id = {
+        let mut guard = failover_offers().lock().ok()?;
+        guard.1.retain(|_, o| o.created_at.elapsed() < FAILOVER_OFFER_TTL);
+        guard.0 += 1;
+        let id = guard.0;
+        guard.1.insert(
+            id,
+            FailoverOffer {
+                channel_id,
+                sender_id: sender_id.to_string(),
+                source_conversation_id,
+                primary: (primary_agent, successor.model.clone()),
+                alternative: alternative.as_ref().map(|(a, m, _)| (*a, m.clone())),
+                created_at: Instant::now(),
+            },
+        );
+        id
+    };
+
+    let label = |agent: AgentType, model: &str| {
+        let short = model.rsplit('/').next().unwrap_or(model);
+        format!("{} · {short}", agent.as_wire())
+    };
+    let resets = hit
+        .resets_hint
+        .as_deref()
+        .map(|h| format!(" ({h})"))
+        .unwrap_or_default();
+    let es = matches!(lang, Lang::Es);
+    let mut body = if es {
+        format!(
+            "{} se quedó sin tokens{resets}.\nSugerencia medida: {} — {}\nSi continúo, abro una conversación nueva con el contexto completo de esta y sigo donde quedó.",
+            agent_type.as_wire(),
+            label(primary_agent, &successor.model),
+            successor.reason
+        )
+    } else {
+        format!(
+            "{} ran out of tokens{resets}.\nMeasured suggestion: {} — {}\nIf I continue, a new conversation starts with this one's full context and picks up where it stopped.",
+            agent_type.as_wire(),
+            label(primary_agent, &successor.model),
+            successor.reason
+        )
+    };
+    let mut buttons = vec![MessageButton {
+        id: format!("fo:{id}:go"),
+        label: truncate_button_label(
+            &format!(
+                "{} {}",
+                if es { "Continuar con" } else { "Continue with" },
+                label(primary_agent, &successor.model)
+            ),
+            40,
+        ),
+        style: ButtonStyle::Primary,
+    }];
+    if let Some((alt_agent, alt_model, alt_reason)) = alternative.as_ref() {
+        body.push_str(&format!(
+            "\n{} {} — {}",
+            if es { "Otra opción:" } else { "Other option:" },
+            label(*alt_agent, alt_model),
+            alt_reason
+        ));
+        buttons.push(MessageButton {
+            id: format!("fo:{id}:alt"),
+            label: truncate_button_label(&label(*alt_agent, alt_model), 40),
+            style: ButtonStyle::Default,
+        });
+    }
+    buttons.push(MessageButton {
+        id: format!("fo:{id}:wait"),
+        label: if es { "Esperar" } else { "Wait" }.to_string(),
+        style: ButtonStyle::Default,
+    });
+    Some(InteractiveMessage {
+        base: RichMessage::info(body).with_title(if es {
+            "Sin tokens"
+        } else {
+            "Out of tokens"
+        }),
+        buttons,
+        callback_context: serde_json::json!({ "kind": "failover" }),
+    })
+}
+
+/// Handle a `fo:<id>:go|alt|wait` button: on go/alt, close the exhausted
+/// session and start the successor with the source conversation's full
+/// context (it becomes the sender's active general chat).
+#[allow(clippy::too_many_arguments)]
+pub async fn handle_failover_callback(
+    data: &str,
+    db: &DatabaseConnection,
+    channel_id: i32,
+    sender_id: &str,
+    target: &ChannelMessageTarget,
+    manager: &ChatChannelManager,
+    conn_mgr: &ConnectionManager,
+    emitter: &EventEmitter,
+    bridge: &Arc<Mutex<SessionBridge>>,
+    lang: Lang,
+    prefix: &str,
+    data_dir: &Path,
+) -> CommandMessageResult {
+    let es = matches!(lang, Lang::Es);
+    let mut parts = data.splitn(3, ':').skip(1);
+    let (Some(id), Some(action)) = (
+        parts.next().and_then(|s| s.parse::<u64>().ok()),
+        parts.next(),
+    ) else {
+        return CommandMessageResult::current_target(RichMessage::info("?"), target);
+    };
+    let offer = failover_offers()
+        .lock()
+        .ok()
+        .and_then(|mut g| g.1.remove(&id))
+        .filter(|o| o.channel_id == channel_id && o.sender_id == sender_id);
+    let Some(offer) = offer else {
+        return CommandMessageResult::current_target(
+            RichMessage::info(if es {
+                "Esa propuesta ya no está vigente."
+            } else {
+                "That offer is no longer valid."
+            }),
+            target,
+        );
+    };
+    let (agent_type, model) = match action {
+        "go" => offer.primary.clone(),
+        "alt" => match offer.alternative.clone() {
+            Some(alt) => alt,
+            None => offer.primary.clone(),
+        },
+        _ => {
+            return CommandMessageResult::current_target(
+                RichMessage::info(if es {
+                    "De acuerdo, espero. Cuando se restablezca, sigue escribiendo aquí y continúo la misma conversación."
+                } else {
+                    "OK, waiting. Once the limit resets, keep writing here and I'll continue the same conversation."
+                }),
+                target,
+            );
+        }
+    };
+
+    let context = match crate::commands::phantom_handoff::prepare_handoff(
+        db,
+        offer.source_conversation_id,
+    )
+    .await
+    {
+        Ok(c) => c,
+        Err(e) => {
+            return CommandMessageResult::current_target(
+                RichMessage::error(format!("{}{e}", i18n::failed_to_start_agent_label(lang))),
+                target,
+            );
+        }
+    };
+
+    // Retire the exhausted session; its conversation stays in history.
+    if let Ok(Some(old)) = command_session_ref(db, bridge, channel_id, sender_id, target).await {
+        let _ = conn_mgr.cancel(db, &old.connection_id).await;
+        bridge.lock().await.remove(&old.connection_id);
+    }
+    let _ = sender_context_service::clear_session(db, channel_id, sender_id).await;
+
+    let title = format!(
+        "{} #{} · {}",
+        if es { "Relevo de" } else { "Handoff of" },
+        offer.source_conversation_id,
+        context.source_title.as_deref().unwrap_or("")
+    );
+    handle_task_with(
+        db,
+        &context.prompt,
+        channel_id,
+        sender_id,
+        target,
+        manager,
+        conn_mgr,
+        emitter,
+        bridge,
+        lang,
+        prefix,
+        data_dir,
+        None,
+        TaskOverrides {
+            agent_type: Some(agent_type),
+            model: Some(model),
+            folder_id: Some(context.folder_id),
+            title: Some(truncate_title(&title)),
+        },
+    )
+    .await
 }
 
 // ── /endchat ──
@@ -2606,6 +2924,51 @@ mod tests {
         )
         .await;
         assert!(again.body.contains("No hay un chat abierto"));
+    }
+
+    #[tokio::test]
+    async fn failover_callback_waits_and_rejects_stale_offers() {
+        let db = fresh_in_memory_db().await;
+        let channel_id = seed_chat_channel(&db).await;
+        let target = ChannelMessageTarget::channel(channel_id);
+        let bridge = Arc::new(Mutex::new(SessionBridge::new()));
+        let conn_mgr = ConnectionManager::new();
+        let manager = ChatChannelManager::new();
+        let data_dir = std::env::temp_dir();
+
+        let id = {
+            let mut g = failover_offers().lock().unwrap();
+            g.0 += 1;
+            let id = g.0;
+            g.1.insert(
+                id,
+                FailoverOffer {
+                    channel_id,
+                    sender_id: "u1".into(),
+                    source_conversation_id: 1,
+                    primary: (AgentType::OpenCode, "opencode/big-pickle".into()),
+                    alternative: None,
+                    created_at: Instant::now(),
+                },
+            );
+            id
+        };
+
+        let waited = handle_failover_callback(
+            &format!("fo:{id}:wait"), &db.conn, channel_id, "u1", &target, &manager, &conn_mgr,
+            &EventEmitter::Noop, &bridge, Lang::Es, "/", &data_dir,
+        )
+        .await;
+        assert!(waited.message.body.contains("espero"));
+        assert!(waited.post_action.is_none());
+
+        // The offer was consumed: pressing again is reported as stale.
+        let stale = handle_failover_callback(
+            &format!("fo:{id}:go"), &db.conn, channel_id, "u1", &target, &manager, &conn_mgr,
+            &EventEmitter::Noop, &bridge, Lang::Es, "/", &data_dir,
+        )
+        .await;
+        assert!(stale.message.body.contains("ya no está vigente"));
     }
 
     #[test]

@@ -3185,7 +3185,9 @@
           "permissionCue": "I need your permission on screen.",
           "permissionPendingCue": "Waiting for your permission on screen.",
           "codeBlockNote": "Code block."
-        }
+        },
+        "modelLimited": "Out of tokens until {resets}",
+        "modelLimitedGeneric": "Out of tokens"
       },
       "messageQueue": {
         "addToQueue": "Queue message",
@@ -3893,6 +3895,24 @@
         "toggleDetails": "Toggle details",
         "dismiss": "Dismiss",
         "moreIncidents": "+{count} more"
+      },
+      "modelFailover": {
+        "title": "{agent} ran out of tokens",
+        "titleWithReset": "{agent} ran out of tokens ({resets})",
+        "continueWith": "Continue with {agent} · {model}",
+        "wait": "Wait",
+        "chooseAnother": "Choose another",
+        "runnerUpLabel": "Or: {agent} · {model}",
+        "useRunnerUp": "Use this one",
+        "accepting": "Handing off — transferring full context…",
+        "looking": "Looking for the best successor…",
+        "toastTitle": "Handoff in progress with {agent} · {model}",
+        "toastDescription": "Full context transferred — no work lost.",
+        "noSuccessor": "No measured successor available yet.",
+        "noSuccessorWithReset": "No measured successor available yet ({resets}).",
+        "error": "Couldn't prepare the handoff.",
+        "retry": "Retry",
+        "dismiss": "Dismiss"
       },
       "backgroundTasks": {
         "settledFallback": "Background task finished ({status})",
@@ -6590,6 +6610,8 @@
     "metricTokPerSec": "{value} tok/s",
     "metricErrorPct": "{value}% errors",
     "metricContext": "{value} ctx",
-    "mentionHint": "{agent} · {model} — best at {category} ({metric}, n={sample})"
+    "mentionHint": "{agent} · {model} — best at {category} ({metric}, n={sample})",
+    "limited": "Out of tokens",
+    "limitedUntil": "Out of tokens until {value}"
   }
 }

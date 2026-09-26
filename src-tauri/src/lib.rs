@@ -95,7 +95,9 @@ mod tauri_app {
         folder_links, office_tools as office_tools_commands, open_in,
         folders, logging as logging_commands, mcp as mcp_commands,
         model_provider as model_provider_commands,
-        model_scorecard as model_scorecard_commands, notification, pet as pet_commands, project_boot,
+        model_scorecard as model_scorecard_commands, notification,
+        pet as pet_commands, phantom_handoff as phantom_handoff_commands,
+        phantom_successor as phantom_successor_commands, project_boot,
         question as question_commands, quick_messages as quick_messages_commands,
         remote_proxy as remote_proxy_commands,
         remote_workspace as remote_workspace_commands, science as science_commands,
@@ -662,6 +664,9 @@ mod tauri_app {
                 // connection can spawn — so the first `SessionConfigOptions`
                 // report of the run is never dropped for lacking a database.
                 crate::acp::model_catalog::init(app.state::<db::AppDatabase>().conn.clone());
+                // Same reasoning as the catalog sink above, for model quota
+                // failover detection (see `acp::model_limits`).
+                crate::acp::model_limits::init(app.state::<db::AppDatabase>().conn.clone());
 
                 // Restore and apply saved system proxy settings before any network operation.
                 let db = app.state::<db::AppDatabase>();
@@ -1916,6 +1921,8 @@ mod tauri_app {
                 token_usage_commands::token_usage_status,
                 token_usage_commands::token_usage_sync,
                 model_scorecard_commands::model_scorecard,
+                phantom_successor_commands::phantom_successor,
+                phantom_handoff_commands::phantom_handoff,
                 work_task_commands::work_task_list,
                 work_task_commands::work_task_get,
                 work_task_commands::work_task_events,

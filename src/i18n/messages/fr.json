@@ -3185,7 +3185,9 @@
           "permissionCue": "J'ai besoin de votre autorisation à l'écran.",
           "permissionPendingCue": "En attente de votre autorisation à l'écran.",
           "codeBlockNote": "Bloc de code."
-        }
+        },
+        "modelLimited": "Plus de tokens jusqu'à {resets}",
+        "modelLimitedGeneric": "Plus de tokens"
       },
       "messageQueue": {
         "addToQueue": "Mettre en file",
@@ -3893,6 +3895,24 @@
         "toggleDetails": "Afficher/masquer les détails",
         "dismiss": "Ignorer",
         "moreIncidents": "+{count} autre(s)"
+      },
+      "modelFailover": {
+        "title": "{agent} n'a plus de tokens",
+        "titleWithReset": "{agent} n'a plus de tokens ({resets})",
+        "continueWith": "Continuer avec {agent} · {model}",
+        "wait": "Attendre",
+        "chooseAnother": "Choisir un autre",
+        "runnerUpLabel": "Ou : {agent} · {model}",
+        "useRunnerUp": "Utiliser celui-ci",
+        "accepting": "Relais en cours — transfert du contexte complet…",
+        "looking": "Recherche du meilleur successeur…",
+        "toastTitle": "Relais en cours avec {agent} · {model}",
+        "toastDescription": "Contexte complet transféré — rien n'a été perdu.",
+        "noSuccessor": "Aucun successeur mesuré disponible pour l'instant.",
+        "noSuccessorWithReset": "Aucun successeur mesuré disponible pour l'instant ({resets}).",
+        "error": "Impossible de préparer le relais.",
+        "retry": "Réessayer",
+        "dismiss": "Ignorer"
       },
       "backgroundTasks": {
         "settledFallback": "Tâche en arrière-plan terminée ({status})",
@@ -6590,6 +6610,8 @@
     "metricTokPerSec": "{value} tok/s",
     "metricErrorPct": "{value}% d'erreurs",
     "metricContext": "{value} ctx",
-    "mentionHint": "{agent} · {model} — meilleur en {category} ({metric}, n={sample})"
+    "mentionHint": "{agent} · {model} — meilleur en {category} ({metric}, n={sample})",
+    "limited": "Plus de tokens",
+    "limitedUntil": "Plus de tokens jusqu'à {value}"
   }
 }

@@ -96,6 +96,10 @@ interface ConversationShellProps {
    *  the agent failed to load this session) without hijacking the message
    *  area above. Renders nothing when omitted. */
   composerBanner?: ReactNode
+  /** The model-quota-failover handoff card (`ModelFailoverCard`), shown just
+   *  above the composer — not a blocking modal — when the active agent/model
+   *  has hit its usage limit. Renders nothing when omitted. */
+  handoffCard?: ReactNode
   /** Optional read-only live-feedback notes list rendered just above the
    *  composer (see `FeedbackNotesDisplay`). Renders nothing when there are no
    *  notes for the current turn. */
@@ -189,6 +193,7 @@ export function ConversationShell({
   getSentHistory,
   hideInput = false,
   composerBanner,
+  handoffCard,
   feedbackList,
   onAddFeedback,
   feedbackAddDisabled,
@@ -265,6 +270,12 @@ export function ConversationShell({
               approval={pendingPlanApproval}
               onAnswer={onAnswerPlanApproval}
             />
+          </div>
+        )}
+
+        {handoffCard && (
+          <div className="mx-auto w-full max-w-3xl px-4 pb-2">
+            {handoffCard}
           </div>
         )}
 

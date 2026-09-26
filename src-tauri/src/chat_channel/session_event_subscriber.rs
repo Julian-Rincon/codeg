@@ -127,6 +127,41 @@ async fn handle_acp_envelope(
 ) {
     let connection_id = envelope.connection_id.as_str();
 
+    // Quota failover: when a chat session's agent runs out of tokens, offer
+    // the best measured successor with buttons (the handoff itself happens
+    // only when the user accepts). Normal failure handling below still runs.
+    if matches!(
+        envelope.payload,
+        AcpEvent::SessionFailure { .. } | AcpEvent::Error { .. }
+    ) {
+        let session = {
+            let guard = bridge.lock().await;
+            guard.get(connection_id).map(|s| {
+                (
+                    s.channel_id,
+                    s.sender_id.clone(),
+                    s.target.clone(),
+                    s.conversation_id,
+                    s.agent_type,
+                )
+            })
+        };
+        if let Some((channel_id, sender_id, target, conv_id, agent_type)) = session {
+            if let Some(hit) =
+                crate::acp::model_limits::detect_limit(agent_type, &envelope.payload)
+            {
+                let lang = get_lang(db).await;
+                if let Some(offer) = crate::chat_channel::session_commands::failover_offer_message(
+                    db, channel_id, &sender_id, conv_id, agent_type, &hit, lang,
+                )
+                .await
+                {
+                    let _ = manager.send_interactive_to_target(&target, &offer).await;
+                }
+            }
+        }
+    }
+
     match &envelope.payload {
         AcpEvent::SessionStarted { session_id } => {
             let mut guard = bridge.lock().await;

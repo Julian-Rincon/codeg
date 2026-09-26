@@ -219,6 +219,23 @@ async fn dispatch_command(
     lang: Lang,
     voice_reply_lang: Option<String>,
 ) -> DispatchResponse {
+    if let Some(data) = callback_data.filter(|d| d.starts_with("fo:")) {
+        let result = session_commands::handle_failover_callback(
+            data, db, channel_id, sender_id, target, manager, conn_mgr, emitter, bridge, lang,
+            prefix, data_dir,
+        )
+        .await;
+        return DispatchResponse {
+            message: Some(DispatchMessage::Rich(result.message)),
+            target: result.response_target,
+            extra_messages: result
+                .extra_responses
+                .into_iter()
+                .map(|(message, target)| (DispatchMessage::Rich(message), target))
+                .collect(),
+            post_action: result.post_action,
+        };
+    }
     if let Some(data) = callback_data {
         return DispatchResponse::current(
             session_commands::handle_callback(db, data, channel_id, sender_id, lang, prefix).await,

@@ -3185,7 +3185,9 @@
           "permissionCue": "画面で許可が必要です。",
           "permissionPendingCue": "画面での許可待ちです。",
           "codeBlockNote": "コードブロック。"
-        }
+        },
+        "modelLimited": "{resets}までトークンなし",
+        "modelLimitedGeneric": "トークンなし"
       },
       "messageQueue": {
         "addToQueue": "キューに追加",
@@ -3893,6 +3895,24 @@
         "toggleDetails": "詳細の切り替え",
         "dismiss": "閉じる",
         "moreIncidents": "他 {count} 件"
+      },
+      "modelFailover": {
+        "title": "{agent}のトークンが上限に達しました",
+        "titleWithReset": "{agent}のトークンが上限に達しました（{resets}）",
+        "continueWith": "{agent} · {model} で続ける",
+        "wait": "待つ",
+        "chooseAnother": "他を選ぶ",
+        "runnerUpLabel": "または: {agent} · {model}",
+        "useRunnerUp": "これを使う",
+        "accepting": "引き継ぎ中 — コンテキストを完全に転送しています…",
+        "looking": "最適な後継モデルを探しています…",
+        "toastTitle": "{agent} · {model} への引き継ぎ中",
+        "toastDescription": "コンテキストを完全に転送しました — 作業は失われていません。",
+        "noSuccessor": "測定済みの後継モデルはまだありません。",
+        "noSuccessorWithReset": "測定済みの後継モデルはまだありません（{resets}）。",
+        "error": "引き継ぎを準備できませんでした。",
+        "retry": "再試行",
+        "dismiss": "閉じる"
       },
       "backgroundTasks": {
         "settledFallback": "バックグラウンドタスクが終了しました（{status}）",
@@ -6590,6 +6610,8 @@
     "metricTokPerSec": "{value} tok/s",
     "metricErrorPct": "エラー{value}%",
     "metricContext": "コンテキスト{value}",
-    "mentionHint": "{agent} · {model} — {category}が得意（{metric}、n={sample}）"
+    "mentionHint": "{agent} · {model} — {category}が得意（{metric}、n={sample}）",
+    "limited": "トークンなし",
+    "limitedUntil": "{value}までトークンなし"
   }
 }

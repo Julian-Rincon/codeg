@@ -16,7 +16,9 @@ import {
 } from "@/lib/model-config-groups"
 import {
   findModelScore,
+  formatLimitResetTime,
   hasScorecardData,
+  isModelLimited,
   scorecardStatusLine,
   scorecardStrengthLabels,
   type AnyTranslate,
@@ -337,6 +339,21 @@ export function ModelOptionList({
                               : null
                           }
                           unavailableLabel={null}
+                          limitedLabel={
+                            scoreEntry && isModelLimited(scoreEntry)
+                              ? formatLimitResetTime(
+                                  scoreEntry.limit_resets_at,
+                                  locale
+                                )
+                                ? tScorecard("limitedUntil", {
+                                    value: formatLimitResetTime(
+                                      scoreEntry.limit_resets_at,
+                                      locale
+                                    )!,
+                                  })
+                                : tScorecard("limited")
+                              : null
+                          }
                           scorecardLine={
                             scoreEntry
                               ? scorecardStatusLine(

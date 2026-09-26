@@ -22,7 +22,9 @@ import {
 } from "@/lib/model-config-groups"
 import {
   findModelScore,
+  formatLimitResetTime,
   hasScorecardData,
+  isModelLimited,
   scorecardStatusLine,
   scorecardStrengthLabels,
   useModelScorecard,
@@ -91,6 +93,17 @@ export function InlineSessionConfigSelector({
     (item) => item.value === option.kind.current_value
   )
   const currentLabel = selected?.name ?? option.kind.current_value
+  // Subtle warning cue on the trigger: the CURRENTLY selected model ran out
+  // of tokens (mirrors the same cue in `ModelOptionPicker`'s wide popover).
+  const currentEntry = showScorecard
+    ? findModelScore(
+        scorecard,
+        agentType!,
+        option.kind.current_value,
+        currentLabel
+      )
+    : null
+  const currentLimited = isModelLimited(currentEntry)
   // The agent's recommended value, if it named one AND the caller supplied a
   // chip label. Never falls back to `current_value`: "recommended" and
   // "selected" are different claims, and badging the selected row when nothing
@@ -115,6 +128,18 @@ export function InlineSessionConfigSelector({
       // Every option here comes from the agent's live list, so it is
       // available by definition; the catalog flag only matters elsewhere.
       unavailableLabel: null,
+      limitedLabel:
+        entry && isModelLimited(entry)
+          ? (() => {
+              const resetTime = formatLimitResetTime(
+                entry.limit_resets_at,
+                locale
+              )
+              return resetTime
+                ? tScorecard("limitedUntil", { value: resetTime })
+                : tScorecard("limited")
+            })()
+          : null,
       scorecardLine: entry
         ? scorecardStatusLine(entry, tScorecard, locale)
         : null,
@@ -129,13 +154,20 @@ export function InlineSessionConfigSelector({
             variant="ghost"
             size="xs"
             aria-label={
-              currentLabel ? `${option.name}: ${currentLabel}` : option.name
+              currentLabel
+                ? currentLimited
+                  ? `${option.name}: ${currentLabel} (${tScorecard("limited")})`
+                  : `${option.name}: ${currentLabel}`
+                : option.name
             }
             className="phantom-model-trigger min-w-0 gap-1.5 px-1 text-muted-foreground"
           >
             <span
               aria-hidden
-              className="size-1.5 shrink-0 rounded-full bg-[var(--phantom-accent)]"
+              className={cn(
+                "size-1.5 shrink-0 rounded-full",
+                currentLimited ? "bg-amber-500" : "bg-[var(--phantom-accent)]"
+              )}
             />
             <span className="max-w-[10rem] truncate">{currentLabel}</span>
             <ChevronDown className="size-3 shrink-0 text-muted-foreground" />

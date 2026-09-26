@@ -3185,7 +3185,9 @@
           "permissionCue": "أحتاج إلى إذنك على الشاشة.",
           "permissionPendingCue": "في انتظار إذنك على الشاشة.",
           "codeBlockNote": "كتلة برمجية."
-        }
+        },
+        "modelLimited": "لا رموز متاحة حتى {resets}",
+        "modelLimitedGeneric": "لا رموز متاحة"
       },
       "messageQueue": {
         "addToQueue": "إضافة للقائمة",
@@ -3893,6 +3895,24 @@
         "toggleDetails": "تبديل التفاصيل",
         "dismiss": "تجاهل",
         "moreIncidents": "+{count} أخرى"
+      },
+      "modelFailover": {
+        "title": "نفدت رموز {agent}",
+        "titleWithReset": "نفدت رموز {agent} ({resets})",
+        "continueWith": "المتابعة مع {agent} · {model}",
+        "wait": "الانتظار",
+        "chooseAnother": "اختيار آخر",
+        "runnerUpLabel": "أو: {agent} · {model}",
+        "useRunnerUp": "استخدام هذا",
+        "accepting": "جارٍ التسليم — يتم نقل السياق الكامل…",
+        "looking": "جارٍ البحث عن أفضل بديل…",
+        "toastTitle": "جارٍ التسليم إلى {agent} · {model}",
+        "toastDescription": "تم نقل السياق الكامل — لم يُفقد أي عمل.",
+        "noSuccessor": "لا يوجد بديل مُقاس متاح بعد.",
+        "noSuccessorWithReset": "لا يوجد بديل مُقاس متاح بعد ({resets}).",
+        "error": "تعذّر تجهيز عملية التسليم.",
+        "retry": "إعادة المحاولة",
+        "dismiss": "تجاهل"
       },
       "backgroundTasks": {
         "settledFallback": "انتهت مهمة الخلفية ({status})",
@@ -6590,6 +6610,8 @@
     "metricTokPerSec": "{value} tok/s",
     "metricErrorPct": "{value}% أخطاء",
     "metricContext": "{value} سياق",
-    "mentionHint": "{agent} · {model} — الأفضل في {category} ({metric}، n={sample})"
+    "mentionHint": "{agent} · {model} — الأفضل في {category} ({metric}، n={sample})",
+    "limited": "لا رموز متاحة",
+    "limitedUntil": "لا رموز متاحة حتى {value}"
   }
 }

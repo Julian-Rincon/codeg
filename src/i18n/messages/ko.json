@@ -3185,7 +3185,9 @@
           "permissionCue": "화면에서 권한이 필요합니다.",
           "permissionPendingCue": "화면에서 권한을 기다리는 중입니다.",
           "codeBlockNote": "코드 블록."
-        }
+        },
+        "modelLimited": "{resets}까지 토큰 없음",
+        "modelLimitedGeneric": "토큰 없음"
       },
       "messageQueue": {
         "addToQueue": "대기열에 추가",
@@ -3893,6 +3895,24 @@
         "toggleDetails": "세부 정보 전환",
         "dismiss": "닫기",
         "moreIncidents": "외 {count}건"
+      },
+      "modelFailover": {
+        "title": "{agent}의 토큰이 소진되었습니다",
+        "titleWithReset": "{agent}의 토큰이 소진되었습니다 ({resets})",
+        "continueWith": "{agent} · {model}(으)로 계속하기",
+        "wait": "기다리기",
+        "chooseAnother": "다른 모델 선택",
+        "runnerUpLabel": "또는: {agent} · {model}",
+        "useRunnerUp": "이 모델 사용",
+        "accepting": "인계 중 — 전체 컨텍스트를 전송하고 있습니다…",
+        "looking": "최적의 후속 모델을 찾는 중…",
+        "toastTitle": "{agent} · {model}(으)로 인계 중",
+        "toastDescription": "전체 컨텍스트가 전송되었습니다 — 작업 내용이 손실되지 않았습니다.",
+        "noSuccessor": "아직 측정된 후속 모델이 없습니다.",
+        "noSuccessorWithReset": "아직 측정된 후속 모델이 없습니다 ({resets}).",
+        "error": "인계를 준비하지 못했습니다.",
+        "retry": "다시 시도",
+        "dismiss": "닫기"
       },
       "backgroundTasks": {
         "settledFallback": "백그라운드 작업이 종료되었습니다 ({status})",
@@ -6590,6 +6610,8 @@
     "metricTokPerSec": "{value} tok/s",
     "metricErrorPct": "오류 {value}%",
     "metricContext": "컨텍스트 {value}",
-    "mentionHint": "{agent} · {model} — {category}에 최적 ({metric}, n={sample})"
+    "mentionHint": "{agent} · {model} — {category}에 최적 ({metric}, n={sample})",
+    "limited": "토큰 없음",
+    "limitedUntil": "{value}까지 토큰 없음"
   }
 }

@@ -3185,7 +3185,9 @@
           "permissionCue": "我需要你在屏幕上授权。",
           "permissionPendingCue": "正在等待你在屏幕上授权。",
           "codeBlockNote": "代码块。"
-        }
+        },
+        "modelLimited": "无可用 token，至 {resets} 恢复",
+        "modelLimitedGeneric": "无可用 token"
       },
       "messageQueue": {
         "addToQueue": "加入队列",
@@ -3893,6 +3895,24 @@
         "toggleDetails": "展开/收起详情",
         "dismiss": "忽略",
         "moreIncidents": "另 {count} 条"
+      },
+      "modelFailover": {
+        "title": "{agent} 的 token 已用尽",
+        "titleWithReset": "{agent} 的 token 已用尽（{resets}）",
+        "continueWith": "继续使用 {agent} · {model}",
+        "wait": "等待",
+        "chooseAnother": "选择其他模型",
+        "runnerUpLabel": "或者：{agent} · {model}",
+        "useRunnerUp": "使用此模型",
+        "accepting": "正在交接 — 传输完整上下文…",
+        "looking": "正在寻找最佳后继模型…",
+        "toastTitle": "正在交接给 {agent} · {model}",
+        "toastDescription": "完整上下文已传输 — 没有丢失任何工作。",
+        "noSuccessor": "暂无已测评的后继模型。",
+        "noSuccessorWithReset": "暂无已测评的后继模型（{resets}）。",
+        "error": "无法准备交接。",
+        "retry": "重试",
+        "dismiss": "关闭"
       },
       "backgroundTasks": {
         "settledFallback": "后台任务已结束（{status}）",
@@ -6590,6 +6610,8 @@
     "metricTokPerSec": "{value} tok/s",
     "metricErrorPct": "错误率{value}%",
     "metricContext": "上下文{value}",
-    "mentionHint": "{agent} · {model} — 最擅长{category}（{metric}，n={sample}）"
+    "mentionHint": "{agent} · {model} — 最擅长{category}（{metric}，n={sample}）",
+    "limited": "无可用 token",
+    "limitedUntil": "无可用 token，至 {value} 恢复"
   }
 }

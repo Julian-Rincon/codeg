@@ -489,6 +489,21 @@ where
         if let AcpEvent::SessionConfigOptions { config_options } = &payload {
             crate::acp::model_catalog::record_seen(s.agent_type, config_options);
         }
+        // Same choke point, same cheap-sync-check-then-spawned-write shape,
+        // for model quota failover (see `acp::model_limits`). A `Model`-scoped
+        // hit needs the model active on THIS connection right now — read from
+        // `s.config_options` before it (or the connection) can change.
+        if let Some(hit) = crate::acp::model_limits::detect_limit(s.agent_type, &payload) {
+            let model = match hit.scope {
+                crate::acp::model_limits::LimitScope::Account => None,
+                crate::acp::model_limits::LimitScope::Model => {
+                    crate::acp::connection::current_model_id_from_opts(
+                        s.config_options.as_deref().unwrap_or(&[]),
+                    )
+                }
+            };
+            crate::acp::model_limits::record_hit(s.agent_type, hit, model);
+        }
         s.event_seq += 1;
         let envelope = Arc::new(EventEnvelope {
             seq: s.event_seq,

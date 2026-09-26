@@ -30,6 +30,7 @@ pub mod model_scorecard;
 pub mod office_tools;
 pub mod office_watch_proxy;
 pub mod pet;
+pub mod phantom;
 pub mod project_boot;
 pub mod question;
 pub mod quick_messages;

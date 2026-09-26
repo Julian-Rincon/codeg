@@ -3185,7 +3185,9 @@
           "permissionCue": "Ich brauche deine Freigabe auf dem Bildschirm.",
           "permissionPendingCue": "Warte auf deine Freigabe auf dem Bildschirm.",
           "codeBlockNote": "Codeblock."
-        }
+        },
+        "modelLimited": "Keine Tokens bis {resets}",
+        "modelLimitedGeneric": "Keine Tokens"
       },
       "messageQueue": {
         "addToQueue": "Zur Warteschlange",
@@ -3893,6 +3895,24 @@
         "toggleDetails": "Details umschalten",
         "dismiss": "Schließen",
         "moreIncidents": "+{count} weitere"
+      },
+      "modelFailover": {
+        "title": "{agent} hat keine Tokens mehr",
+        "titleWithReset": "{agent} hat keine Tokens mehr ({resets})",
+        "continueWith": "Weiter mit {agent} · {model}",
+        "wait": "Warten",
+        "chooseAnother": "Anderes wählen",
+        "runnerUpLabel": "Oder: {agent} · {model}",
+        "useRunnerUp": "Dieses verwenden",
+        "accepting": "Übergabe läuft — vollständiger Kontext wird übertragen…",
+        "looking": "Suche nach dem besten Nachfolger…",
+        "toastTitle": "Übergabe an {agent} · {model} läuft",
+        "toastDescription": "Vollständiger Kontext übertragen — nichts ging verloren.",
+        "noSuccessor": "Noch kein gemessener Nachfolger verfügbar.",
+        "noSuccessorWithReset": "Noch kein gemessener Nachfolger verfügbar ({resets}).",
+        "error": "Übergabe konnte nicht vorbereitet werden.",
+        "retry": "Erneut versuchen",
+        "dismiss": "Verwerfen"
       },
       "backgroundTasks": {
         "settledFallback": "Hintergrundaufgabe beendet ({status})",
@@ -6590,6 +6610,8 @@
     "metricTokPerSec": "{value} Tok/s",
     "metricErrorPct": "{value}% Fehler",
     "metricContext": "{value} Kontext",
-    "mentionHint": "{agent} · {model} — am besten bei {category} ({metric}, n={sample})"
+    "mentionHint": "{agent} · {model} — am besten bei {category} ({metric}, n={sample})",
+    "limited": "Keine Tokens",
+    "limitedUntil": "Keine Tokens bis {value}"
   }
 }

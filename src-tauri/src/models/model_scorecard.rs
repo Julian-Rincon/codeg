@@ -48,6 +48,19 @@ pub struct ModelScorecardEntry {
     /// `true` when `turns < 20` — not a judgment on the model, a caveat on the
     /// number: this row's averages are one or two long sessions, not a trend.
     pub low_sample: bool,
+    /// `true` when `acp::model_limits` currently has this `(agent_type,
+    /// model)` marked as out of quota (an `account`-scoped hit covers every
+    /// model of that agent; a `model`-scoped one covers only this row).
+    /// Already-expired hits are dropped before this is computed, so `true`
+    /// here always means "still in the lockout window". A limited model is
+    /// excluded from every `best_for` ranking regardless of its measured
+    /// numbers — see `commands::model_scorecard::is_ranking_eligible`.
+    pub limited: bool,
+    /// RFC 3339 timestamp the limit is expected to clear, when known.
+    /// `None` when `limited` is `false`, or when it's `true` but codeg never
+    /// parsed a reset time out of the failure message (still lazily expired
+    /// after a default window — see `acp::model_limits`).
+    pub limit_resets_at: Option<String>,
 }
 
 #[derive(Debug, Clone, Copy, Default, Serialize)]

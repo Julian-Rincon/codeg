@@ -3,6 +3,7 @@
 import { useMemo, useState } from "react"
 import { ChevronDown } from "lucide-react"
 import { useTranslations } from "next-intl"
+import { cn } from "@/lib/utils"
 import { Button } from "@/components/ui/button"
 import {
   Popover,
@@ -13,7 +14,11 @@ import { ModelOptionList } from "@/components/chat/model-option-list"
 import { SelectorTooltip } from "@/components/chat/selector-tooltip"
 import { useScrollbarSafeDismiss } from "@/hooks/use-scrollbar-safe-dismiss"
 import type { ModelOptionGroup } from "@/lib/model-config-groups"
-import { useModelScorecard } from "@/lib/model-scorecard"
+import {
+  findModelScore,
+  isModelLimited,
+  useModelScorecard,
+} from "@/lib/model-scorecard"
 import type { AgentType, SessionConfigOptionInfo } from "@/lib/types"
 
 interface ModelOptionPickerProps {
@@ -58,6 +63,12 @@ export function ModelOptionPicker({
     }
     return currentValue
   }, [groups, currentValue])
+  // Subtle warning cue on the trigger itself: the CURRENTLY selected model
+  // ran out of tokens, not just some row in the (possibly closed) list.
+  const currentEntry = agentType
+    ? findModelScore(scorecard, agentType, currentValue, currentLabel)
+    : null
+  const currentLimited = isModelLimited(currentEntry)
 
   if (!kind) return null
 
@@ -76,13 +87,20 @@ export function ModelOptionPicker({
             variant="ghost"
             size="xs"
             aria-label={
-              currentLabel ? `${option.name}: ${currentLabel}` : option.name
+              currentLabel
+                ? currentLimited
+                  ? `${option.name}: ${currentLabel} (${t("modelLimitedGeneric")})`
+                  : `${option.name}: ${currentLabel}`
+                : option.name
             }
             className="phantom-model-trigger min-w-0 gap-1.5 px-1 text-muted-foreground"
           >
             <span
               aria-hidden
-              className="size-1.5 shrink-0 rounded-full bg-[var(--phantom-accent)]"
+              className={cn(
+                "size-1.5 shrink-0 rounded-full",
+                currentLimited ? "bg-amber-500" : "bg-[var(--phantom-accent)]"
+              )}
             />
             <span className="max-w-[10rem] truncate">{currentLabel}</span>
             <ChevronDown className="size-3 shrink-0 text-muted-foreground" />

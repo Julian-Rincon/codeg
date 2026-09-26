@@ -68,6 +68,15 @@ export interface ModelScorecardEntry {
   /** Too few turns to trust the averages above — the UI must show "not
    *  enough data" instead of any of them, never a number computed on ~1 turn. */
   low_sample: boolean
+  /** True when the backend currently sees this agent/model as quota/rate
+   *  limited (mirrors `POST /api/phantom_successor`'s `limited` signal onto
+   *  every scorecard row for that model). Optional — a server that predates
+   *  this field omits it, treated as `false`. Drives the model picker's muted
+   *  "Out of tokens" chip; the model stays selectable either way. */
+  limited?: boolean
+  /** ISO timestamp the limit is expected to clear, or `null`/absent when
+   *  there's no estimate. Optional for the same reason as `limited`. */
+  limit_resets_at?: string | null
 }
 
 export interface ModelScorecardBestForRunnerUp {
@@ -192,6 +201,30 @@ export function hasScorecardData(
   entry: ModelScorecardEntry | null | undefined
 ): entry is ModelScorecardEntry {
   return !!entry && !entry.low_sample && entry.turns > 0
+}
+
+/** Whether the scorecard currently reports this model as quota/rate limited.
+ *  `undefined`/missing (an older server) reads as not limited. */
+export function isModelLimited(
+  entry: ModelScorecardEntry | null | undefined
+): boolean {
+  return entry?.limited === true
+}
+
+/** Short locale-aware clock time for a `limit_resets_at` ISO timestamp
+ *  (e.g. "5:00 AM" / "05:00"), or `null` when it's missing/unparseable — the
+ *  caller falls back to a generic label with no time. */
+export function formatLimitResetTime(
+  isoTimestamp: string | null | undefined,
+  locale?: string
+): string | null {
+  if (!isoTimestamp) return null
+  const date = new Date(isoTimestamp)
+  if (Number.isNaN(date.getTime())) return null
+  return new Intl.DateTimeFormat(locale ?? "en-US", {
+    hour: "numeric",
+    minute: "2-digit",
+  }).format(date)
 }
 
 // ── Formatters ───────────────────────────────────────────────────────────

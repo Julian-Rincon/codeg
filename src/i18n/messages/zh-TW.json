@@ -3185,7 +3185,9 @@
           "permissionCue": "我需要你在畫面上授權。",
           "permissionPendingCue": "正在等待你在畫面上授權。",
           "codeBlockNote": "程式碼區塊。"
-        }
+        },
+        "modelLimited": "無可用 token，至 {resets} 恢復",
+        "modelLimitedGeneric": "無可用 token"
       },
       "messageQueue": {
         "addToQueue": "加入佇列",
@@ -3893,6 +3895,24 @@
         "toggleDetails": "展開/收合詳情",
         "dismiss": "忽略",
         "moreIncidents": "另 {count} 條"
+      },
+      "modelFailover": {
+        "title": "{agent} 的 token 已用盡",
+        "titleWithReset": "{agent} 的 token 已用盡（{resets}）",
+        "continueWith": "繼續使用 {agent} · {model}",
+        "wait": "等待",
+        "chooseAnother": "選擇其他模型",
+        "runnerUpLabel": "或者：{agent} · {model}",
+        "useRunnerUp": "使用此模型",
+        "accepting": "交接中 — 正在傳輸完整內容脈絡…",
+        "looking": "正在尋找最佳後繼模型…",
+        "toastTitle": "正在交接給 {agent} · {model}",
+        "toastDescription": "完整內容脈絡已傳輸 — 沒有遺失任何工作。",
+        "noSuccessor": "目前尚無已測評的後繼模型。",
+        "noSuccessorWithReset": "目前尚無已測評的後繼模型（{resets}）。",
+        "error": "無法準備交接。",
+        "retry": "重試",
+        "dismiss": "關閉"
       },
       "backgroundTasks": {
         "settledFallback": "背景任務已結束（{status}）",
@@ -6590,6 +6610,8 @@
     "metricTokPerSec": "{value} tok/s",
     "metricErrorPct": "錯誤率{value}%",
     "metricContext": "上下文{value}",
-    "mentionHint": "{agent} · {model} — 最擇長{category}（{metric}，n={sample}）"
+    "mentionHint": "{agent} · {model} — 最擇長{category}（{metric}，n={sample}）",
+    "limited": "無可用 token",
+    "limitedUntil": "無可用 token，至 {value} 恢復"
   }
 }

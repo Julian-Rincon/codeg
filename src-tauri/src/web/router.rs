@@ -1489,6 +1489,14 @@ pub fn build_router(
             "/model_scorecard",
             post(handlers::model_scorecard::model_scorecard),
         )
+        .route(
+            "/phantom_successor",
+            post(handlers::phantom::phantom_successor),
+        )
+        .route(
+            "/phantom_handoff",
+            post(handlers::phantom::phantom_handoff),
+        )
         // ─── Work tasks ───
         .route("/work_task_list", post(handlers::work_task::work_task_list))
         .route("/work_task_get", post(handlers::work_task::work_task_get))

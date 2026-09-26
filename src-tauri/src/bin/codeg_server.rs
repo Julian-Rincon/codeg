@@ -252,6 +252,9 @@ async fn async_main() -> ExitCode {
     // any connection can spawn, so the first `SessionConfigOptions` report of
     // the run is never dropped for lacking a database to write through.
     codeg_lib::acp::model_catalog::init(db.conn.clone());
+    // Same reasoning as the catalog sink above, for model quota failover
+    // detection (see `acp::model_limits`).
+    codeg_lib::acp::model_limits::init(db.conn.clone());
 
     // Create shared broadcaster + internal ACP event bus.
     let broadcaster = Arc::new(WebEventBroadcaster::new());

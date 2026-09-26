@@ -9,6 +9,7 @@ pub mod message;
 pub mod model_scorecard;
 pub mod model_provider;
 pub mod pet;
+pub mod phantom;
 pub mod quick_message;
 pub mod remote_workspace_connection;
 pub mod system;
@@ -40,6 +41,10 @@ pub use message::{
 pub use model_scorecard::{
     BestForEntry, CategoryCounts, CategoryErrorPct, ModelScorecard, ModelScorecardEntry, ModelSpec,
     RunnerUp,
+};
+pub use phantom::{
+    PhantomHandoffResponse, PhantomLimitedInfo, PhantomSuccessorCandidate,
+    PhantomSuccessorMetrics, PhantomSuccessorResponse,
 };
 pub use quick_message::QuickMessageInfo;
 pub use remote_workspace_connection::{

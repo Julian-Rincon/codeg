@@ -3185,7 +3185,9 @@
           "permissionCue": "Necesito tu permiso en pantalla.",
           "permissionPendingCue": "Esperando tu permiso en pantalla.",
           "codeBlockNote": "Bloque de código."
-        }
+        },
+        "modelLimited": "Sin tokens hasta {resets}",
+        "modelLimitedGeneric": "Sin tokens"
       },
       "messageQueue": {
         "addToQueue": "Agregar a la cola",
@@ -3893,6 +3895,24 @@
         "toggleDetails": "Mostrar u ocultar detalles",
         "dismiss": "Descartar",
         "moreIncidents": "+{count} más"
+      },
+      "modelFailover": {
+        "title": "{agent} se quedó sin tokens",
+        "titleWithReset": "{agent} se quedó sin tokens ({resets})",
+        "continueWith": "Continuar con {agent} · {model}",
+        "wait": "Esperar",
+        "chooseAnother": "Elegir otro",
+        "runnerUpLabel": "O bien: {agent} · {model}",
+        "useRunnerUp": "Usar este",
+        "accepting": "Haciendo el relevo — transfiriendo el contexto completo…",
+        "looking": "Buscando el mejor sucesor…",
+        "toastTitle": "Relevo en curso con {agent} · {model}",
+        "toastDescription": "Contexto completo transferido — no se perdió nada.",
+        "noSuccessor": "Todavía no hay un sucesor medido disponible.",
+        "noSuccessorWithReset": "Todavía no hay un sucesor medido disponible ({resets}).",
+        "error": "No se pudo preparar el relevo.",
+        "retry": "Reintentar",
+        "dismiss": "Descartar"
       },
       "backgroundTasks": {
         "settledFallback": "Tarea en segundo plano finalizada ({status})",
@@ -6590,6 +6610,8 @@
     "metricTokPerSec": "{value} tok/s",
     "metricErrorPct": "{value}% errores",
     "metricContext": "{value} ctx",
-    "mentionHint": "{agent} · {model} — mejor en {category} ({metric}, n={sample})"
+    "mentionHint": "{agent} · {model} — mejor en {category} ({metric}, n={sample})",
+    "limited": "Sin tokens",
+    "limitedUntil": "Sin tokens hasta {value}"
   }
 }

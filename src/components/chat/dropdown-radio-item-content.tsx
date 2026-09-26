@@ -23,6 +23,11 @@ interface DropdownRadioItemContentProps {
    *  `available === false` for this model — the model stays listed (never
    *  hidden), just visibly flagged. */
   unavailableLabel?: string | null
+  /** Localized "out of tokens" chip text, shown when the scorecard reports
+   *  `limited === true` for this model (a temporary quota/rate-limit hit,
+   *  distinct from `unavailableLabel`'s permanent "not installed/reachable").
+   *  The row stays selectable — the user decides whether to wait it out. */
+  limitedLabel?: string | null
   /** Muted line under the description: either the measured metric summary
    *  ("14s/turn · 56 tok/s · 3% errors · 262k ctx") or a localized "not enough
    *  data yet" note. Absent when there's nothing to show at all. */
@@ -35,11 +40,13 @@ export function DropdownRadioItemContent({
   recommendedLabel,
   scorecardBadges,
   unavailableLabel,
+  limitedLabel,
   scorecardLine,
 }: DropdownRadioItemContentProps) {
   const normalizedDescription = description?.trim()
   const badge = recommendedLabel?.trim()
   const unavailable = unavailableLabel?.trim()
+  const limited = limitedLabel?.trim()
   const strengthBadges = (scorecardBadges ?? []).filter((b) => b.trim())
   const line = scorecardLine?.trim()
 
@@ -69,6 +76,14 @@ export function DropdownRadioItemContent({
             className="px-1 text-3xs font-normal text-muted-foreground"
           >
             {unavailable}
+          </Badge>
+        ) : null}
+        {limited ? (
+          <Badge
+            variant="outline"
+            className="px-1 text-3xs font-normal text-amber-600 dark:text-amber-400"
+          >
+            {limited}
           </Badge>
         ) : null}
       </div>

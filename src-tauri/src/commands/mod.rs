@@ -37,6 +37,8 @@ pub mod model_provider;
 pub mod model_scorecard;
 pub mod office_tools;
 pub mod open_in;
+pub mod phantom_handoff;
+pub mod phantom_successor;
 #[cfg(feature = "tauri-runtime")]
 pub mod notification;
 pub mod pet;

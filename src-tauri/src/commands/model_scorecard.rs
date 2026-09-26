@@ -53,7 +53,8 @@ pub async fn model_scorecard_core(
         .await
         .map_err(AppCommandError::from)?;
     let catalog = crate::acp::model_catalog::load_all(conn).await;
-    Ok(build_scorecard(&rows, &catalog, Utc::now()))
+    let limits = crate::acp::model_limits::load_all(conn).await;
+    Ok(build_scorecard(&rows, &catalog, &limits, Utc::now()))
 }
 
 /// A compact, plain-English summary of the scorecard for an agent (or a human)
@@ -164,6 +165,7 @@ struct ScoredModel {
 pub(crate) fn build_scorecard(
     rows: &[UsageFactRow],
     catalog: &HashMap<String, StoredCatalog>,
+    limits: &HashMap<String, crate::acp::model_limits::StoredLimit>,
     now: DateTime<Utc>,
 ) -> ModelScorecard {
     let mut aggs: HashMap<(String, String), ModelAgg> = HashMap::new();
@@ -199,7 +201,7 @@ pub(crate) fn build_scorecard(
             let agg = aggs
                 .get(&(agent_type.clone(), model.clone()))
                 .unwrap_or(&empty);
-            score_one(agent_type, model, agg, catalog)
+            score_one(agent_type, model, agg, catalog, limits)
         })
         .collect();
 
@@ -268,11 +270,35 @@ fn catalog_entry_matches(model_id: &str, entry: &ModelCatalogEntry) -> bool {
     tail == slug || tail.ends_with(&format!("-{slug}"))
 }
 
+/// The limit entry (if any) that currently applies to `(agent_type, model)`.
+/// `limits` is the already-expiry-filtered map from
+/// [`crate::acp::model_limits::load_all`], keyed by agent wire type — an
+/// `account`-scoped entry applies to every model of that agent, a
+/// `model`-scoped one only to its own `model` field (compared
+/// case-insensitively, trimmed — the same normalization `current_model_id_from_opts`
+/// already applies before storing it).
+fn limit_for<'a>(
+    agent_type: &str,
+    model: &str,
+    limits: &'a HashMap<String, crate::acp::model_limits::StoredLimit>,
+) -> Option<&'a crate::acp::model_limits::StoredLimit> {
+    let entry = limits.get(agent_type)?;
+    let applies = match entry.scope {
+        crate::acp::model_limits::LimitScope::Account => true,
+        crate::acp::model_limits::LimitScope::Model => entry
+            .model
+            .as_deref()
+            .is_some_and(|m| m.trim().eq_ignore_ascii_case(model.trim())),
+    };
+    applies.then_some(entry)
+}
+
 fn score_one(
     agent_type: String,
     model: String,
     agg: &ModelAgg,
     catalog: &HashMap<String, StoredCatalog>,
+    limits: &HashMap<String, crate::acp::model_limits::StoredLimit>,
 ) -> ScoredModel {
     let catalog_entry = catalog
         .get(&agent_type)
@@ -312,6 +338,10 @@ fn score_one(
         }
     };
 
+    let limit_hit = limit_for(&agent_type, &model, limits);
+    let limited = limit_hit.is_some();
+    let limit_resets_at = limit_hit.and_then(|l| l.resets_at).map(|t| t.to_rfc3339());
+
     let entry = ModelScorecardEntry {
         agent_type,
         model: model.clone(),
@@ -344,6 +374,8 @@ fn score_one(
         spec: spec_for(&model),
         strengths: Vec::new(),
         low_sample: agg.turns < LOW_SAMPLE_THRESHOLD,
+        limited,
+        limit_resets_at,
     };
     ScoredModel { entry, timed_turns }
 }
@@ -433,6 +465,11 @@ fn is_ranking_eligible(entry: &ModelScorecardEntry, now: DateTime<Utc>) -> bool 
     if entry.model.is_empty() || entry.model == "default" {
         return false;
     }
+    // A model out of quota is never recommended, however good its history —
+    // it would just fail the handoff it was picked for.
+    if entry.limited {
+        return false;
+    }
     if entry.available == Some(false) {
         return false;
     }
@@ -497,7 +534,11 @@ fn rank_candidates(
 
 /// Upper bound of the 95% Wilson score interval for an error rate given as
 /// a percentage over `n` trials, returned as a percentage.
-fn wilson_upper_pct(error_pct: f64, n: u64) -> f64 {
+///
+/// `pub(crate)`: also used by `commands::phantom_successor` to rank failover
+/// candidates on the same measured-error basis as `best_for`, rather than
+/// duplicating the math.
+pub(crate) fn wilson_upper_pct(error_pct: f64, n: u64) -> f64 {
     if n == 0 {
         return 100.0;
     }
@@ -768,6 +809,24 @@ fn format_routing_guide(card: &ModelScorecard) -> String {
         out.push('\n');
     }
 
+    // Models currently out of quota — called out explicitly so a routing
+    // consumer (human or the `best_for` reader itself) never has to notice
+    // their absence from the recommendations above by itself. `best_for`
+    // already excludes these (see `is_ranking_eligible`); this line is why.
+    let limited: Vec<&ModelScorecardEntry> = card.models.iter().filter(|m| m.limited).collect();
+    if !limited.is_empty() {
+        out.push_str("Limited (excluded from recommendations): ");
+        let parts: Vec<String> = limited
+            .iter()
+            .map(|m| match &m.limit_resets_at {
+                Some(t) => format!("{}/{} (until {t})", m.agent_type, m.model),
+                None => format!("{}/{}", m.agent_type, m.model),
+            })
+            .collect();
+        out.push_str(&parts.join("; "));
+        out.push('\n');
+    }
+
     truncate_to_chars(&out, 1500)
 }
 
@@ -918,7 +977,7 @@ mod tests {
                 seen_at: ts("2026-09-20T00:00:00Z"),
             },
         );
-        let card = build_scorecard(&rows, &catalog, ts("2026-09-24T00:00:00Z"));
+        let card = build_scorecard(&rows, &catalog, &HashMap::new(), ts("2026-09-24T00:00:00Z"));
         assert_eq!(card.models.len(), 2, "used model + catalog-only model");
 
         let used = card
@@ -946,7 +1005,7 @@ mod tests {
     fn availability_is_none_when_the_agents_catalog_was_never_seen() {
         let rows = vec![row("hermes", Some("gpt-4o"), "2026-09-01T00:00:00Z")];
         let catalog = HashMap::new();
-        let card = build_scorecard(&rows, &catalog, ts("2026-09-24T00:00:00Z"));
+        let card = build_scorecard(&rows, &catalog, &HashMap::new(), ts("2026-09-24T00:00:00Z"));
         assert_eq!(card.models[0].available, None);
     }
 
@@ -968,7 +1027,7 @@ mod tests {
                 seen_at: ts("2026-09-20T00:00:00Z"),
             },
         );
-        let card = build_scorecard(&rows, &catalog, ts("2026-09-24T00:00:00Z"));
+        let card = build_scorecard(&rows, &catalog, &HashMap::new(), ts("2026-09-24T00:00:00Z"));
         assert_eq!(card.models[0].available, Some(false));
     }
 
@@ -984,7 +1043,7 @@ mod tests {
                 r
             })
             .collect();
-        let card = build_scorecard(&rows, &HashMap::new(), ts("2026-09-24T00:00:00Z"));
+        let card = build_scorecard(&rows, &HashMap::new(), &HashMap::new(), ts("2026-09-24T00:00:00Z"));
         assert_eq!(card.models.len(), 1);
         assert_eq!(card.models[0].model, "");
         assert_eq!(card.models[0].turns, 25);
@@ -1018,7 +1077,7 @@ mod tests {
         let now = ts("2026-09-24T00:00:00Z");
         let mut rows = rows_with_edit_calls("model-a", 20, 4, now); // 20% errors
         rows.extend(rows_with_edit_calls("model-b", 20, 2, now)); // 10% errors
-        let card = build_scorecard(&rows, &HashMap::new(), now);
+        let card = build_scorecard(&rows, &HashMap::new(), &HashMap::new(), now);
         let edit = card
             .best_for
             .iter()
@@ -1035,7 +1094,7 @@ mod tests {
     fn edit_category_omitted_below_threshold() {
         let now = ts("2026-09-24T00:00:00Z");
         let rows = rows_with_edit_calls("model-a", 19, 0, now);
-        let card = build_scorecard(&rows, &HashMap::new(), now);
+        let card = build_scorecard(&rows, &HashMap::new(), &HashMap::new(), now);
         assert!(card.best_for.iter().all(|b| b.category != "edit"));
     }
 
@@ -1045,7 +1104,7 @@ mod tests {
         // Both at 0% errors; model-b has more calls and should win the tie.
         let mut rows = rows_with_edit_calls("model-a", 20, 0, now);
         rows.extend(rows_with_edit_calls("model-b", 30, 0, now));
-        let card = build_scorecard(&rows, &HashMap::new(), now);
+        let card = build_scorecard(&rows, &HashMap::new(), &HashMap::new(), now);
         let edit = card.best_for.iter().find(|b| b.category == "edit").unwrap();
         assert_eq!(edit.model, "model-b");
     }
@@ -1055,7 +1114,7 @@ mod tests {
         let old = ts("2026-01-01T00:00:00Z");
         let now = ts("2026-09-24T00:00:00Z");
         let rows = rows_with_edit_calls("stale-model", 20, 0, old);
-        let card = build_scorecard(&rows, &HashMap::new(), now);
+        let card = build_scorecard(&rows, &HashMap::new(), &HashMap::new(), now);
         assert!(card.best_for.iter().all(|b| b.model != "stale-model"));
     }
 
@@ -1075,7 +1134,7 @@ mod tests {
                 seen_at: now,
             },
         );
-        let card = build_scorecard(&rows, &catalog, now);
+        let card = build_scorecard(&rows, &catalog, &HashMap::new(), now);
         let edit = card.best_for.iter().find(|b| b.category == "edit");
         assert!(
             edit.is_some(),
@@ -1100,7 +1159,7 @@ mod tests {
         };
         let mut rows = make("slow-model", 5000);
         rows.extend(make("fast-model", 1000));
-        let card = build_scorecard(&rows, &HashMap::new(), now);
+        let card = build_scorecard(&rows, &HashMap::new(), &HashMap::new(), now);
         let explore = card
             .best_for
             .iter()
@@ -1122,7 +1181,7 @@ mod tests {
                 r
             })
             .collect();
-        let card = build_scorecard(&rows, &HashMap::new(), now);
+        let card = build_scorecard(&rows, &HashMap::new(), &HashMap::new(), now);
         assert!(card.best_for.iter().all(|b| b.category != "fast"));
     }
 
@@ -1142,7 +1201,7 @@ mod tests {
                 r
             })
             .collect();
-        let card = build_scorecard(&rows, &HashMap::new(), now);
+        let card = build_scorecard(&rows, &HashMap::new(), &HashMap::new(), now);
         let free = card.best_for.iter().find(|b| b.category == "free");
         assert!(
             free.is_some(),
@@ -1163,11 +1222,89 @@ mod tests {
                 r
             })
             .collect();
-        let card = build_scorecard(&rows, &HashMap::new(), now);
+        let card = build_scorecard(&rows, &HashMap::new(), &HashMap::new(), now);
         assert!(card
             .best_for
             .iter()
             .all(|b| b.category != "free" || b.model != "claude-opus-5"));
+    }
+
+    // ─── limits integration (`acp::model_limits`) ─────────────────────────
+
+    fn stored_limit(
+        scope: crate::acp::model_limits::LimitScope,
+        model: Option<&str>,
+        resets_at: Option<DateTime<Utc>>,
+    ) -> crate::acp::model_limits::StoredLimit {
+        crate::acp::model_limits::StoredLimit {
+            scope,
+            model: model.map(str::to_string),
+            message: "hit".to_string(),
+            hit_at: ts("2026-09-24T00:00:00Z"),
+            resets_hint: None,
+            resets_at,
+        }
+    }
+
+    #[test]
+    fn account_scoped_limit_marks_every_model_of_that_agent_limited_and_ineligible() {
+        let now = ts("2026-09-24T00:00:00Z");
+        let mut rows = rows_with_edit_calls("model-a", 20, 0, now);
+        rows.extend(rows_with_edit_calls("model-b", 20, 0, now));
+        let mut limits = HashMap::new();
+        limits.insert(
+            "claude_code".to_string(),
+            stored_limit(crate::acp::model_limits::LimitScope::Account, None, None),
+        );
+        let card = build_scorecard(&rows, &HashMap::new(), &limits, now);
+        assert!(card.models.iter().all(|m| m.limited));
+        assert!(
+            card.best_for.iter().all(|b| b.category != "edit"),
+            "an account-wide limit takes every candidate out of ranking"
+        );
+    }
+
+    #[test]
+    fn model_scoped_limit_only_affects_its_own_model() {
+        let now = ts("2026-09-24T00:00:00Z");
+        let mut rows = rows_with_edit_calls("model-a", 20, 4, now); // 20% errors
+        rows.extend(rows_with_edit_calls("model-b", 20, 0, now)); // 0% errors
+        let resets = ts("2026-09-25T05:00:00Z");
+        let mut limits = HashMap::new();
+        limits.insert(
+            "claude_code".to_string(),
+            stored_limit(
+                crate::acp::model_limits::LimitScope::Model,
+                Some("model-b"),
+                Some(resets),
+            ),
+        );
+        let card = build_scorecard(&rows, &HashMap::new(), &limits, now);
+        let a = card.models.iter().find(|m| m.model == "model-a").unwrap();
+        let b = card.models.iter().find(|m| m.model == "model-b").unwrap();
+        assert!(!a.limited);
+        assert!(b.limited);
+        assert_eq!(b.limit_resets_at.as_deref(), Some(resets.to_rfc3339().as_str()));
+        // model-b would otherwise win on error rate — the limit takes it out,
+        // leaving model-a (worse numbers, but available) as the only candidate.
+        let edit = card.best_for.iter().find(|b| b.category == "edit").unwrap();
+        assert_eq!(edit.model, "model-a");
+    }
+
+    #[test]
+    fn routing_guide_text_lists_limited_models_and_excludes_them_from_recommendations() {
+        let now = ts("2026-09-24T00:00:00Z");
+        let rows = rows_with_edit_calls("model-a", 20, 0, now);
+        let mut limits = HashMap::new();
+        limits.insert(
+            "claude_code".to_string(),
+            stored_limit(crate::acp::model_limits::LimitScope::Account, None, None),
+        );
+        let card = build_scorecard(&rows, &HashMap::new(), &limits, now);
+        assert!(card.best_for.iter().all(|b| b.category != "edit"));
+        let text = format_routing_guide(&card);
+        assert!(text.contains("Limited"));
+        assert!(text.contains("claude_code/model-a"));
     }
 
     #[test]
@@ -1195,7 +1332,7 @@ mod tests {
                 rows.push(r);
             }
         }
-        let card = build_scorecard(&rows, &HashMap::new(), now);
+        let card = build_scorecard(&rows, &HashMap::new(), &HashMap::new(), now);
         let text = format_routing_guide(&card);
         assert!(text.chars().count() <= 1500);
     }
@@ -1209,7 +1346,7 @@ mod tests {
             Some("claude-sonnet-5"),
             "2026-09-01T00:00:00Z",
         )];
-        let card = build_scorecard(&rows, &HashMap::new(), ts("2026-09-24T00:00:00Z"));
+        let card = build_scorecard(&rows, &HashMap::new(), &HashMap::new(), ts("2026-09-24T00:00:00Z"));
         let json = serde_json::to_value(&card).expect("serialize");
         assert!(json.get("generated_at").is_some());
         assert!(json.get("models").is_some());
@@ -1236,6 +1373,8 @@ mod tests {
             "spec",
             "strengths",
             "low_sample",
+            "limited",
+            "limit_resets_at",
         ] {
             assert!(model.get(field).is_some(), "missing field {field}");
         }

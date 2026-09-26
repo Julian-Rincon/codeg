@@ -1632,7 +1632,10 @@ fn current_config_option_values(
         .collect()
 }
 
-fn current_model_id_from_opts(opts: &[SessionConfigOptionInfo]) -> Option<String> {
+// `pub(crate)`: also read from `web::event_bridge`'s `emit_with_state_gated`
+// choke point, which needs the connection's active model at the moment a
+// `model_limits::detect_limit` hit is scope-`Model` (see that call site).
+pub(crate) fn current_model_id_from_opts(opts: &[SessionConfigOptionInfo]) -> Option<String> {
     opts.iter()
         .find(|o| o.category.as_deref() == Some("model"))
         .and_then(|o| {

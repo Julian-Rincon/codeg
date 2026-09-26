@@ -3185,7 +3185,9 @@
           "permissionCue": "Preciso da sua permissão na tela.",
           "permissionPendingCue": "Aguardando sua permissão na tela.",
           "codeBlockNote": "Bloco de código."
-        }
+        },
+        "modelLimited": "Sem tokens até {resets}",
+        "modelLimitedGeneric": "Sem tokens"
       },
       "messageQueue": {
         "addToQueue": "Adicionar à fila",
@@ -3893,6 +3895,24 @@
         "toggleDetails": "Alternar detalhes",
         "dismiss": "Dispensar",
         "moreIncidents": "+{count} mais"
+      },
+      "modelFailover": {
+        "title": "{agent} ficou sem tokens",
+        "titleWithReset": "{agent} ficou sem tokens ({resets})",
+        "continueWith": "Continuar com {agent} · {model}",
+        "wait": "Aguardar",
+        "chooseAnother": "Escolher outro",
+        "runnerUpLabel": "Ou: {agent} · {model}",
+        "useRunnerUp": "Usar este",
+        "accepting": "Transferindo — enviando o contexto completo…",
+        "looking": "Procurando o melhor sucessor…",
+        "toastTitle": "Transferência em andamento com {agent} · {model}",
+        "toastDescription": "Contexto completo transferido — nada foi perdido.",
+        "noSuccessor": "Ainda não há um sucessor medido disponível.",
+        "noSuccessorWithReset": "Ainda não há um sucessor medido disponível ({resets}).",
+        "error": "Não foi possível preparar a transferência.",
+        "retry": "Tentar novamente",
+        "dismiss": "Descartar"
       },
       "backgroundTasks": {
         "settledFallback": "Tarefa em segundo plano concluída ({status})",
@@ -6590,6 +6610,8 @@
     "metricTokPerSec": "{value} tok/s",
     "metricErrorPct": "{value}% de erros",
     "metricContext": "{value} ctx",
-    "mentionHint": "{agent} · {model} — melhor em {category} ({metric}, n={sample})"
+    "mentionHint": "{agent} · {model} — melhor em {category} ({metric}, n={sample})",
+    "limited": "Sem tokens",
+    "limitedUntil": "Sem tokens até {value}"
   }
 }
