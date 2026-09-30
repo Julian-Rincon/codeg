@@ -1,6 +1,6 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::future::Future;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use chrono::{DateTime, TimeZone, Utc};
@@ -10,16 +10,13 @@ use sea_orm::{
 };
 
 use crate::models::*;
+use crate::parsers::opencode_context_window::{ModelLimitSources, ModelRef};
 use crate::parsers::{folder_name_from_path, truncate_str, AgentParser, ParseError};
 
 pub struct OpenCodeParser {
     base_dir: PathBuf,
-}
-
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-enum OpenCodeSchema {
-    Legacy,
-    V2,
+    /// Where the context window of a session's model is looked up.
+    model_limits: ModelLimitSources,
 }
 
 impl Default for OpenCodeParser {
@@ -31,14 +28,24 @@ impl Default for OpenCodeParser {
 impl OpenCodeParser {
     pub fn new() -> Self {
         let base_dir = resolve_opencode_base_dir();
-        Self { base_dir }
+        Self {
+            base_dir,
+            model_limits: ModelLimitSources::from_env(),
+        }
     }
 
     /// Test-only constructor that lets callers point the parser at a fixture
     /// directory containing an `opencode.db` SQLite file.
+    ///
+    /// It reads nothing else: no OpenCode config or catalog from the machine
+    /// running the test, so a context window comes only from the model-name
+    /// guess.
     #[cfg(any(test, feature = "test-utils"))]
     pub fn with_base_dir(base_dir: PathBuf) -> Self {
-        Self { base_dir }
+        Self {
+            base_dir,
+            model_limits: ModelLimitSources::default(),
+        }
     }
 
     fn sqlite_db_path(&self) -> PathBuf {
@@ -78,54 +85,6 @@ impl OpenCodeParser {
         .await?;
 
         Ok(conn)
-    }
-
-    async fn detect_sqlite_schema(conn: &DatabaseConnection) -> Result<OpenCodeSchema, ParseError> {
-        let rows = conn
-            .query_all(Statement::from_string(
-                DbBackend::Sqlite,
-                "SELECT name FROM sqlite_master WHERE type = 'table'".to_owned(),
-            ))
-            .await?;
-        let tables: HashSet<String> = rows
-            .iter()
-            .filter_map(|row| row.try_get::<String>("", "name").ok())
-            .map(|name| name.to_ascii_lowercase())
-            .collect();
-
-        // A V2 database can retain the old tables during migration. Prefer the
-        // current pair whenever both are present; only fall back to the legacy
-        // path when the V2 pair is absent.
-        if tables.contains("session_v2") && tables.contains("session_message") {
-            Ok(OpenCodeSchema::V2)
-        } else {
-            Ok(OpenCodeSchema::Legacy)
-        }
-    }
-
-    async fn list_conversations_dispatch(&self) -> Result<Vec<ConversationSummary>, ParseError> {
-        let conn = self.open_sqlite_connection().await?;
-        match Self::detect_sqlite_schema(&conn).await? {
-            OpenCodeSchema::Legacy => {
-                drop(conn);
-                self.list_conversations_from_sqlite().await
-            }
-            OpenCodeSchema::V2 => self.list_conversations_v2(&conn).await,
-        }
-    }
-
-    async fn get_conversation_dispatch(
-        &self,
-        conversation_id: &str,
-    ) -> Result<ConversationDetail, ParseError> {
-        let conn = self.open_sqlite_connection().await?;
-        match Self::detect_sqlite_schema(&conn).await? {
-            OpenCodeSchema::Legacy => {
-                drop(conn);
-                self.get_conversation_from_sqlite(conversation_id).await
-            }
-            OpenCodeSchema::V2 => self.get_conversation_v2(&conn, conversation_id).await,
-        }
     }
 
     fn parse_sqlite_summary_row(row: &QueryResult) -> Result<ConversationSummary, ParseError> {
@@ -169,95 +128,78 @@ impl OpenCodeParser {
         })
     }
 
+    fn parse_stored_summary_row(
+        row: &QueryResult,
+        store: SessionStore,
+    ) -> Result<StoredSummary, ParseError> {
+        Ok(StoredSummary {
+            summary: Self::parse_sqlite_summary_row(row)?,
+            updated_ms: row.try_get("", "updated_ms")?,
+            store,
+        })
+    }
+
     async fn list_conversations_from_sqlite(&self) -> Result<Vec<ConversationSummary>, ParseError> {
         let conn = self.open_sqlite_connection().await?;
 
-        let rows = conn
-            .query_all(Statement::from_string(
-                DbBackend::Sqlite,
-                format!(
-                    r#"
-                SELECT
-                    s.id AS id,
-                    s.directory AS directory,
-                    s.parent_id AS parent_id,
-                    s.title AS title,
-                    {FIRST_USER_TEXT_SQL},
-                    s.time_created AS created_ms,
-                    s.time_updated AS updated_ms,
-                    COALESCE((
-                        SELECT COUNT(*)
-                        FROM message m
-                        WHERE m.session_id = s.id
-                    ), 0) AS message_count,
-                    (
-                        SELECT json_extract(m2.data, '$.modelID')
-                        FROM message m2
-                        WHERE m2.session_id = s.id
-                          AND json_extract(m2.data, '$.role') = 'assistant'
-                        ORDER BY m2.time_created DESC
-                        LIMIT 1
-                    ) AS model
-                FROM session s
-                ORDER BY s.time_created DESC
-                "#
-                ),
-            ))
-            .await?;
-
-        let mut conversations = Vec::with_capacity(rows.len());
-        for row in rows {
-            let summary = Self::parse_sqlite_summary_row(&row)?;
-            if summary.message_count == 0 {
-                continue;
+        let mut copies = Vec::new();
+        for store in session_stores(&conn).await? {
+            let rows = conn
+                .query_all(Statement::from_string(
+                    DbBackend::Sqlite,
+                    summary_sql(store, "ORDER BY s.time_created DESC"),
+                ))
+                .await?;
+            for row in rows {
+                copies.push(Self::parse_stored_summary_row(&row, store)?);
             }
-            conversations.push(summary);
         }
+
+        // Reconcile first, then drop empty sessions: whether a session is empty
+        // is up to the copy `sqlite_summary_by_id` would open, not to whichever
+        // copy happens to still hold messages.
+        let mut conversations: Vec<ConversationSummary> = reconcile_session_copies(copies)
+            .into_iter()
+            .filter(|summary| summary.message_count > 0)
+            .collect();
+        // Each store arrives newest-first; a stable sort merges the two
+        // without reordering a legacy-only database.
+        conversations.sort_by_key(|c| std::cmp::Reverse(c.started_at));
 
         Ok(conversations)
     }
 
+    /// The summary of the copy of `conversation_id` to read, and which store it
+    /// came from — chosen by the same rule as the listing
+    /// ([`supersedes`]), so a session always opens the copy it was listed from.
     async fn sqlite_summary_by_id(
         &self,
         conn: &DatabaseConnection,
         conversation_id: &str,
-    ) -> Result<Option<ConversationSummary>, ParseError> {
-        let row = conn
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                format!(
-                    r#"
-                SELECT
-                    s.id AS id,
-                    s.directory AS directory,
-                    s.parent_id AS parent_id,
-                    s.title AS title,
-                    {FIRST_USER_TEXT_SQL},
-                    s.time_created AS created_ms,
-                    s.time_updated AS updated_ms,
-                    COALESCE((
-                        SELECT COUNT(*)
-                        FROM message m
-                        WHERE m.session_id = s.id
-                    ), 0) AS message_count,
-                    (
-                        SELECT json_extract(m2.data, '$.modelID')
-                        FROM message m2
-                        WHERE m2.session_id = s.id
-                          AND json_extract(m2.data, '$.role') = 'assistant'
-                        ORDER BY m2.time_created DESC
-                        LIMIT 1
-                    ) AS model
-                FROM session s
-                WHERE s.id = ?
-                LIMIT 1
-                "#
-                ),
-                [conversation_id.into()],
-            ))
-            .await?;
+    ) -> Result<Option<(ConversationSummary, SessionStore)>, ParseError> {
+        let mut chosen: Option<StoredSummary> = None;
+        for store in session_stores(conn).await? {
+            let row = conn
+                .query_one(Statement::from_sql_and_values(
+                    DbBackend::Sqlite,
+                    summary_sql(store, "WHERE s.id = ? LIMIT 1"),
+                    [conversation_id.into()],
+                ))
+                .await?;
+            let Some(row) = row else {
+                continue;
+            };
+            let copy = Self::parse_stored_summary_row(&row, store)?;
+            let replace = match &chosen {
+                Some(kept) => supersedes(&copy, kept),
+                None => true,
+            };
+            if replace {
+                chosen = Some(copy);
+            }
+        }
 
-        row.map(|r| Self::parse_sqlite_summary_row(&r)).transpose()
+        Ok(chosen.map(|copy| (copy.summary, copy.store)))
     }
 
     async fn get_conversation_from_sqlite(
@@ -265,12 +207,18 @@ impl OpenCodeParser {
         conversation_id: &str,
     ) -> Result<ConversationDetail, ParseError> {
         let conn = self.open_sqlite_connection().await?;
-        let summary = self
+        let (summary, store) = self
             .sqlite_summary_by_id(&conn, conversation_id)
             .await?
             .ok_or_else(|| ParseError::ConversationNotFound(conversation_id.to_string()))?;
 
-        let messages = self.load_sqlite_messages(&conn, conversation_id).await?;
+        let LoadedMessages {
+            messages,
+            latest_model,
+        } = match store {
+            SessionStore::Legacy => self.load_sqlite_messages(&conn, conversation_id).await?,
+            SessionStore::V2 => self.load_v2_messages(&conn, conversation_id).await?,
+        };
         let mut turns = group_into_turns(messages);
         super::relocate_orphaned_tool_results(&mut turns);
         super::structurize_read_tool_output(&mut turns);
@@ -278,9 +226,27 @@ impl OpenCodeParser {
         // OpenCode stamps `time.created` / `time.completed` on assistant
         // messages itself; this only covers ones written with no completion.
         super::backfill_turn_durations(&mut turns, &[]);
-        let context_window_used_tokens = super::latest_turn_total_usage_tokens(&turns);
-        let context_window_max_tokens =
-            super::infer_context_window_max_tokens(summary.model.as_deref());
+        // The same reading OpenCode's own ACP adapter reports live: occupancy
+        // is `input + cache.read + cache.write` of the latest reply
+        // (`contextTokens`), whose output is not resident in the window that
+        // produced it; the window is `limit.context` of the model that reply
+        // ran on (`findContextLimit`), which OpenCode looks up rather than
+        // writes down — see `opencode_context_window`.
+        let context_window_used_tokens = super::latest_turn_prompt_usage_tokens(&turns);
+        let context_window_max_tokens = latest_model
+            .as_ref()
+            .and_then(|model| {
+                self.model_limits
+                    .context_window(summary.folder_path.as_deref().map(Path::new), model)
+            })
+            .or_else(|| {
+                super::infer_context_window_max_tokens(
+                    latest_model
+                        .as_ref()
+                        .map(|model| model.model_id.as_str())
+                        .or(summary.model.as_deref()),
+                )
+            });
         let session_stats = super::merge_context_window_stats(
             super::compute_session_stats(&turns),
             context_window_used_tokens,
@@ -299,7 +265,7 @@ impl OpenCodeParser {
         &self,
         conn: &DatabaseConnection,
         conversation_id: &str,
-    ) -> Result<Vec<UnifiedMessage>, ParseError> {
+    ) -> Result<LoadedMessages, ParseError> {
         let rows = conn
             .query_all(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
@@ -319,6 +285,7 @@ impl OpenCodeParser {
         let subagent_tools = batch_load_subagent_tool_calls(conn, &subagent_session_ids).await;
 
         let mut messages = Vec::with_capacity(rows.len());
+        let mut latest_model = None;
 
         for row in rows {
             let msg_id: String = row.try_get("", "id")?;
@@ -354,6 +321,14 @@ impl OpenCodeParser {
             } else {
                 None
             };
+            if is_assistant {
+                if let Some(model) = ModelRef::new(
+                    value.get("providerID").and_then(|p| p.as_str()),
+                    msg_model.as_deref(),
+                ) {
+                    latest_model = Some(model);
+                }
+            }
 
             let (mut content_blocks, usage_from_step_finish) = self
                 .load_sqlite_parts(conn, &msg_id, &subagent_tools)
@@ -433,11 +408,14 @@ impl OpenCodeParser {
                 duration_ms,
                 model: msg_model,
                 completed_at,
-                agent_message_id: None,
+            agent_message_id: None,
             });
         }
 
-        Ok(messages)
+        Ok(LoadedMessages {
+            messages,
+            latest_model,
+        })
     }
 
     /// Scan all tool parts in this conversation to extract subagent session IDs.
@@ -556,12 +534,9 @@ impl OpenCodeParser {
                         input_preview: None,
                         status: None,
                         meta: Some(serde_json::Value::Object(
-                            [(
-                                "contextCompaction".to_string(),
-                                serde_json::Value::Object(marker),
-                            )]
-                            .into_iter()
-                            .collect(),
+                            [("contextCompaction".to_string(), serde_json::Value::Object(marker))]
+                                .into_iter()
+                                .collect(),
                         )),
                     });
                     // The pair is required: a ToolUse with no result reads as a
@@ -788,263 +763,160 @@ impl OpenCodeParser {
 
         Ok((blocks, usage_from_step_finish))
     }
-}
 
-impl OpenCodeParser {
-    fn parse_v2_summary_row(row: &QueryResult) -> Result<ConversationSummary, ParseError> {
-        let id: String = row.try_get("", "id")?;
-        let directory: Option<String> = row.try_get("", "directory")?;
-        let parent_id: Option<String> = row.try_get("", "parent_id")?;
-        let title: Option<String> = row.try_get("", "title")?;
-        let first_user_text: Option<String> = row.try_get("", "first_user_text")?;
-        let created_ms: i64 = row.try_get("", "created_ms")?;
-        let updated_ms: i64 = row.try_get("", "updated_ms")?;
-        let message_count_i64: i64 = row.try_get("", "message_count")?;
-        let assistant_model: Option<String> = row.try_get("", "assistant_model")?;
-        let session_model: Option<String> = row.try_get("", "session_model")?;
-
-        let folder_path = normalize_optional_string(directory);
-        let folder_name = folder_path.as_ref().map(|p| folder_name_from_path(p));
-        let message_count = if message_count_i64 <= 0 {
-            0
-        } else {
-            u32::try_from(message_count_i64).unwrap_or(u32::MAX)
-        };
-        let model = v2_model_id_from_raw(assistant_model.as_deref())
-            .or_else(|| v2_model_id_from_raw(session_model.as_deref()));
-
-        Ok(ConversationSummary {
-            id,
-            agent_type: AgentType::OpenCode,
-            folder_path,
-            folder_name,
-            title: resolve_title(title, first_user_text),
-            started_at: millis_to_datetime(created_ms),
-            ended_at: (updated_ms > 0).then(|| millis_to_datetime(updated_ms)),
-            message_count,
-            model,
-            git_branch: None,
-            parent_id: normalize_optional_string(parent_id),
-            parent_tool_use_id: None,
-            delegation_call_id: None,
-        })
-    }
-
-    async fn v2_has_session_model_column(conn: &DatabaseConnection) -> Result<bool, ParseError> {
-        let rows = conn
-            .query_all(Statement::from_string(
-                DbBackend::Sqlite,
-                "PRAGMA table_info(session_v2)".to_owned(),
-            ))
-            .await?;
-        Ok(rows.iter().any(|row| {
-            row.try_get::<String>("", "name")
-                .ok()
-                .is_some_and(|name| name.eq_ignore_ascii_case("model"))
-        }))
-    }
-
-    async fn list_conversations_v2(
-        &self,
-        conn: &DatabaseConnection,
-    ) -> Result<Vec<ConversationSummary>, ParseError> {
-        let has_model = Self::v2_has_session_model_column(conn).await?;
-        let sql = V2_SUMMARY_SELECT_SQL.replace(
-            "__SESSION_MODEL__",
-            if has_model { "s.model" } else { "NULL" },
-        );
-        let rows = conn
-            .query_all(Statement::from_string(DbBackend::Sqlite, sql))
-            .await?;
-
-        let mut conversations = Vec::with_capacity(rows.len());
-        for row in rows {
-            let summary = Self::parse_v2_summary_row(&row)?;
-            // Keep the legacy listing rule: a session row with no recorded
-            // messages is an empty shell, not a history item.
-            if summary.message_count == 0 {
-                continue;
-            }
-            conversations.push(summary);
-        }
-        Ok(conversations)
-    }
-
-    async fn sqlite_v2_summary_by_id(
+    /// Messages of a session in OpenCode 2's store: one `session_message` row
+    /// per message, typed by its `type` column, with the whole message —
+    /// text, tool calls and their results, usage — in its `data`
+    /// (`Session.Message.Info` in `@opencode/schema`, minus `type` and `id`).
+    ///
+    /// Only `user` and `assistant` rows are the conversation. The other types
+    /// are text OpenCode wrote for the model (`synthetic`; `system`, such as
+    /// the "the available tools have changed" notice its 1.x migration appends
+    /// to a session that called a renamed tool; `skill`), bookkeeping (`idle`,
+    /// `agent-switched`, `model-switched`, `location-switched`), or not
+    /// rendered yet (`compaction`, and `shell` for a command the user ran
+    /// themselves).
+    ///
+    /// Ordered by `seq`, the order OpenCode itself reads a session in; message
+    /// times are not unique within a session.
+    async fn load_v2_messages(
         &self,
         conn: &DatabaseConnection,
         conversation_id: &str,
-    ) -> Result<Option<ConversationSummary>, ParseError> {
-        let has_model = Self::v2_has_session_model_column(conn).await?;
-        let sql = V2_SUMMARY_BY_ID_SELECT_SQL.replace(
-            "__SESSION_MODEL__",
-            if has_model { "s.model" } else { "NULL" },
-        );
-        let row = conn
-            .query_one(Statement::from_sql_and_values(
-                DbBackend::Sqlite,
-                sql,
-                [conversation_id.into()],
-            ))
-            .await?;
-        row.map(|row| Self::parse_v2_summary_row(&row)).transpose()
-    }
-
-    async fn get_conversation_v2(
-        &self,
-        conn: &DatabaseConnection,
-        conversation_id: &str,
-    ) -> Result<ConversationDetail, ParseError> {
-        let summary = self
-            .sqlite_v2_summary_by_id(conn, conversation_id)
-            .await?
-            .ok_or_else(|| ParseError::ConversationNotFound(conversation_id.to_string()))?;
-        let messages = self.load_sqlite_v2_messages(conn, conversation_id).await?;
-        let mut turns = group_into_turns(messages);
-        super::relocate_orphaned_tool_results(&mut turns);
-        super::structurize_read_tool_output(&mut turns);
-        super::resolve_patch_line_numbers(&mut turns, summary.folder_path.as_deref());
-        super::backfill_turn_durations(&mut turns, &[]);
-        let context_window_used_tokens = super::latest_turn_total_usage_tokens(&turns);
-        let context_window_max_tokens =
-            super::infer_context_window_max_tokens(summary.model.as_deref());
-        let session_stats = super::merge_context_window_stats(
-            super::compute_session_stats(&turns),
-            context_window_used_tokens,
-            context_window_max_tokens,
-        );
-
-        Ok(ConversationDetail {
-            summary,
-            turns,
-            session_stats,
-            transcript_watermark: None,
-        })
-    }
-
-    async fn load_sqlite_v2_messages(
-        &self,
-        conn: &DatabaseConnection,
-        conversation_id: &str,
-    ) -> Result<Vec<UnifiedMessage>, ParseError> {
+    ) -> Result<LoadedMessages, ParseError> {
         let rows = conn
             .query_all(Statement::from_sql_and_values(
                 DbBackend::Sqlite,
                 r#"
-                SELECT id, session_id, type, seq, time_created, time_updated, data
+                SELECT id, type, time_created, data
                 FROM session_message
                 WHERE session_id = ?
-                ORDER BY seq ASC, id ASC
+                  AND type IN ('user', 'assistant')
+                ORDER BY seq ASC
                 "#,
                 [conversation_id.into()],
             ))
             .await?;
 
-        let subagent_session_ids = v2_subagent_session_ids_from_rows(&rows);
-        let subagent_tools = batch_load_v2_subagent_tool_calls(conn, &subagent_session_ids).await;
-        let mut messages = Vec::with_capacity(rows.len());
-
+        let mut entries = Vec::with_capacity(rows.len());
         for row in rows {
-            let message_id: String = row.try_get("", "id")?;
-            let row_type: String = row.try_get("", "type")?;
+            let msg_id: String = row.try_get("", "id")?;
+            let msg_type: String = row.try_get("", "type")?;
             let row_time_created: i64 = row.try_get("", "time_created")?;
-            let _row_time_updated: i64 = row.try_get("", "time_updated")?;
-            let data_raw: String = match row.try_get("", "data") {
-                Ok(data) => data,
-                Err(_) => continue,
+            let data_raw: String = row.try_get("", "data")?;
+            let Ok(value) = serde_json::from_str::<serde_json::Value>(&data_raw) else {
+                continue;
             };
-            let value = match v2_parse_object(&data_raw) {
-                Some(value) => value,
-                // A half-written JSON row is isolated to this message. It must
-                // not make an otherwise readable session fail to open.
-                None => continue,
-            };
+            entries.push((msg_id, msg_type == "assistant", row_time_created, value));
+        }
 
-            let created_ms = v2_created_ms(&value, row_time_created);
-            let timestamp = millis_to_datetime(created_ms);
-            let is_assistant_row = row_type == "assistant";
-            let is_compaction_row = row_type == "compaction";
-
-            let (role, mut content_blocks) = match row_type.as_str() {
-                "user" => (MessageRole::User, v2_user_blocks(&value)),
-                // V2 exposes durable notices as `system` or `synthetic` rows.
-                // Keep the short human-facing description (and fall back to
-                // text for older/partial rows) instead of painting a
-                // model-facing prompt as user prose.
-                "synthetic" | "system" => (MessageRole::System, v2_synthetic_blocks(&value)),
-                "assistant" => (
-                    MessageRole::Assistant,
-                    v2_assistant_blocks(&value, &subagent_tools),
-                ),
-                "compaction" => (
-                    MessageRole::Assistant,
-                    v2_compaction_blocks(&message_id, &value),
-                ),
-                // `idle` is an execution terminal marker, not transcript text.
-                // It closes an unfinished assistant row when one is present;
-                // otherwise there is nothing to render.
-                "idle" => {
-                    v2_close_idle(&mut messages, timestamp);
-                    continue;
-                }
-                _ => continue,
-            };
-
-            if is_assistant_row {
-                if let Some(error) = v2_assistant_error_text(&value) {
-                    content_blocks.push(ContentBlock::Text { text: error });
-                }
-            }
-
-            // A malformed/empty user or synthetic row is not a visible turn.
-            // Keep empty assistant rows: they still represent a provider step
-            // and the shared post-processing can repair their timing.
-            if matches!(&role, MessageRole::User | MessageRole::System) && content_blocks.is_empty()
-            {
+        // The sub-agent sessions this one launched, gathered up front so their
+        // tool calls load in one query, as `load_sqlite_messages` does.
+        let mut subagent_session_ids: Vec<String> = Vec::new();
+        for (_, is_assistant, _, value) in &entries {
+            if !is_assistant {
                 continue;
             }
+            for part in v2_content(value) {
+                if let Some(session_id) = v2_agent_call(part).and_then(|call| call.session_id) {
+                    if !subagent_session_ids.iter().any(|known| known == session_id) {
+                        subagent_session_ids.push(session_id.to_string());
+                    }
+                }
+            }
+        }
+        let subagent_tools = batch_load_v2_subagent_tool_calls(conn, &subagent_session_ids).await;
 
-            let usage = if is_assistant_row || is_compaction_row {
-                extract_opencode_usage(&value)
+        let mut messages = Vec::with_capacity(entries.len());
+        let mut latest_model = None;
+        for (msg_id, is_assistant, row_time_created, value) in entries {
+            let created_ms = value
+                .get("time")
+                .and_then(|t| t.get("created"))
+                .and_then(|c| c.as_i64())
+                .unwrap_or(row_time_created);
+            let timestamp = millis_to_datetime(created_ms);
+
+            let (role, content, usage, model) = if is_assistant {
+                let mut blocks = v2_assistant_blocks(&value, &subagent_tools);
+                // Same failure marker as a 1.x message (see `load_sqlite_messages`).
+                if let Some(error) = assistant_error_text(&value) {
+                    blocks.push(ContentBlock::Text { text: error });
+                }
+                let model = value
+                    .get("model")
+                    .and_then(|m| m.get("id"))
+                    .and_then(|m| m.as_str())
+                    .map(str::to_string);
+                if let Some(model) = ModelRef::new(
+                    value
+                        .get("model")
+                        .and_then(|m| m.get("providerID"))
+                        .and_then(|p| p.as_str()),
+                    model.as_deref(),
+                ) {
+                    latest_model = Some(model);
+                }
+                (
+                    MessageRole::Assistant,
+                    blocks,
+                    extract_opencode_usage(&value),
+                    model,
+                )
+            } else {
+                let blocks = v2_user_blocks(&value);
+                if blocks.is_empty() {
+                    continue;
+                }
+                (MessageRole::User, blocks, None, None)
+            };
+
+            // As in `load_sqlite_messages`: only a completion strictly after the
+            // creation counts.
+            let completed_ms = if is_assistant {
+                value
+                    .get("time")
+                    .and_then(|t| t.get("completed"))
+                    .and_then(|c| c.as_i64())
             } else {
                 None
             };
-            let msg_model = if is_assistant_row || is_compaction_row {
-                v2_model_id_from_value(value.get("model"))
-            } else {
-                None
+            let duration_ms = match completed_ms {
+                Some(done) if done > created_ms => Some((done - created_ms) as u64),
+                _ => None,
             };
-            let completed_ms = if is_assistant_row {
-                v2_completed_ms(&value, created_ms)
-            } else {
-                None
-            };
-            let duration_ms = completed_ms
-                .filter(|done| *done > created_ms)
-                .map(|done| (done - created_ms) as u64);
-            let completed_at = if is_assistant_row {
-                completed_ms
-                    .filter(|done| *done > created_ms)
-                    .map(millis_to_datetime)
-            } else {
-                Some(timestamp)
+            let completed_at = match completed_ms {
+                Some(done) if done > created_ms => Some(millis_to_datetime(done)),
+                _ => Some(timestamp),
             };
 
             messages.push(UnifiedMessage {
-                id: message_id,
+                id: msg_id,
                 role,
-                content: content_blocks,
+                content,
                 timestamp,
                 usage,
                 duration_ms,
-                model: msg_model,
+                model,
                 completed_at,
                 agent_message_id: None,
             });
         }
 
-        Ok(messages)
+        Ok(LoadedMessages {
+            messages,
+            latest_model,
+        })
     }
+}
+
+/// A session's messages, read from either store.
+struct LoadedMessages {
+    messages: Vec<UnifiedMessage>,
+    /// The provider and model of the latest assistant message that names one:
+    /// the model OpenCode sizes its context gauge by (`latestAssistantMessage`),
+    /// and the one the session would carry on with.
+    latest_model: Option<ModelRef>,
 }
 
 impl AgentParser for OpenCodeParser {
@@ -1053,7 +925,7 @@ impl AgentParser for OpenCodeParser {
             return Ok(Vec::new());
         }
 
-        self.block_on(self.list_conversations_dispatch())
+        self.block_on(self.list_conversations_from_sqlite())
     }
 
     fn get_conversation(&self, conversation_id: &str) -> Result<ConversationDetail, ParseError> {
@@ -1063,7 +935,7 @@ impl AgentParser for OpenCodeParser {
             ));
         }
 
-        self.block_on(self.get_conversation_dispatch(conversation_id))
+        self.block_on(self.get_conversation_from_sqlite(conversation_id))
     }
 }
 
@@ -1094,572 +966,166 @@ fn normalize_optional_string(value: Option<String>) -> Option<String> {
     })
 }
 
-fn v2_model_id_from_value(value: Option<&serde_json::Value>) -> Option<String> {
-    let value = value?;
-    match value {
-        serde_json::Value::String(raw) => normalize_optional_string(Some(raw.clone())),
-        serde_json::Value::Object(object) => {
-            ["id", "modelID", "model", "name"].iter().find_map(|key| {
-                object
-                    .get(*key)
-                    .and_then(|nested| v2_model_id_from_value(Some(nested)))
-            })
-        }
-        serde_json::Value::Array(values) => values
-            .iter()
-            .find_map(|nested| v2_model_id_from_value(Some(nested))),
-        _ => None,
-    }
+/// Where an OpenCode database keeps a session.
+///
+/// OpenCode 2 moved sessions out of `session` / `message` / `part` into
+/// `session_v2` / `session_message`. A fresh 2.x install has only the new
+/// tables. A 1.x database that 2.x opens keeps the legacy ones: its one-shot
+/// `V1Migration` copies every session across (`INSERT OR IGNORE`, progress in
+/// `kv` under `migration.v1-v2`) and never looks at them again, while a 1.x
+/// binary still pointed at the file — codeg's own pinned OpenCode among them —
+/// goes on writing there.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum SessionStore {
+    /// `session` + `message` + `part`.
+    Legacy,
+    /// `session_v2` + `session_message`.
+    V2,
 }
 
-fn v2_model_id_from_raw(raw: Option<&str>) -> Option<String> {
-    let raw = raw?;
-    match serde_json::from_str::<serde_json::Value>(raw) {
-        Ok(serde_json::Value::Null) => None,
-        Ok(value) => v2_model_id_from_value(Some(&value))
-            .or_else(|| normalize_optional_string(Some(raw.to_owned()))),
-        // `json_extract` returns a bare model id rather than a JSON string for
-        // this fallback path.
-        Err(_) => normalize_optional_string(Some(raw.to_owned())),
-    }
+/// One store's copy of a session, before the copies are reconciled.
+struct StoredSummary {
+    summary: ConversationSummary,
+    updated_ms: i64,
+    store: SessionStore,
 }
 
-fn v2_parse_object(raw: &str) -> Option<serde_json::Value> {
-    let value = serde_json::from_str::<serde_json::Value>(raw).ok()?;
-    value.is_object().then_some(value)
-}
-
-fn v2_number(value: Option<&serde_json::Value>) -> Option<i64> {
-    let value = value?;
-    value.as_i64().or_else(|| {
-        value
-            .as_str()
-            .and_then(|raw| raw.trim().parse::<i64>().ok())
-    })
-}
-
-fn v2_created_ms(value: &serde_json::Value, row_time_created: i64) -> i64 {
-    v2_number(value.get("time").and_then(|time| time.get("created")))
-        .filter(|created| *created > 0)
-        .unwrap_or(row_time_created)
-}
-
-fn v2_completed_ms(value: &serde_json::Value, created_ms: i64) -> Option<i64> {
-    v2_number(value.get("time").and_then(|time| time.get("completed")))
-        .filter(|completed| *completed > created_ms)
-}
-
-fn v2_close_idle(messages: &mut [UnifiedMessage], timestamp: DateTime<Utc>) {
-    let Some(last_assistant) = messages
-        .iter_mut()
-        .rev()
-        .find(|message| matches!(&message.role, MessageRole::Assistant))
-    else {
-        return;
-    };
-    if last_assistant.completed_at.is_some() || timestamp <= last_assistant.timestamp {
-        return;
-    }
-    let duration = (timestamp - last_assistant.timestamp).num_milliseconds();
-    if duration > 0 {
-        last_assistant.duration_ms = Some(duration as u64);
-    }
-    last_assistant.completed_at = Some(timestamp);
-}
-
-fn v2_text(value: &serde_json::Value, key: &str) -> Option<String> {
-    value
-        .get(key)
-        .and_then(|raw| raw.as_str())
-        .map(str::trim)
-        .filter(|text| !text.is_empty())
-        .map(str::to_owned)
-}
-
-fn v2_field_text(value: Option<&serde_json::Value>, key: &str) -> Option<String> {
-    value.and_then(|value| v2_text(value, key))
-}
-
-fn v2_file_reference(value: &serde_json::Value) -> Option<String> {
-    value
-        .get("name")
-        .and_then(|name| name.as_str())
-        .or_else(|| {
-            value
-                .get("source")
-                .and_then(|source| source.get("uri"))
-                .and_then(|uri| uri.as_str())
-        })
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .map(str::to_owned)
-}
-
-fn v2_user_attachment_block(value: &serde_json::Value) -> Option<ContentBlock> {
-    let mime_type = value
-        .get("mime")
-        .and_then(|mime| mime.as_str())
-        .map(str::trim)
-        .filter(|mime| mime.starts_with("image/") && !mime.is_empty())
-        .map(str::to_owned);
-    let data = value
-        .get("data")
-        .and_then(|data| data.as_str())
-        .map(str::trim)
-        .filter(|data| !data.is_empty())
-        .map(str::to_owned);
-    let uri = v2_file_reference(value);
-
-    if let (Some(mime_type), Some(data)) = (mime_type, data) {
-        return Some(ContentBlock::Image {
-            data,
-            mime_type,
-            uri,
-        });
-    }
-
-    uri.map(|uri| ContentBlock::Text {
-        text: format!("@{uri}"),
-    })
-}
-
-fn v2_user_blocks(value: &serde_json::Value) -> Vec<ContentBlock> {
-    let mut blocks = Vec::new();
-    if let Some(text) = v2_text(value, "text") {
-        blocks.push(ContentBlock::Text { text });
-    }
-    if let Some(files) = value.get("files").and_then(|files| files.as_array()) {
-        for file in files {
-            if let Some(block) = file
-                .as_object()
-                .and_then(|_| v2_user_attachment_block(file))
-            {
-                blocks.push(block);
-            }
-        }
-    }
-    blocks
-}
-
-fn v2_synthetic_blocks(value: &serde_json::Value) -> Vec<ContentBlock> {
-    // `description` is the short notice shown by OpenCode's own timeline;
-    // `text` is often a multi-kilobyte model-facing instruction. Prefer the
-    // former and retain the latter only for older rows without a description.
-    v2_field_text(Some(value), "description")
-        .or_else(|| v2_field_text(Some(value), "text"))
-        .map(|text| vec![ContentBlock::Text { text }])
-        .unwrap_or_default()
-}
-
-fn v2_assistant_error_text(value: &serde_json::Value) -> Option<String> {
-    let error = value.get("error")?;
-    let name = error
-        .get("type")
-        .or_else(|| error.get("name"))
-        .and_then(|name| name.as_str())
-        .unwrap_or("UnknownError");
-    if name.to_ascii_lowercase().contains("abort")
-        || name.to_ascii_lowercase().contains("interrupt")
-    {
-        return Some("[opencode aborted]".to_string());
-    }
-    let detail = error
-        .get("message")
-        .or_else(|| error.get("data").and_then(|data| data.get("message")))
-        .and_then(|message| message.as_str())
-        .map(str::trim)
-        .filter(|message| !message.is_empty());
-    Some(match detail {
-        Some(detail) => format!("[opencode {name}] {}", truncate_str(detail, 2000)),
-        None => format!("[opencode {name}]"),
-    })
-}
-
-fn v2_content_preview(value: Option<&serde_json::Value>) -> Option<String> {
-    let value = value?;
-    let Some(items) = value.as_array() else {
-        return value_to_preview(Some(value));
-    };
-    let mut parts = Vec::new();
-    for item in items {
-        let item_type = item.get("type").and_then(|kind| kind.as_str());
-        let part = match item_type {
-            Some("text") => v2_text(item, "text"),
-            Some("file") => v2_file_reference(item),
-            _ => value_to_preview(Some(item)),
-        };
-        if let Some(part) = part {
-            parts.push(part);
-        }
-    }
-    (!parts.is_empty()).then(|| parts.join("\n"))
-}
-
-fn normalize_v2_tool_call(raw_tool: &str, state: Option<&serde_json::Value>) -> NormalizedToolCall {
-    let Some(state_object) = state.and_then(|state| state.as_object()) else {
-        return normalize_tool_call(raw_tool, state);
-    };
-    let mut adapted = state_object.clone();
-    if !adapted.contains_key("output") {
-        if let Some(output) = v2_content_preview(state_object.get("content")) {
-            adapted.insert("output".to_string(), serde_json::Value::String(output));
-        }
-    }
-    if let Some(error) = state_object.get("error") {
-        if error.is_object() {
-            let error_text = error
-                .get("message")
-                .and_then(|message| message.as_str())
-                .or_else(|| {
-                    error
-                        .get("data")
-                        .and_then(|data| data.get("message"))
-                        .and_then(|message| message.as_str())
-                })
-                .map(str::trim)
-                .filter(|message| !message.is_empty())
-                .map(str::to_owned);
-            if let Some(error_text) = error_text {
-                adapted.insert("error".to_string(), serde_json::Value::String(error_text));
-            }
-        }
-    }
-    normalize_tool_call(raw_tool, Some(&serde_json::Value::Object(adapted)))
-}
-
-fn v2_tool_blocks(
-    item: &serde_json::Value,
-    subagent_tools: &HashMap<String, Vec<AgentToolCall>>,
-) -> Vec<ContentBlock> {
-    let state = item.get("state");
-    let input = state.and_then(|state| state.get("input"));
-    let raw_tool_name = item
-        .get("name")
-        .or_else(|| item.get("tool"))
-        .and_then(|name| name.as_str())
-        .unwrap_or("unknown")
-        .to_string();
-    let call_id = item
-        .get("id")
-        .or_else(|| item.get("callID"))
-        .and_then(|id| id.as_str())
-        .map(str::to_owned);
-    let is_subagent = raw_tool_name == "subagent"
-        && input
-            .and_then(|input| input.get("agent"))
-            .and_then(|agent| agent.as_str())
-            .is_some();
-
-    if is_subagent {
-        return v2_subagent_blocks(item, subagent_tools);
-    }
-
-    let normalized = normalize_v2_tool_call(&raw_tool_name, state);
-    vec![
-        ContentBlock::ToolUse {
-            tool_use_id: call_id.clone(),
-            tool_name: normalized.tool_name,
-            input_preview: normalized.input_preview,
-            status: None,
-            meta: None,
-        },
-        ContentBlock::ToolResult {
-            tool_use_id: call_id,
-            output_preview: normalized.output_preview,
-            is_error: normalized.is_error,
-            agent_stats: None,
-            images: Vec::new(),
-        },
-    ]
-}
-
-fn v2_subagent_blocks(
-    item: &serde_json::Value,
-    subagent_tools: &HashMap<String, Vec<AgentToolCall>>,
-) -> Vec<ContentBlock> {
-    let state = item.get("state");
-    let input = state.and_then(|state| state.get("input"));
-    let metadata = state.and_then(|state| state.get("metadata"));
-    let agent_type = v2_field_text(input, "agent")
-        .or_else(|| v2_field_text(input, "subagent_type"))
-        .unwrap_or_else(|| "agent".to_string());
-    let description = v2_field_text(input, "description").unwrap_or_default();
-    let prompt = input
-        .and_then(|input| input.get("prompt"))
-        .and_then(|prompt| prompt.as_str())
-        .unwrap_or("")
-        .to_string();
-    let model_id = metadata
-        .and_then(|metadata| metadata.get("model"))
-        .and_then(|model| v2_model_id_from_value(Some(model)))
-        .or_else(|| v2_field_text(input, "model"));
-    let session_id = ["sessionID", "sessionId", "session_id"]
-        .iter()
-        .find_map(|key| metadata.and_then(|metadata| v2_field_text(Some(metadata), key)));
-    let call_id = item
-        .get("id")
-        .or_else(|| item.get("callID"))
-        .and_then(|id| id.as_str())
-        .map(str::to_owned);
-    let normalized = normalize_v2_tool_call("subagent", state);
-    let output_preview = normalized
-        .output_preview
-        .map(|output| extract_task_result_content(&output));
-    let tool_calls = session_id
-        .as_ref()
-        .and_then(|sid| subagent_tools.get(sid))
-        .cloned()
-        .unwrap_or_default();
-    let tool_count = tool_calls.len() as u32;
-    let status = state
-        .and_then(|state| state.get("status"))
-        .and_then(|status| status.as_str())
-        .map(str::to_owned);
-    let time = item.get("time");
-    let start_ms = v2_number(time.and_then(|time| time.get("created")));
-    let end_ms = v2_number(time.and_then(|time| time.get("completed")));
-    let total_duration_ms = match (start_ms, end_ms) {
-        (Some(start), Some(end)) if end > start => Some((end - start) as u64),
-        _ => None,
-    };
-    let mut agent_input = serde_json::json!({
-        "subagent_type": agent_type,
-        "description": description,
-        "prompt": prompt,
-    });
-    if let Some(model) = model_id {
-        agent_input["model"] = serde_json::Value::String(model);
-    }
-    let agent_stats = AgentExecutionStats {
-        agent_type: Some(agent_type),
-        status,
-        total_duration_ms,
-        total_tokens: None,
-        total_tool_use_count: (tool_count > 0).then_some(tool_count),
-        read_count: None,
-        search_count: None,
-        bash_count: None,
-        edit_file_count: None,
-        lines_added: None,
-        lines_removed: None,
-        other_tool_count: None,
-        tool_calls,
-        child_session_id: session_id,
-    };
-
-    vec![
-        ContentBlock::ToolUse {
-            tool_use_id: call_id.clone(),
-            tool_name: "Agent".to_string(),
-            input_preview: Some(agent_input.to_string()),
-            status: None,
-            meta: None,
-        },
-        ContentBlock::ToolResult {
-            tool_use_id: call_id,
-            output_preview,
-            is_error: normalized.is_error,
-            agent_stats: Some(agent_stats),
-            images: Vec::new(),
-        },
-    ]
-}
-
-fn v2_assistant_blocks(
-    value: &serde_json::Value,
-    subagent_tools: &HashMap<String, Vec<AgentToolCall>>,
-) -> Vec<ContentBlock> {
-    let Some(items) = value.get("content").and_then(|content| content.as_array()) else {
-        return Vec::new();
-    };
-    let mut blocks = Vec::new();
-    for item in items {
-        let Some(item) = item.as_object() else {
-            continue;
-        };
-        let value = serde_json::Value::Object(item.clone());
-        match value.get("type").and_then(|kind| kind.as_str()) {
-            Some("text") => {
-                if let Some(text) = v2_text(&value, "text") {
-                    blocks.push(ContentBlock::Text { text });
-                }
-            }
-            Some("reasoning") => {
-                if let Some(text) = v2_text(&value, "text") {
-                    blocks.push(ContentBlock::Thinking { text });
-                }
-            }
-            Some("tool") => blocks.extend(v2_tool_blocks(&value, subagent_tools)),
-            _ => {}
-        }
-    }
-    blocks
-}
-
-fn v2_compaction_blocks(message_id: &str, value: &serde_json::Value) -> Vec<ContentBlock> {
-    let reason = value
-        .get("reason")
-        .and_then(|reason| reason.as_str())
-        .unwrap_or("manual");
-    let trigger = if reason.eq_ignore_ascii_case("auto") {
-        "automatic"
-    } else {
-        "manual"
-    };
-    let mut marker = serde_json::Map::new();
-    marker.insert("version".to_string(), serde_json::Value::from(1));
-    marker.insert("trigger".to_string(), serde_json::Value::from(trigger));
-    let id = Some(message_id.to_string());
-    vec![
-        ContentBlock::ToolUse {
-            tool_use_id: id.clone(),
-            tool_name: "context_compaction".to_string(),
-            input_preview: None,
-            status: None,
-            meta: Some(serde_json::Value::Object(
-                [(
-                    "contextCompaction".to_string(),
-                    serde_json::Value::Object(marker),
-                )]
-                .into_iter()
-                .collect(),
-            )),
-        },
-        ContentBlock::ToolResult {
-            tool_use_id: id,
-            output_preview: None,
-            is_error: value
-                .get("status")
-                .and_then(|status| status.as_str())
-                .is_some_and(|status| status.eq_ignore_ascii_case("failed")),
-            agent_stats: None,
-            images: Vec::new(),
-        },
-    ]
-}
-
-fn v2_subagent_session_ids_from_rows(rows: &[QueryResult]) -> Vec<String> {
-    let mut ids = Vec::new();
-    for row in rows {
-        let data: String = match row.try_get("", "data") {
-            Ok(data) => data,
-            Err(_) => continue,
-        };
-        let Some(value) = v2_parse_object(&data) else {
-            continue;
-        };
-        let Some(content) = value.get("content").and_then(|content| content.as_array()) else {
-            continue;
-        };
-        for item in content {
-            if item.get("type").and_then(|kind| kind.as_str()) != Some("tool")
-                || item.get("name").and_then(|name| name.as_str()) != Some("subagent")
-            {
-                continue;
-            }
-            let metadata = item.get("state").and_then(|state| state.get("metadata"));
-            if let Some(session_id) = ["sessionID", "sessionId", "session_id"]
-                .iter()
-                .find_map(|key| v2_field_text(metadata, key))
-            {
-                ids.push(session_id);
-            }
-        }
-    }
-    ids.sort();
-    ids.dedup();
-    ids
-}
-
-async fn batch_load_v2_subagent_tool_calls(
-    conn: &DatabaseConnection,
-    session_ids: &[String],
-) -> HashMap<String, Vec<AgentToolCall>> {
-    if session_ids.is_empty() {
-        return HashMap::new();
-    }
-    let placeholders = vec!["?"; session_ids.len()].join(", ");
-    let sql = format!(
-        "SELECT session_id, type, seq, data \
-         FROM session_message \
-         WHERE session_id IN ({placeholders}) \
-         ORDER BY session_id ASC, seq ASC, id ASC"
-    );
-    let values: Vec<sea_orm::Value> = session_ids
-        .iter()
-        .map(|session_id| session_id.as_str().into())
-        .collect();
-    let rows = match conn
-        .query_all(Statement::from_sql_and_values(
+/// The session stores this database has, legacy first. A store counts only
+/// when every table it is read from exists, so a half-present one is skipped
+/// instead of failing every read with `no such table`.
+async fn session_stores(conn: &DatabaseConnection) -> Result<Vec<SessionStore>, ParseError> {
+    let rows = conn
+        .query_all(Statement::from_string(
             DbBackend::Sqlite,
-            &sql,
-            values,
+            r#"
+            SELECT name
+            FROM sqlite_master
+            WHERE type = 'table'
+              AND name IN ('session', 'message', 'part', 'session_v2', 'session_message')
+            "#
+            .to_owned(),
         ))
-        .await
-    {
-        Ok(rows) => rows,
-        Err(_) => return HashMap::new(),
-    };
-
-    let mut result: HashMap<String, Vec<AgentToolCall>> = HashMap::new();
+        .await?;
+    let mut tables = Vec::with_capacity(rows.len());
     for row in rows {
-        let session_id: String = match row.try_get("", "session_id") {
-            Ok(session_id) => session_id,
-            Err(_) => continue,
-        };
-        let row_type: String = match row.try_get("", "type") {
-            Ok(row_type) => row_type,
-            Err(_) => continue,
-        };
-        if row_type != "assistant" {
-            continue;
-        }
-        let data: String = match row.try_get("", "data") {
-            Ok(data) => data,
-            Err(_) => continue,
-        };
-        let Some(value) = v2_parse_object(&data) else {
-            continue;
-        };
-        let Some(content) = value.get("content").and_then(|content| content.as_array()) else {
-            continue;
-        };
-        for item in content {
-            if item.get("type").and_then(|kind| kind.as_str()) != Some("tool") {
-                continue;
+        tables.push(row.try_get::<String>("", "name")?);
+    }
+    let has = |names: &[&str]| names.iter().all(|name| tables.iter().any(|t| t == name));
+
+    let mut stores = Vec::with_capacity(2);
+    if has(&["session", "message", "part"]) {
+        stores.push(SessionStore::Legacy);
+    }
+    if has(&["session_v2", "session_message"]) {
+        stores.push(SessionStore::V2);
+    }
+    Ok(stores)
+}
+
+/// Whether `candidate` is the copy of a session to read over `kept`.
+///
+/// The one written last wins: `time_updated` moves with every prompt and
+/// rename, in both stores. A session continued in 2.x after the migration is
+/// read from `session_v2`; one continued in 1.x from the legacy tables, which
+/// are the only ones that saw it.
+///
+/// A tie means neither side has changed since the migration copied the
+/// session — it carries `time_updated` over as-is — and then the legacy copy
+/// wins, because the migrated one is a lossy projection of it: a compaction's
+/// divider and summary merge into one record, slash-command sub-agent runs
+/// are dropped, cleared tool output becomes a placeholder, and an assistant
+/// message's completion is taken from its row's last write, which can stretch
+/// a seconds-long reply to days.
+fn supersedes(candidate: &StoredSummary, kept: &StoredSummary) -> bool {
+    candidate.updated_ms > kept.updated_ms
+        || (candidate.updated_ms == kept.updated_ms
+            && candidate.store == SessionStore::Legacy
+            && kept.store != SessionStore::Legacy)
+}
+
+/// One summary per session, picked by [`supersedes`], in the order each
+/// session's first copy arrived.
+fn reconcile_session_copies(copies: Vec<StoredSummary>) -> Vec<ConversationSummary> {
+    let mut slots: HashMap<String, usize> = HashMap::with_capacity(copies.len());
+    let mut kept: Vec<StoredSummary> = Vec::with_capacity(copies.len());
+    for copy in copies {
+        match slots.get(&copy.summary.id) {
+            Some(&slot) => {
+                if supersedes(&copy, &kept[slot]) {
+                    kept[slot] = copy;
+                }
             }
-            let raw_tool_name = item
-                .get("name")
-                .or_else(|| item.get("tool"))
-                .and_then(|name| name.as_str())
-                .unwrap_or("unknown");
-            // A nested subagent is represented by its own child session; do not
-            // recursively flatten it into this one-level Agent card.
-            if raw_tool_name == "subagent" {
-                continue;
+            None => {
+                slots.insert(copy.summary.id.clone(), kept.len());
+                kept.push(copy);
             }
-            let normalized = normalize_v2_tool_call(raw_tool_name, item.get("state"));
-            let status = item
-                .get("state")
-                .and_then(|state| state.get("status"))
-                .and_then(|status| status.as_str())
-                .unwrap_or("");
-            result
-                .entry(session_id.clone())
-                .or_default()
-                .push(AgentToolCall {
-                    tool_name: normalized.tool_name,
-                    input_preview: normalized
-                        .input_preview
-                        .map(|input| truncate_str(&input, 500)),
-                    output_preview: normalized
-                        .output_preview
-                        .map(|output| truncate_str(&output, 500)),
-                    is_error: is_error_status(status) || normalized.is_error,
-                });
         }
     }
-    result
+    kept.into_iter().map(|copy| copy.summary).collect()
+}
+
+/// The summary columns [`OpenCodeParser::parse_sqlite_summary_row`] reads,
+/// from one store, followed by `tail` (the listing's order, or a lookup by id).
+fn summary_sql(store: SessionStore, tail: &str) -> String {
+    match store {
+        SessionStore::Legacy => format!(
+            r#"
+                SELECT
+                    s.id AS id,
+                    s.directory AS directory,
+                    s.parent_id AS parent_id,
+                    s.title AS title,
+                    {FIRST_USER_TEXT_SQL},
+                    s.time_created AS created_ms,
+                    s.time_updated AS updated_ms,
+                    COALESCE((
+                        SELECT COUNT(*)
+                        FROM message m
+                        WHERE m.session_id = s.id
+                    ), 0) AS message_count,
+                    (
+                        SELECT json_extract(m2.data, '$.modelID')
+                        FROM message m2
+                        WHERE m2.session_id = s.id
+                          AND json_extract(m2.data, '$.role') = 'assistant'
+                        ORDER BY m2.time_created DESC
+                        LIMIT 1
+                    ) AS model
+                FROM session s
+                {tail}
+                "#
+        ),
+        // Counted like the legacy `message` table: the user's and the
+        // assistant's messages, not the bookkeeping rows around them.
+        SessionStore::V2 => format!(
+            r#"
+                SELECT
+                    s.id AS id,
+                    s.directory AS directory,
+                    s.parent_id AS parent_id,
+                    s.title AS title,
+                    {FIRST_USER_TEXT_SQL_V2},
+                    s.time_created AS created_ms,
+                    s.time_updated AS updated_ms,
+                    COALESCE((
+                        SELECT COUNT(*)
+                        FROM session_message m
+                        WHERE m.session_id = s.id
+                          AND m.type IN ('user', 'assistant')
+                    ), 0) AS message_count,
+                    (
+                        SELECT json_extract(m2.data, '$.model.id')
+                        FROM session_message m2
+                        WHERE m2.session_id = s.id
+                          AND m2.type = 'assistant'
+                        ORDER BY m2.seq DESC
+                        LIMIT 1
+                    ) AS model
+                FROM session_v2 s
+                {tail}
+                "#
+        ),
+    }
 }
 
 /// The first words the user actually typed in a session, used to stand in for
@@ -1689,108 +1155,27 @@ const FIRST_USER_TEXT_SQL: &str = r#"CASE
                         )
                     END AS first_user_text"#;
 
-/// V2 stores the message envelope in one JSON column instead of the legacy
-/// `message`/`part` pair. Its synthetic rows are separate from `user` rows,
-/// so the first-text fallback only considers actual user text. `json_valid` is
-/// deliberately part of the expression: a partially-written/corrupt row must
-/// not make the whole session listing fail with SQLite's "malformed JSON"
-/// error.
-const V2_SUMMARY_SELECT_SQL: &str = r#"
-WITH safe_messages AS (
-    SELECT
-        session_id,
-        id,
-        type,
-        seq,
-        CASE WHEN json_valid(data) THEN data ELSE '{}' END AS json_data
-    FROM session_message
-)
-SELECT
-    s.id AS id,
-    s.directory AS directory,
-    s.parent_id AS parent_id,
-    s.title AS title,
-    (
-        SELECT json_extract(um.json_data, '$.text')
-        FROM safe_messages um
-        WHERE um.session_id = s.id
-          AND um.type = 'user'
-          AND TRIM(COALESCE(json_extract(um.json_data, '$.text'), '')) <> ''
-        ORDER BY um.seq ASC, um.id ASC
-        LIMIT 1
-    ) AS first_user_text,
-    s.time_created AS created_ms,
-    s.time_updated AS updated_ms,
-    COALESCE((
-        SELECT COUNT(*)
-        FROM session_message sm
-        WHERE sm.session_id = s.id
-    ), 0) AS message_count,
-    (
-        SELECT COALESCE(
-            json_extract(am.json_data, '$.model.id'),
-            json_extract(am.json_data, '$.modelID'),
-            json_extract(am.json_data, '$.model')
-        )
-        FROM safe_messages am
-        WHERE am.session_id = s.id
-          AND am.type = 'assistant'
-        ORDER BY am.seq DESC, am.id DESC
-        LIMIT 1
-    ) AS assistant_model,
-    __SESSION_MODEL__ AS session_model
-FROM session_v2 s
-ORDER BY s.time_created DESC
-"#;
-
-const V2_SUMMARY_BY_ID_SELECT_SQL: &str = r#"
-WITH safe_messages AS (
-    SELECT
-        session_id,
-        id,
-        type,
-        seq,
-        CASE WHEN json_valid(data) THEN data ELSE '{}' END AS json_data
-    FROM session_message
-)
-SELECT
-    s.id AS id,
-    s.directory AS directory,
-    s.parent_id AS parent_id,
-    s.title AS title,
-    (
-        SELECT json_extract(um.json_data, '$.text')
-        FROM safe_messages um
-        WHERE um.session_id = s.id
-          AND um.type = 'user'
-          AND TRIM(COALESCE(json_extract(um.json_data, '$.text'), '')) <> ''
-        ORDER BY um.seq ASC, um.id ASC
-        LIMIT 1
-    ) AS first_user_text,
-    s.time_created AS created_ms,
-    s.time_updated AS updated_ms,
-    COALESCE((
-        SELECT COUNT(*)
-        FROM session_message sm
-        WHERE sm.session_id = s.id
-    ), 0) AS message_count,
-    (
-        SELECT COALESCE(
-            json_extract(am.json_data, '$.model.id'),
-            json_extract(am.json_data, '$.modelID'),
-            json_extract(am.json_data, '$.model')
-        )
-        FROM safe_messages am
-        WHERE am.session_id = s.id
-          AND am.type = 'assistant'
-        ORDER BY am.seq DESC, am.id DESC
-        LIMIT 1
-    ) AS assistant_model,
-    __SESSION_MODEL__ AS session_model
-FROM session_v2 s
-WHERE s.id = ?
-LIMIT 1
-"#;
+/// [`FIRST_USER_TEXT_SQL`] for OpenCode 2's store, where the prompt is one
+/// `text` field on the `user` message and injected text is a message type of
+/// its own (`synthetic`) rather than a flag.
+///
+/// 2.x also stopped writing the placeholder: a session it has not named yet
+/// has no title at all (`SessionTitleFallback.isFallbackTitle` treats both
+/// alike), so a missing title falls back the same way.
+const FIRST_USER_TEXT_SQL_V2: &str = r#"CASE
+                        WHEN s.title IS NULL
+                          OR TRIM(s.title) = ''
+                          OR s.title LIKE 'New session - %'
+                          OR s.title LIKE 'Child session - %' THEN (
+                            SELECT json_extract(um.data, '$.text')
+                            FROM session_message um
+                            WHERE um.session_id = s.id
+                              AND um.type = 'user'
+                              AND TRIM(COALESCE(json_extract(um.data, '$.text'), '')) <> ''
+                            ORDER BY um.seq ASC
+                            LIMIT 1
+                        )
+                    END AS first_user_text"#;
 
 /// OpenCode names a session at creation time, before anyone has said anything:
 /// `title: q.title ?? (q.parentID ? "Child session - " : "New session - ") +
@@ -1965,6 +1350,8 @@ fn extract_opencode_file_image(value: &serde_json::Value) -> Option<ContentBlock
                 .and_then(|s| s.get("path"))
                 .and_then(|v| v.as_str())
         })
+        // A 2.x attachment (`Prompt.FileAttachment`) names itself `name`.
+        .or_else(|| value.get("name").and_then(|v| v.as_str()))
         .map(str::trim)
         .filter(|s| !s.is_empty())
         .map(|s| s.to_string());
@@ -2004,8 +1391,7 @@ fn pick_str<'a>(value: Option<&'a serde_json::Value>, keys: &[&str]) -> Option<&
 /// as-is (an empty `oldString` is OpenCode's create-file form of `edit`).
 fn pick_str_verbatim<'a>(value: Option<&'a serde_json::Value>, keys: &[&str]) -> Option<&'a str> {
     let obj = value?;
-    keys.iter()
-        .find_map(|key| obj.get(*key).and_then(|v| v.as_str()))
+    keys.iter().find_map(|key| obj.get(*key).and_then(|v| v.as_str()))
 }
 
 /// Copy `value[from]` into `out[to]` verbatim when present and not null.
@@ -2023,10 +1409,7 @@ fn copy_field(
 }
 
 fn insert_str(out: &mut serde_json::Map<String, serde_json::Value>, key: &str, value: &str) {
-    out.insert(
-        key.to_string(),
-        serde_json::Value::String(value.to_string()),
-    );
+    out.insert(key.to_string(), serde_json::Value::String(value.to_string()));
 }
 
 /// Start line of the first hunk in a unified diff (`@@ -12,7 +12,8 @@` → 12).
@@ -2101,10 +1484,13 @@ fn normalize_tool_call(raw_tool: &str, state: Option<&serde_json::Value>) -> Nor
     // A failed call carries `state.error` and no `state.output`. Reading only
     // `output` left every failure rendering as an empty red card with no
     // indication of what went wrong.
-    let error_text = pick_str(state, &["error"]).map(str::to_string);
+    let error_text = tool_error_text(state);
+    // OpenCode 2 records the result as `state.content` instead (see
+    // `tool_content_text`), so a 2.x call that has no `output` falls to it.
     let raw_output = state
         .and_then(|s| s.get("output"))
-        .and_then(|v| value_to_preview(Some(v)));
+        .and_then(|v| value_to_preview(Some(v)))
+        .or_else(|| tool_content_text(state));
     // Folded in here rather than at the call site so this function is the
     // single source of truth: the arms below override the verdict in BOTH
     // directions (`invalid` completes "successfully" but is a failure; a
@@ -2139,8 +1525,17 @@ fn normalize_tool_call(raw_tool: &str, state: Option<&serde_json::Value>) -> Nor
             copy_field(&mut obj, input, "replaceAll", "replace_all");
             copy_field(&mut obj, input, "replace_all", "replace_all");
 
+            // 2.x reports the diff per file, under `metadata.files[].patch`.
             if let Some(start_line) = pick_str(metadata, &["diff"])
                 .or_else(|| pick_str(metadata.and_then(|m| m.get("filediff")), &["patch"]))
+                .or_else(|| {
+                    pick_str(
+                        metadata
+                            .and_then(|m| m.get("files"))
+                            .and_then(|files| files.get(0)),
+                        &["patch"],
+                    )
+                })
                 .and_then(first_hunk_start_line)
             {
                 obj.insert("_start_line".to_string(), serde_json::json!(start_line));
@@ -2274,6 +1669,31 @@ fn normalize_tool_call(raw_tool: &str, state: Option<&serde_json::Value>) -> Nor
     }
 }
 
+/// Why a tool call failed: 1.x stores `state.error` as the message itself,
+/// 2.x as `{type, message}` (`Session.StructuredError`).
+fn tool_error_text(state: Option<&serde_json::Value>) -> Option<String> {
+    pick_str(state, &["error"])
+        .or_else(|| pick_str(state.and_then(|s| s.get("error")), &["message"]))
+        .map(str::to_string)
+}
+
+/// What a 2.x tool call returned. OpenCode 2 replaced the single
+/// `state.output` string with `state.content`, a list of text and file items,
+/// and a result can span several: the shell tool returns the command's output
+/// and its exit notice as two. `None` when there is no text at all.
+fn tool_content_text(state: Option<&serde_json::Value>) -> Option<String> {
+    let items = state?.get("content")?.as_array()?;
+    let text = items
+        .iter()
+        .filter(|item| item.get("type").and_then(|t| t.as_str()) == Some("text"))
+        .filter_map(|item| item.get("text").and_then(|t| t.as_str()))
+        .map(str::trim)
+        .filter(|text| !text.is_empty())
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    (!text.is_empty()).then_some(text)
+}
+
 /// Rebuild a `read` result from `state.metadata.display`.
 ///
 /// `state.output` wraps the file in `<path>`/`<type>`/`<content>` tags and
@@ -2298,7 +1718,10 @@ pub(crate) fn structure_read_output(metadata: Option<&serde_json::Value>) -> Opt
                 .and_then(|v| v.as_u64())
                 .filter(|n| *n > 0)
                 .unwrap_or(1);
-            Some(serde_json::json!({ "start_line": start_line, "content": text }).to_string())
+            Some(
+                serde_json::json!({ "start_line": start_line, "content": text })
+                    .to_string(),
+            )
         }
         "directory" => {
             let entries: Vec<&str> = display
@@ -2347,13 +1770,20 @@ fn is_compaction_only(blocks: &[ContentBlock]) -> bool {
 /// An abort is reported as an abort rather than an error: OpenCode fills its
 /// `message` with boilerplate ("The operation was aborted.") that says less than
 /// the name does.
+///
+/// OpenCode 2 flattened the envelope to `{type, message}`
+/// (`Session.StructuredError`); its migration maps each 1.x name onto a type
+/// (`MessageAbortedError` → `aborted`, `APIError` → `provider.error`, …), so
+/// both shapes are read here.
 fn assistant_error_text(message: &serde_json::Value) -> Option<String> {
     let error = message.get("error")?;
-    let name = pick_str(Some(error), &["name"]).unwrap_or("UnknownError");
-    if name == "MessageAbortedError" {
+    let name = pick_str(Some(error), &["name", "type"]).unwrap_or("UnknownError");
+    if name == "MessageAbortedError" || name == "aborted" {
         return Some("[opencode aborted]".to_string());
     }
-    Some(match pick_str(error.get("data"), &["message"]) {
+    let detail =
+        pick_str(error.get("data"), &["message"]).or_else(|| pick_str(Some(error), &["message"]));
+    Some(match detail {
         Some(detail) => format!("[opencode {name}] {}", truncate_str(detail, 2000)),
         None => format!("[opencode {name}]"),
     })
@@ -2558,7 +1988,7 @@ fn group_into_turns(messages: Vec<UnifiedMessage>) -> Vec<MessageTurn> {
                 duration_ms: None,
                 model: None,
                 completed_at: msg.completed_at,
-                agent_message_id: None,
+            agent_message_id: None,
             });
             i += 1;
         } else if matches!(msg.role, MessageRole::System) {
@@ -2571,7 +2001,7 @@ fn group_into_turns(messages: Vec<UnifiedMessage>) -> Vec<MessageTurn> {
                 duration_ms: None,
                 model: None,
                 completed_at: msg.completed_at,
-                agent_message_id: None,
+            agent_message_id: None,
             });
             i += 1;
         } else {
@@ -2611,7 +2041,7 @@ fn group_into_turns(messages: Vec<UnifiedMessage>) -> Vec<MessageTurn> {
                 duration_ms,
                 model: turn_model,
                 completed_at,
-                agent_message_id: None,
+            agent_message_id: None,
             });
         }
     }
@@ -2730,10 +2160,326 @@ async fn batch_load_subagent_tool_calls(
     result
 }
 
+/// The items of a 2.x assistant message (`data.content`) — `text`,
+/// `reasoning` and `tool` — in order.
+fn v2_content(message: &serde_json::Value) -> impl Iterator<Item = &serde_json::Value> {
+    message
+        .get("content")
+        .and_then(|c| c.as_array())
+        .into_iter()
+        .flatten()
+}
+
+/// A sub-agent launch in a 2.x assistant message.
+///
+/// It goes by two names. History the 1.x migration carried over keeps the 1.x
+/// call verbatim: `task`, taking `subagent_type` and reporting the child in
+/// `metadata.sessionId`. OpenCode 2 renamed the tool `subagent`, which takes
+/// `agent` and reports `metadata.sessionID`.
+struct V2AgentCall<'a> {
+    agent_type: &'a str,
+    /// The child session the sub-agent runs in, once it has been created.
+    session_id: Option<&'a str>,
+}
+
+fn v2_agent_call(part: &serde_json::Value) -> Option<V2AgentCall<'_>> {
+    if part.get("type").and_then(|t| t.as_str()) != Some("tool") {
+        return None;
+    }
+    let state = part.get("state");
+    let input = state.and_then(|s| s.get("input"));
+    let agent_type = match part.get("name").and_then(|n| n.as_str())? {
+        "task" => pick_str(input, &["subagent_type"]),
+        "subagent" => pick_str(input, &["agent"]),
+        _ => None,
+    }?;
+    Some(V2AgentCall {
+        agent_type,
+        session_id: pick_str(
+            state.and_then(|s| s.get("metadata")),
+            &["sessionId", "sessionID"],
+        ),
+    })
+}
+
+/// A 2.x user message: the prompt, then its attachments. An attachment
+/// carries its content inline (`files[].data`), so an image renders as one;
+/// any other file is named, unless the prompt already mentions it — its
+/// `mention` is a span of the prompt text.
+fn v2_user_blocks(message: &serde_json::Value) -> Vec<ContentBlock> {
+    let mut blocks = Vec::new();
+    if let Some(text) = pick_str(Some(message), &["text"]) {
+        blocks.push(ContentBlock::Text {
+            text: text.to_string(),
+        });
+    }
+    let files = message.get("files").and_then(|f| f.as_array());
+    for file in files.into_iter().flatten() {
+        if let Some(image) = extract_opencode_file_image(file) {
+            blocks.push(image);
+        } else if file.get("mention").is_none() {
+            if let Some(name) =
+                pick_str(Some(file), &["name"]).or_else(|| pick_str(file.get("source"), &["uri"]))
+            {
+                blocks.push(ContentBlock::Text {
+                    text: format!("@{name}"),
+                });
+            }
+        }
+    }
+    blocks
+}
+
+/// The blocks of a 2.x assistant message: its text, its reasoning, and each
+/// tool call as a call/result pair — what `load_sqlite_parts` builds from 1.x
+/// parts, through the same `normalize_tool_call`.
+fn v2_assistant_blocks(
+    message: &serde_json::Value,
+    subagent_tools: &HashMap<String, Vec<AgentToolCall>>,
+) -> Vec<ContentBlock> {
+    let mut blocks = Vec::new();
+    for part in v2_content(message) {
+        match part.get("type").and_then(|t| t.as_str()).unwrap_or("") {
+            "text" => {
+                if let Some(text) = pick_str(Some(part), &["text"]) {
+                    blocks.push(ContentBlock::Text {
+                        text: text.to_string(),
+                    });
+                }
+            }
+            "reasoning" => {
+                if let Some(text) = pick_str(Some(part), &["text"]) {
+                    blocks.push(ContentBlock::Thinking {
+                        text: text.to_string(),
+                    });
+                }
+            }
+            "tool" => {
+                let call_id = part.get("id").and_then(|c| c.as_str()).map(str::to_string);
+                if let Some(call) = v2_agent_call(part) {
+                    blocks.extend(v2_agent_blocks(part, &call, call_id, subagent_tools));
+                    continue;
+                }
+                let tool_name = part
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("unknown");
+                let normalized = normalize_tool_call(tool_name, part.get("state"));
+                blocks.push(ContentBlock::ToolUse {
+                    tool_use_id: call_id.clone(),
+                    tool_name: normalized.tool_name,
+                    input_preview: normalized.input_preview,
+                    status: None,
+                    meta: None,
+                });
+                blocks.push(ContentBlock::ToolResult {
+                    tool_use_id: call_id,
+                    output_preview: normalized.output_preview,
+                    is_error: normalized.is_error,
+                    agent_stats: None,
+                    images: Vec::new(),
+                });
+            }
+            _ => {}
+        }
+    }
+    blocks
+}
+
+/// The Agent card for a 2.x sub-agent launch — the pair `load_sqlite_parts`
+/// builds for a 1.x `task` call, with the child session's tool calls folded in.
+fn v2_agent_blocks(
+    part: &serde_json::Value,
+    call: &V2AgentCall<'_>,
+    call_id: Option<String>,
+    subagent_tools: &HashMap<String, Vec<AgentToolCall>>,
+) -> [ContentBlock; 2] {
+    let state = part.get("state");
+    let input = state.and_then(|s| s.get("input"));
+    let metadata = state.and_then(|s| s.get("metadata"));
+    let status = pick_str(state, &["status"]).unwrap_or("");
+
+    let mut agent_input = serde_json::json!({
+        "subagent_type": call.agent_type,
+        "description": pick_str(input, &["description"]).unwrap_or(""),
+        "prompt": input
+            .and_then(|i| i.get("prompt"))
+            .and_then(|v| v.as_str())
+            .unwrap_or(""),
+    });
+    // A migrated call records the model the child ran on; a 2.x call carries
+    // only the `model` its caller asked for, if any.
+    if let Some(model) = pick_str(metadata.and_then(|m| m.get("model")), &["modelID", "id"])
+        .or_else(|| pick_str(input, &["model"]))
+    {
+        agent_input["model"] = serde_json::Value::String(model.to_string());
+    }
+
+    // As for a 1.x `task`: a launch that failed has no result, only an error.
+    let output_preview = tool_content_text(state)
+        .map(|raw| extract_subagent_result(&raw))
+        .or_else(|| tool_error_text(state));
+
+    // `ran` is when the call started executing, after its input streamed in;
+    // a migrated call only has `created` (1.x's `state.time.start`).
+    let time = part.get("time");
+    let start_ms = time
+        .and_then(|t| t.get("ran").or_else(|| t.get("created")))
+        .and_then(|v| v.as_i64());
+    let end_ms = time
+        .and_then(|t| t.get("completed"))
+        .and_then(|v| v.as_i64());
+    let duration_ms = match (start_ms, end_ms) {
+        (Some(s), Some(e)) if e > s => Some((e - s) as u64),
+        _ => None,
+    };
+
+    let tool_calls = call
+        .session_id
+        .and_then(|sid| subagent_tools.get(sid))
+        .cloned()
+        .unwrap_or_default();
+    let tool_count = tool_calls.len() as u32;
+    let is_error = is_error_status(status) || state.and_then(|s| s.get("error")).is_some();
+
+    [
+        ContentBlock::ToolUse {
+            tool_use_id: call_id.clone(),
+            tool_name: "Agent".to_string(),
+            input_preview: Some(agent_input.to_string()),
+            status: None,
+            meta: None,
+        },
+        ContentBlock::ToolResult {
+            tool_use_id: call_id,
+            output_preview,
+            is_error,
+            agent_stats: Some(AgentExecutionStats {
+                agent_type: Some(call.agent_type.to_string()),
+                status: Some(status.to_string()),
+                total_duration_ms: duration_ms,
+                total_tokens: None,
+                total_tool_use_count: (tool_count > 0).then_some(tool_count),
+                read_count: None,
+                search_count: None,
+                bash_count: None,
+                edit_file_count: None,
+                lines_added: None,
+                lines_removed: None,
+                other_tool_count: None,
+                tool_calls,
+                // As for a 1.x `task`, the child's transcript is folded into
+                // this block rather than opened as a session of its own.
+                child_session_id: None,
+            }),
+            images: Vec::new(),
+        },
+    ]
+}
+
+/// The sub-agent's answer out of a 2.x launch result. A migrated `task` wraps
+/// it in `<task_result>` (see `extract_task_result_content`); 2.x's
+/// `subagent` in `<subagent sessionID="…" state="completed">…</subagent>`.
+/// Anything else, such as a background launch's notice, is returned as-is.
+fn extract_subagent_result(raw: &str) -> String {
+    if raw.contains("<task_result>") {
+        return extract_task_result_content(raw);
+    }
+    let trimmed = raw.trim();
+    if let Some(rest) = trimmed
+        .strip_prefix("<subagent")
+        .filter(|rest| rest.starts_with([' ', '>']))
+    {
+        if let Some(open_end) = rest.find('>') {
+            let body = &rest[open_end + 1..];
+            let body = body.strip_suffix("</subagent>").unwrap_or(body).trim();
+            if !body.is_empty() {
+                return body.to_string();
+            }
+        }
+    }
+    raw.to_string()
+}
+
+/// [`batch_load_subagent_tool_calls`] for sub-agents that ran in OpenCode 2's
+/// store, where a child's tool calls are items of its assistant messages.
+async fn batch_load_v2_subagent_tool_calls(
+    conn: &DatabaseConnection,
+    session_ids: &[String],
+) -> HashMap<String, Vec<AgentToolCall>> {
+    if session_ids.is_empty() {
+        return HashMap::new();
+    }
+
+    let placeholders: Vec<&str> = session_ids.iter().map(|_| "?").collect();
+    let sql = format!(
+        r#"
+        SELECT session_id, data
+        FROM session_message
+        WHERE session_id IN ({})
+          AND type = 'assistant'
+        ORDER BY session_id, seq ASC
+        "#,
+        placeholders.join(", ")
+    );
+    let values: Vec<sea_orm::Value> = session_ids.iter().map(|s| s.as_str().into()).collect();
+
+    let rows = match conn
+        .query_all(Statement::from_sql_and_values(
+            DbBackend::Sqlite,
+            &sql,
+            values,
+        ))
+        .await
+    {
+        Ok(r) => r,
+        Err(_) => return HashMap::new(),
+    };
+
+    let mut result: HashMap<String, Vec<AgentToolCall>> = HashMap::new();
+    for row in rows {
+        let Ok(sid) = row.try_get::<String>("", "session_id") else {
+            continue;
+        };
+        let Ok(data_raw) = row.try_get::<String>("", "data") else {
+            continue;
+        };
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(&data_raw) else {
+            continue;
+        };
+
+        for part in v2_content(&value) {
+            // Nested launches are skipped, as for 1.x, to avoid recursion.
+            if part.get("type").and_then(|t| t.as_str()) != Some("tool")
+                || v2_agent_call(part).is_some()
+            {
+                continue;
+            }
+            let tool_name = part
+                .get("name")
+                .and_then(|n| n.as_str())
+                .unwrap_or("unknown");
+            let state = part.get("state");
+            let normalized = normalize_tool_call(tool_name, state);
+            let status = pick_str(state, &["status"]).unwrap_or("");
+
+            result.entry(sid.clone()).or_default().push(AgentToolCall {
+                tool_name: normalized.tool_name,
+                input_preview: normalized.input_preview.map(|s| truncate_str(&s, 500)),
+                output_preview: normalized.output_preview.map(|s| truncate_str(&s, 500)),
+                is_error: is_error_status(status) || normalized.is_error,
+            });
+        }
+    }
+
+    result
+}
+
 #[cfg(test)]
 mod tests {
     use super::{extract_opencode_file_image, resolve_xdg_data_home};
     use crate::models::ContentBlock;
+    use sea_orm::{ConnectionTrait, DbBackend, Statement};
     use std::path::PathBuf;
 
     #[test]
@@ -2773,35 +2519,6 @@ mod tests {
 
     fn normalized(raw_tool: &str, state: serde_json::Value) -> super::NormalizedToolCall {
         super::normalize_tool_call(raw_tool, Some(&state))
-    }
-
-    #[test]
-    fn v2_tool_state_uses_content_and_error_objects() {
-        let with_content = super::normalize_v2_tool_call(
-            "read",
-            Some(&serde_json::json!({
-                "status": "error",
-                "input": { "path": "missing.txt" },
-                "content": [{ "type": "text", "text": "missing output" }],
-                "error": { "type": "ProviderError", "message": "missing" }
-            })),
-        );
-        assert!(with_content.is_error);
-        assert_eq!(
-            with_content.output_preview.as_deref(),
-            Some("missing output")
-        );
-
-        let error_only = super::normalize_v2_tool_call(
-            "read",
-            Some(&serde_json::json!({
-                "status": "error",
-                "input": { "path": "missing.txt" },
-                "error": { "type": "ProviderError", "message": "missing" }
-            })),
-        );
-        assert!(error_only.is_error);
-        assert_eq!(error_only.output_preview.as_deref(), Some("missing"));
     }
 
     fn input_of(call: &super::NormalizedToolCall) -> serde_json::Value {
@@ -3199,10 +2916,7 @@ mod tests {
         // rendered as single-select.
         let call = normalized("question", question_state());
         let input = input_of(&call);
-        assert_eq!(
-            input["questions"][1]["multiSelect"],
-            serde_json::json!(true)
-        );
+        assert_eq!(input["questions"][1]["multiSelect"], serde_json::json!(true));
         // Untouched where the source said nothing, and the rest is verbatim.
         assert!(input["questions"][0].get("multiSelect").is_none());
         assert_eq!(
@@ -3298,6 +3012,27 @@ mod tests {
             Some("[opencode UnknownError]")
         );
         assert!(super::assistant_error_text(&serde_json::json!({ "role": "assistant" })).is_none());
+
+        // 2.x's flat `{type, message}` — read before, it came out as a bare
+        // "[opencode UnknownError]" with the provider's message dropped.
+        assert_eq!(
+            super::assistant_error_text(&serde_json::json!({
+                "error": {
+                    "type": "provider.invalid-request",
+                    "message": "fake provider rejected the request",
+                    "status": 400
+                }
+            }))
+            .as_deref(),
+            Some("[opencode provider.invalid-request] fake provider rejected the request")
+        );
+        assert_eq!(
+            super::assistant_error_text(&serde_json::json!({
+                "error": { "type": "aborted", "message": "The operation was aborted." }
+            }))
+            .as_deref(),
+            Some("[opencode aborted]")
+        );
     }
 
     #[test]
@@ -3320,9 +3055,7 @@ mod tests {
         assert!(super::is_compaction_only(&[compaction(), result()]));
         // Anything the user actually said keeps the message theirs.
         assert!(!super::is_compaction_only(&[
-            ContentBlock::Text {
-                text: "carry on".into()
-            },
+            ContentBlock::Text { text: "carry on".into() },
             compaction(),
         ]));
         // A different tool's pair is not a compaction, and neither is nothing.
@@ -3372,9 +3105,7 @@ mod tests {
     /// renaming one to that must not send it back to the fallback.
     #[test]
     fn only_opencodes_own_generated_name_counts_as_untitled() {
-        assert!(super::is_default_title(
-            "New session - 2026-09-16T03:09:14.543Z"
-        ));
+        assert!(super::is_default_title("New session - 2026-09-16T03:09:14.543Z"));
         assert!(super::is_default_title(
             "Child session - 2026-09-16T03:09:14.543Z"
         ));
@@ -3464,10 +3195,7 @@ mod tests {
             ),
             None
         );
-        assert_eq!(
-            super::resolve_title(None, Some("hi".into())).as_deref(),
-            Some("hi")
-        );
+        assert_eq!(super::resolve_title(None, Some("hi".into())).as_deref(), Some("hi"));
     }
 
     /// The fallback runs the same folding and capping every other agent's
@@ -3491,5 +3219,1107 @@ mod tests {
             .as_deref(),
             Some("look at notes.md")
         );
+    }
+
+    /// OpenCode 2 returns a tool's result as `state.content` items and its
+    /// failure as `{type, message}`; the shapes below are what 2.0.16 wrote.
+    #[test]
+    fn a_2x_tool_result_is_read_from_its_content_items() {
+        let shell = normalized(
+            "shell",
+            serde_json::json!({
+                "status": "completed",
+                "input": { "command": "false" },
+                "content": [
+                    { "type": "text", "text": "boom\n" },
+                    { "type": "text", "text": "Exit code 1" }
+                ],
+                "metadata": { "status": "completed", "truncated": false, "exit": 1 }
+            }),
+        );
+        assert!(!shell.is_error);
+        assert_eq!(shell.output_preview.as_deref(), Some("boom\n\nExit code 1"));
+
+        // File items are not text; only the text beside them is the result.
+        let image = normalized(
+            "read",
+            serde_json::json!({
+                "status": "completed",
+                "input": { "path": "/p/shot.png" },
+                "content": [
+                    { "type": "text", "text": "Image read successfully" },
+                    { "type": "file", "uri": "data:image/png;base64,iVBORw0KGgo=", "mime": "image/png" }
+                ]
+            }),
+        );
+        assert_eq!(
+            image.output_preview.as_deref(),
+            Some("Image read successfully")
+        );
+        assert_eq!(input_of(&image)["file_path"], "/p/shot.png");
+
+        let failed = normalized(
+            "read",
+            serde_json::json!({
+                "status": "error",
+                "input": { "path": "/p/missing.ts" },
+                "error": { "type": "tool.execution", "message": "File not found: /p/missing.ts" }
+            }),
+        );
+        assert!(failed.is_error);
+        assert_eq!(
+            failed.output_preview.as_deref(),
+            Some("File not found: /p/missing.ts")
+        );
+    }
+
+    /// 2.x reports an edit's diff per file (`metadata.files[].patch`), which
+    /// carries the same first-hunk line the 1.x `metadata.diff` did.
+    #[test]
+    fn a_2x_edit_takes_its_start_line_from_the_per_file_patch() {
+        let call = normalized(
+            "edit",
+            serde_json::json!({
+                "status": "completed",
+                "input": { "path": "/p/notes.txt", "oldString": "two", "newString": "three" },
+                "content": [{ "type": "text", "text": "Edited /p/notes.txt (1 replacement)" }],
+                "metadata": {
+                    "files": [{
+                        "file": "/p/notes.txt",
+                        "patch": "--- /p/notes.txt\n+++ /p/notes.txt\n@@ -7,2 +7,2 @@\n one\n-two\n+three\n",
+                        "additions": 1,
+                        "deletions": 1
+                    }]
+                }
+            }),
+        );
+        let input = input_of(&call);
+        assert_eq!(input["file_path"], "/p/notes.txt");
+        assert_eq!(input["old_string"], "two");
+        assert_eq!(input["_start_line"], serde_json::json!(7));
+    }
+
+    #[test]
+    fn sub_agent_launches_are_recognised_under_both_names() {
+        // History the 1.x migration carried over verbatim.
+        let migrated = serde_json::json!({
+            "type": "tool",
+            "id": "call_1",
+            "name": "task",
+            "state": {
+                "status": "completed",
+                "input": { "subagent_type": "general", "prompt": "p", "description": "d" },
+                "metadata": { "sessionId": "ses_child" }
+            }
+        });
+        let call = super::v2_agent_call(&migrated).expect("a migrated task call");
+        assert_eq!(call.agent_type, "general");
+        assert_eq!(call.session_id, Some("ses_child"));
+
+        // 2.x's own tool.
+        let native = serde_json::json!({
+            "type": "tool",
+            "id": "call_2",
+            "name": "subagent",
+            "state": {
+                "status": "completed",
+                "input": { "agent": "explore", "prompt": "p", "description": "d" },
+                "metadata": { "sessionID": "ses_other", "status": "completed" }
+            }
+        });
+        let call = super::v2_agent_call(&native).expect("a subagent call");
+        assert_eq!(call.agent_type, "explore");
+        assert_eq!(call.session_id, Some("ses_other"));
+
+        // Still streaming its input (a JSON fragment), and an ordinary tool.
+        let streaming = serde_json::json!({
+            "type": "tool",
+            "name": "subagent",
+            "state": { "status": "streaming", "input": "{\"agent\":\"gen" }
+        });
+        assert!(super::v2_agent_call(&streaming).is_none());
+        let shell = serde_json::json!({
+            "type": "tool",
+            "name": "shell",
+            "state": { "status": "completed", "input": { "command": "ls" } }
+        });
+        assert!(super::v2_agent_call(&shell).is_none());
+    }
+
+    #[test]
+    fn a_sub_agent_answer_is_unwrapped_from_either_envelope() {
+        assert_eq!(
+            super::extract_subagent_result(
+                "<subagent sessionID=\"ses_1\" state=\"completed\">\nchild finished\n</subagent>"
+            ),
+            "child finished"
+        );
+        assert_eq!(
+            super::extract_subagent_result(
+                "task_id: ses_1 (for resuming to continue this task if needed)\n\n<task_result>\nfound it\n</task_result>"
+            ),
+            "found it"
+        );
+        // A background launch reports where the work went, not an answer.
+        let background = "The subagent is working in the background (sessionID: ses_1).";
+        assert_eq!(super::extract_subagent_result(background), background);
+    }
+
+    /// A scratch `opencode.db`, built from the statements queued on it.
+    struct DbFixture {
+        statements: Vec<Statement>,
+    }
+
+    impl DbFixture {
+        fn new(schema: &[&str]) -> Self {
+            let mut fixture = Self {
+                statements: Vec::new(),
+            };
+            for ddl in schema {
+                fixture.exec(ddl, []);
+            }
+            fixture
+        }
+
+        fn exec(&mut self, sql: &str, values: impl IntoIterator<Item = sea_orm::Value>) {
+            self.statements.push(Statement::from_sql_and_values(
+                DbBackend::Sqlite,
+                sql,
+                values,
+            ));
+        }
+
+        fn legacy_session(&mut self, id: &str, title: &str, created: i64, updated: i64) {
+            self.exec(
+                "INSERT INTO session (id, directory, title, time_created, time_updated) \
+                 VALUES (?, '/work/app', ?, ?, ?)",
+                [id.into(), title.into(), created.into(), updated.into()],
+            );
+        }
+
+        /// A legacy message with one text part.
+        fn legacy_text(&mut self, session: &str, id: &str, role: &str, created: i64, text: &str) {
+            let data = serde_json::json!({ "role": role, "time": { "created": created } });
+            self.exec(
+                "INSERT INTO message (id, session_id, time_created, data) VALUES (?, ?, ?, ?)",
+                [
+                    id.into(),
+                    session.into(),
+                    created.into(),
+                    data.to_string().into(),
+                ],
+            );
+            let part = serde_json::json!({ "type": "text", "text": text });
+            self.exec(
+                "INSERT INTO part (id, message_id, time_created, data) VALUES (?, ?, ?, ?)",
+                [
+                    format!("prt_{id}").into(),
+                    id.into(),
+                    created.into(),
+                    part.to_string().into(),
+                ],
+            );
+        }
+
+        fn v2_session(
+            &mut self,
+            id: &str,
+            parent: Option<&str>,
+            title: Option<&str>,
+            created: i64,
+            updated: i64,
+        ) {
+            self.exec(
+                "INSERT INTO session_v2 (id, parent_id, directory, title, time_created, time_updated) \
+                 VALUES (?, ?, '/work/app', ?, ?, ?)",
+                [
+                    id.into(),
+                    parent.map(str::to_string).into(),
+                    title.map(str::to_string).into(),
+                    created.into(),
+                    updated.into(),
+                ],
+            );
+        }
+
+        fn v2_message(
+            &mut self,
+            session: &str,
+            id: &str,
+            seq: i64,
+            kind: &str,
+            created: i64,
+            data: serde_json::Value,
+        ) {
+            self.exec(
+                "INSERT INTO session_message \
+                 (id, session_id, type, seq, time_created, time_updated, data) \
+                 VALUES (?, ?, ?, ?, ?, ?, ?)",
+                [
+                    id.into(),
+                    session.into(),
+                    kind.into(),
+                    seq.into(),
+                    created.into(),
+                    created.into(),
+                    data.to_string().into(),
+                ],
+            );
+        }
+
+        fn build(self) -> (tempfile::TempDir, super::OpenCodeParser) {
+            let dir = tempfile::tempdir().expect("tempdir");
+            let db_path = dir.path().join("opencode.db");
+            let runtime = tokio::runtime::Builder::new_current_thread()
+                .enable_all()
+                .build()
+                .expect("runtime");
+            runtime.block_on(async {
+                let conn =
+                    sea_orm::Database::connect(format!("sqlite:{}?mode=rwc", db_path.display()))
+                        .await
+                        .expect("open sqlite");
+                for statement in self.statements {
+                    conn.execute(statement).await.expect("fixture statement");
+                }
+                conn.close().await.expect("close sqlite");
+            });
+            let parser = super::OpenCodeParser::with_base_dir(dir.path().to_path_buf());
+            (dir, parser)
+        }
+    }
+
+    const LEGACY_TABLES: [&str; 3] = [
+        "CREATE TABLE session (id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT, \
+         title TEXT NOT NULL, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL)",
+        "CREATE TABLE message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, \
+         time_created INTEGER NOT NULL, data TEXT NOT NULL)",
+        "CREATE TABLE part (id TEXT PRIMARY KEY, message_id TEXT NOT NULL, \
+         time_created INTEGER NOT NULL, data TEXT NOT NULL)",
+    ];
+
+    const V2_TABLES: [&str; 2] = [
+        "CREATE TABLE session_v2 (id TEXT PRIMARY KEY, parent_id TEXT, directory TEXT NOT NULL, \
+         title TEXT, time_created INTEGER NOT NULL, time_updated INTEGER NOT NULL)",
+        "CREATE TABLE session_message (id TEXT PRIMARY KEY, session_id TEXT NOT NULL, \
+         type TEXT NOT NULL, seq INTEGER NOT NULL, time_created INTEGER NOT NULL, \
+         time_updated INTEGER NOT NULL, data TEXT NOT NULL)",
+    ];
+
+    fn text_blocks(blocks: &[ContentBlock]) -> Vec<&str> {
+        blocks
+            .iter()
+            .filter_map(|block| match block {
+                ContentBlock::Text { text } => Some(text.as_str()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// A fresh 2.x install has no legacy tables at all — the database every
+    /// read used to fail on with `no such table: session`. The rows mirror
+    /// what OpenCode 2.0.16 wrote for a real run: an unnamed session (its
+    /// title request failed), a `shell` call, a `subagent` launch whose child
+    /// ran a `shell` of its own, a rejected request, and the bookkeeping rows
+    /// around them.
+    #[test]
+    fn a_2x_only_database_lists_and_reads_its_sessions() {
+        use crate::models::TurnRole;
+        use crate::parsers::AgentParser;
+
+        let t0: i64 = 1_790_612_421_000;
+        let model = serde_json::json!({ "id": "test-model", "providerID": "test" });
+        let tokens = serde_json::json!({
+            "input": 100, "output": 20, "reasoning": 0, "cache": { "read": 0, "write": 0 }
+        });
+
+        let mut fx = DbFixture::new(&V2_TABLES);
+        fx.v2_session("ses_main", None, None, t0, t0 + 9_000);
+        fx.v2_session(
+            "ses_child",
+            Some("ses_main"),
+            Some("Probe child"),
+            t0 + 110,
+            t0 + 190,
+        );
+
+        fx.v2_message(
+            "ses_main",
+            "msg_01",
+            4,
+            "user",
+            t0 + 10,
+            serde_json::json!({
+                "time": { "created": t0 + 10 },
+                "text": "exercise the tools",
+                "files": [{
+                    "data": "iVBORw0KGgo=",
+                    "mime": "image/png",
+                    "source": { "type": "inline" },
+                    "name": "shot.png"
+                }]
+            }),
+        );
+        fx.v2_message(
+            "ses_main",
+            "msg_02",
+            5,
+            "synthetic",
+            t0 + 11,
+            serde_json::json!({
+                "time": { "created": t0 + 11 },
+                "text": "Text written for the model, not by the user."
+            }),
+        );
+        fx.v2_message(
+            "ses_main",
+            "msg_03",
+            6,
+            "assistant",
+            t0 + 20,
+            serde_json::json!({
+                "time": { "created": t0 + 20, "completed": t0 + 90 },
+                "agent": "build",
+                "model": model,
+                "tokens": tokens,
+                "content": [
+                    { "type": "reasoning", "text": "Run it first." },
+                    { "type": "text", "text": "Running it." },
+                    {
+                        "type": "tool",
+                        "id": "call_main_1",
+                        "name": "shell",
+                        "state": {
+                            "status": "completed",
+                            "input": { "command": "echo hi" },
+                            "content": [
+                                { "type": "text", "text": "hi\n" },
+                                { "type": "text", "text": "Exit code 1" }
+                            ],
+                            "metadata": { "status": "completed", "truncated": false, "exit": 1 }
+                        },
+                        "time": { "created": t0 + 30, "ran": t0 + 31, "completed": t0 + 80 }
+                    }
+                ]
+            }),
+        );
+        fx.v2_message("ses_main", "msg_04", 7, "assistant", t0 + 100, serde_json::json!({
+            "time": { "created": t0 + 100, "completed": t0 + 210 },
+            "agent": "build",
+            "model": model,
+            "tokens": tokens,
+            "content": [{
+                "type": "tool",
+                "id": "call_main_2",
+                "name": "subagent",
+                "state": {
+                    "status": "completed",
+                    "input": { "agent": "general", "description": "Probe child", "prompt": "run echo" },
+                    "content": [{
+                        "type": "text",
+                        "text": "<subagent sessionID=\"ses_child\" state=\"completed\">\nchild finished\n</subagent>"
+                    }],
+                    "metadata": { "sessionID": "ses_child", "status": "completed", "truncated": false }
+                },
+                "time": { "created": t0 + 101, "ran": t0 + 110, "completed": t0 + 200 }
+            }]
+        }));
+        fx.v2_message(
+            "ses_main",
+            "msg_05",
+            8,
+            "system",
+            t0 + 205,
+            serde_json::json!({
+                "time": { "created": t0 + 205 },
+                "text": "The available tools have changed."
+            }),
+        );
+        fx.v2_message(
+            "ses_main",
+            "msg_06",
+            9,
+            "idle",
+            t0 + 211,
+            serde_json::json!({
+                "time": { "created": t0 + 211 },
+                "outcome": "succeeded"
+            }),
+        );
+        // Same millisecond, and ids that sort the other way round: only `seq`
+        // puts the prompt before the reply it got.
+        fx.v2_message(
+            "ses_main",
+            "msg_zz",
+            10,
+            "user",
+            t0 + 8_000,
+            serde_json::json!({
+                "time": { "created": t0 + 8_000 },
+                "text": "please fail now"
+            }),
+        );
+        fx.v2_message(
+            "ses_main",
+            "msg_aa",
+            11,
+            "assistant",
+            t0 + 8_000,
+            serde_json::json!({
+                "time": { "created": t0 + 8_000, "completed": t0 + 8_005 },
+                "agent": "build",
+                "model": model,
+                "finish": "error",
+                "content": [],
+                "error": {
+                    "type": "provider.invalid-request",
+                    "message": "fake provider rejected the request",
+                    "status": 400
+                }
+            }),
+        );
+        fx.v2_message(
+            "ses_main",
+            "msg_ab",
+            12,
+            "assistant",
+            t0 + 8_010,
+            serde_json::json!({
+                "time": { "created": t0 + 8_010, "completed": t0 + 8_020 },
+                "agent": "build",
+                "model": model,
+                "content": [],
+                "error": { "type": "aborted", "message": "The operation was aborted." }
+            }),
+        );
+
+        fx.v2_message(
+            "ses_child",
+            "msg_c1",
+            0,
+            "user",
+            t0 + 111,
+            serde_json::json!({
+                "time": { "created": t0 + 111 },
+                "text": "You are a subagent spawned by another session.\nrun echo"
+            }),
+        );
+        fx.v2_message(
+            "ses_child",
+            "msg_c2",
+            1,
+            "assistant",
+            t0 + 120,
+            serde_json::json!({
+                "time": { "created": t0 + 120, "completed": t0 + 160 },
+                "agent": "general",
+                "model": model,
+                "content": [{
+                    "type": "tool",
+                    "id": "call_child_1",
+                    "name": "shell",
+                    "state": {
+                        "status": "completed",
+                        "input": { "command": "echo child-output" },
+                        "content": [{ "type": "text", "text": "child-output\n" }]
+                    },
+                    "time": { "created": t0 + 121, "ran": t0 + 122, "completed": t0 + 150 }
+                }]
+            }),
+        );
+        fx.v2_message(
+            "ses_child",
+            "msg_c3",
+            2,
+            "assistant",
+            t0 + 170,
+            serde_json::json!({
+                "time": { "created": t0 + 170, "completed": t0 + 180 },
+                "agent": "general",
+                "model": model,
+                "content": [{ "type": "text", "text": "child finished" }]
+            }),
+        );
+        let (_dir, parser) = fx.build();
+
+        let listed = parser.list_conversations().expect("list");
+        let ids: Vec<&str> = listed.iter().map(|s| s.id.as_str()).collect();
+        assert_eq!(ids, ["ses_child", "ses_main"], "newest first");
+        let main = &listed[1];
+        // 2.x leaves a session it could not name untitled; the opening prompt
+        // stands in, as it does for 1.x's placeholder title.
+        assert_eq!(main.title.as_deref(), Some("exercise the tools"));
+        // The user's and the assistant's messages only — not the synthetic,
+        // system and idle rows between them.
+        assert_eq!(main.message_count, 6);
+        assert_eq!(main.model.as_deref(), Some("test-model"));
+        assert_eq!(listed[0].parent_id.as_deref(), Some("ses_main"));
+        assert_eq!(listed[0].title.as_deref(), Some("Probe child"));
+
+        let detail = parser.get_conversation("ses_main").expect("detail");
+        assert_eq!(detail.summary.title.as_deref(), Some("exercise the tools"));
+        let roles: Vec<&str> = detail
+            .turns
+            .iter()
+            .map(|t| match t.role {
+                TurnRole::User => "user",
+                TurnRole::Assistant => "assistant",
+                TurnRole::System => "system",
+            })
+            .collect();
+        assert_eq!(
+            roles,
+            [
+                "user",
+                "assistant",
+                "assistant",
+                "user",
+                "assistant",
+                "assistant"
+            ],
+            "no turn for the synthetic, system or idle rows"
+        );
+
+        match detail.turns[0].blocks.as_slice() {
+            [ContentBlock::Text { text }, ContentBlock::Image { mime_type, uri, .. }] => {
+                assert_eq!(text, "exercise the tools");
+                assert_eq!(mime_type, "image/png");
+                assert_eq!(uri.as_deref(), Some("shot.png"));
+            }
+            other => panic!("unexpected user blocks: {other:?}"),
+        }
+
+        let first = &detail.turns[1];
+        assert_eq!(first.model.as_deref(), Some("test-model"));
+        assert_eq!(first.usage.as_ref().map(|u| u.input_tokens), Some(100));
+        assert_eq!(first.duration_ms, Some(70));
+        match first.blocks.as_slice() {
+            [ContentBlock::Thinking { text: thinking }, ContentBlock::Text { text }, ContentBlock::ToolUse {
+                tool_name,
+                input_preview,
+                ..
+            }, ContentBlock::ToolResult {
+                output_preview,
+                is_error,
+                ..
+            }] => {
+                assert_eq!(thinking, "Run it first.");
+                assert_eq!(text, "Running it.");
+                assert_eq!(tool_name, "shell");
+                assert_eq!(input_preview.as_deref(), Some(r#"{"command":"echo hi"}"#));
+                assert_eq!(output_preview.as_deref(), Some("hi\n\nExit code 1"));
+                assert!(!is_error);
+            }
+            other => panic!("unexpected assistant blocks: {other:?}"),
+        }
+
+        match detail.turns[2].blocks.as_slice() {
+            [ContentBlock::ToolUse {
+                tool_name,
+                input_preview,
+                ..
+            }, ContentBlock::ToolResult {
+                output_preview,
+                agent_stats: Some(stats),
+                is_error,
+                ..
+            }] => {
+                assert_eq!(tool_name, "Agent");
+                let input: serde_json::Value =
+                    serde_json::from_str(input_preview.as_deref().unwrap()).unwrap();
+                assert_eq!(input["subagent_type"], "general");
+                assert_eq!(input["description"], "Probe child");
+                assert_eq!(input["prompt"], "run echo");
+                assert_eq!(output_preview.as_deref(), Some("child finished"));
+                assert!(!is_error);
+                assert_eq!(stats.agent_type.as_deref(), Some("general"));
+                assert_eq!(stats.total_duration_ms, Some(90));
+                assert_eq!(stats.tool_calls.len(), 1, "the child's own tool call");
+                assert_eq!(stats.tool_calls[0].tool_name, "shell");
+                assert_eq!(
+                    stats.tool_calls[0].output_preview.as_deref(),
+                    Some("child-output")
+                );
+            }
+            other => panic!("unexpected agent blocks: {other:?}"),
+        }
+
+        assert_eq!(text_blocks(&detail.turns[3].blocks), ["please fail now"]);
+        assert_eq!(
+            text_blocks(&detail.turns[4].blocks),
+            ["[opencode provider.invalid-request] fake provider rejected the request"]
+        );
+        assert_eq!(text_blocks(&detail.turns[5].blocks), ["[opencode aborted]"]);
+    }
+
+    /// History the 1.x migration carried into `session_message` keeps its 1.x
+    /// tool calls verbatim — `task`, `bash`, camelCase inputs — wrapped in the
+    /// 2.x tool shape. Shapes as a real migrated database holds them.
+    #[test]
+    fn a_migrated_task_call_keeps_its_sub_agent_rows() {
+        use crate::parsers::AgentParser;
+
+        let mut fx = DbFixture::new(&V2_TABLES);
+        fx.v2_session("ses_parent", None, Some("Delegate a search"), 1_000, 40_000);
+        fx.v2_session(
+            "ses_kid",
+            Some("ses_parent"),
+            Some("Search docs"),
+            1_100,
+            30_000,
+        );
+        fx.v2_message(
+            "ses_parent",
+            "msg_p1",
+            0,
+            "user",
+            1_000,
+            serde_json::json!({
+                "time": { "created": 1_000 },
+                "text": "delegate it"
+            }),
+        );
+        fx.v2_message("ses_parent", "msg_p2", 1, "assistant", 1_050, serde_json::json!({
+            "time": { "created": 1_050, "completed": 31_000 },
+            "agent": "build",
+            "model": { "id": "big-pickle", "providerID": "opencode", "variant": "default" },
+            "content": [{
+                "type": "tool",
+                "id": "call_task",
+                "name": "task",
+                "state": {
+                    "status": "completed",
+                    "input": {
+                        "description": "Search docs",
+                        "prompt": "find it",
+                        "subagent_type": "general"
+                    },
+                    "content": [{
+                        "type": "text",
+                        "text": "task_id: ses_kid (for resuming to continue this task if needed)\n\n<task_result>\nfound it\n</task_result>"
+                    }],
+                    "metadata": {
+                        "sessionId": "ses_kid",
+                        "model": { "modelID": "big-pickle", "providerID": "opencode" },
+                        "truncated": false
+                    }
+                },
+                "time": { "created": 1_000, "completed": 29_805 }
+            }]
+        }));
+        fx.v2_message(
+            "ses_kid",
+            "msg_k1",
+            0,
+            "assistant",
+            1_200,
+            serde_json::json!({
+                "time": { "created": 1_200, "completed": 2_000 },
+                "agent": "general",
+                "model": { "id": "big-pickle", "providerID": "opencode" },
+                "content": [
+                    {
+                        "type": "tool",
+                        "id": "call_k1",
+                        "name": "bash",
+                        "state": {
+                            "status": "completed",
+                            "input": { "command": "ls", "description": "List files" },
+                            "content": [{ "type": "text", "text": "a\nb" }],
+                            "metadata": { "output": "a\nb", "exit": 0 }
+                        },
+                        "time": { "created": 1_300, "completed": 1_400 }
+                    },
+                    {
+                        "type": "tool",
+                        "id": "call_k2",
+                        "name": "read",
+                        "state": {
+                            "status": "error",
+                            "input": { "filePath": "/work/app/missing.md" },
+                            "error": { "type": "tool.execution", "message": "File not found" }
+                        },
+                        "time": { "created": 1_500, "completed": 1_600 }
+                    }
+                ]
+            }),
+        );
+        let (_dir, parser) = fx.build();
+
+        let detail = parser.get_conversation("ses_parent").expect("detail");
+        let blocks = &detail.turns[1].blocks;
+        let (input, output, stats) = match blocks.as_slice() {
+            [ContentBlock::ToolUse {
+                tool_name,
+                input_preview,
+                ..
+            }, ContentBlock::ToolResult {
+                output_preview,
+                agent_stats: Some(stats),
+                ..
+            }] if tool_name == "Agent" => (input_preview, output_preview, stats),
+            other => panic!("expected an Agent card, got {other:?}"),
+        };
+        let input: serde_json::Value = serde_json::from_str(input.as_deref().unwrap()).unwrap();
+        assert_eq!(input["subagent_type"], "general");
+        assert_eq!(input["description"], "Search docs");
+        assert_eq!(input["model"], "big-pickle");
+        assert_eq!(output.as_deref(), Some("found it"));
+        assert_eq!(stats.total_duration_ms, Some(28_805));
+
+        let rows: Vec<(&str, bool)> = stats
+            .tool_calls
+            .iter()
+            .map(|call| (call.tool_name.as_str(), call.is_error))
+            .collect();
+        assert_eq!(rows, [("bash", false), ("read", true)]);
+        assert_eq!(
+            stats.tool_calls[0].input_preview.as_deref(),
+            Some(r#"{"command":"ls","description":"List files"}"#)
+        );
+        assert_eq!(
+            stats.tool_calls[1].output_preview.as_deref(),
+            Some("File not found")
+        );
+    }
+
+    /// A database 2.x upgraded keeps both stores, with most sessions in each.
+    /// Every session is listed once, from the copy written last; a copy
+    /// neither side touched since the migration is read from the legacy
+    /// tables, which the migrated copy is a lossy projection of.
+    #[test]
+    fn an_upgraded_database_reads_each_session_from_its_live_copy() {
+        use crate::parsers::AgentParser;
+
+        let mut fx = DbFixture::new(&[&LEGACY_TABLES[..], &V2_TABLES[..]].concat());
+        let v2_text = |fx: &mut DbFixture, session: &str, seq: i64, created: i64, text: &str| {
+            let (kind, data) = if seq % 2 == 0 {
+                (
+                    "user",
+                    serde_json::json!({ "time": { "created": created }, "text": text }),
+                )
+            } else {
+                (
+                    "assistant",
+                    serde_json::json!({
+                        "time": { "created": created },
+                        "model": { "id": "m2", "providerID": "p" },
+                        "content": [{ "type": "text", "text": text }]
+                    }),
+                )
+            };
+            fx.v2_message(
+                session,
+                &format!("msg_{session}_{seq}"),
+                seq,
+                kind,
+                created,
+                data,
+            );
+        };
+
+        // Untouched since the migration: the legacy copy is read.
+        fx.legacy_session("ses_a", "Untouched (legacy copy)", 1_000, 2_000);
+        fx.legacy_text("ses_a", "m_a1", "user", 1_000, "question");
+        fx.legacy_text("ses_a", "m_a2", "assistant", 1_500, "answer from 1.x");
+        fx.v2_session(
+            "ses_a",
+            None,
+            Some("Untouched (migrated copy)"),
+            1_000,
+            2_000,
+        );
+        v2_text(&mut fx, "ses_a", 0, 1_000, "question");
+        v2_text(&mut fx, "ses_a", 1, 1_500, "answer as migrated");
+
+        // Continued in 2.x after the migration.
+        fx.legacy_session("ses_b", "Before 2.x", 3_000, 4_000);
+        fx.legacy_text("ses_b", "m_b1", "user", 3_000, "question");
+        fx.v2_session("ses_b", None, Some("Continued in 2.x"), 3_000, 9_000);
+        v2_text(&mut fx, "ses_b", 0, 3_000, "question");
+        v2_text(&mut fx, "ses_b", 1, 8_500, "answer from 2.x");
+
+        // Continued by a 1.x binary after the migration, which only writes
+        // the legacy tables.
+        fx.legacy_session("ses_c", "Continued in 1.x", 5_000, 9_500);
+        fx.legacy_text("ses_c", "m_c1", "user", 5_000, "question");
+        fx.legacy_text("ses_c", "m_c2", "assistant", 9_000, "later answer from 1.x");
+        fx.v2_session("ses_c", None, Some("Stale migrated copy"), 5_000, 6_000);
+        v2_text(&mut fx, "ses_c", 0, 5_000, "question");
+
+        // A migrated copy that kept none of the conversation must not hide
+        // the legacy one.
+        fx.legacy_session("ses_d", "Only the legacy copy has messages", 6_000, 7_000);
+        fx.legacy_text("ses_d", "m_d1", "user", 6_000, "question");
+        fx.v2_session("ses_d", None, Some("Empty migrated copy"), 6_000, 7_000);
+
+        // But a copy that is empty because 2.x emptied it since is the live
+        // one, and an empty session is not listed.
+        fx.legacy_session("ses_g", "Emptied in 2.x", 500, 600);
+        fx.legacy_text("ses_g", "m_g1", "user", 500, "question");
+        fx.v2_session("ses_g", None, Some("Emptied in 2.x"), 500, 9_900);
+
+        // Only in one store.
+        fx.legacy_session("ses_e", "Created by 1.x after the migration", 7_000, 7_500);
+        fx.legacy_text("ses_e", "m_e1", "user", 7_000, "question");
+        fx.v2_session("ses_f", None, Some("Created by 2.x"), 8_000, 8_500);
+        v2_text(&mut fx, "ses_f", 0, 8_000, "question");
+        let (_dir, parser) = fx.build();
+
+        let listed = parser.list_conversations().expect("list");
+        let titles: Vec<(&str, &str)> = listed
+            .iter()
+            .map(|s| (s.id.as_str(), s.title.as_deref().unwrap_or("")))
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                ("ses_f", "Created by 2.x"),
+                ("ses_e", "Created by 1.x after the migration"),
+                ("ses_d", "Only the legacy copy has messages"),
+                ("ses_c", "Continued in 1.x"),
+                ("ses_b", "Continued in 2.x"),
+                ("ses_a", "Untouched (legacy copy)"),
+            ]
+        );
+
+        let last_text = |id: &str| {
+            let detail = parser.get_conversation(id).expect("detail");
+            let last = detail.turns.last().expect("a turn");
+            (
+                detail.summary.title.clone().unwrap_or_default(),
+                text_blocks(&last.blocks).join(""),
+            )
+        };
+        assert_eq!(
+            last_text("ses_a"),
+            ("Untouched (legacy copy)".into(), "answer from 1.x".into())
+        );
+        assert_eq!(
+            last_text("ses_b"),
+            ("Continued in 2.x".into(), "answer from 2.x".into())
+        );
+        assert_eq!(
+            last_text("ses_c"),
+            ("Continued in 1.x".into(), "later answer from 1.x".into())
+        );
+        assert_eq!(last_text("ses_f").0, "Created by 2.x");
+    }
+
+    /// A legacy message row whose `data` is given whole, plus one text part.
+    fn legacy_message(
+        fx: &mut DbFixture,
+        session: &str,
+        id: &str,
+        created: i64,
+        data: serde_json::Value,
+    ) {
+        fx.exec(
+            "INSERT INTO message (id, session_id, time_created, data) VALUES (?, ?, ?, ?)",
+            [
+                id.into(),
+                session.into(),
+                created.into(),
+                data.to_string().into(),
+            ],
+        );
+        let part = serde_json::json!({ "type": "text", "text": format!("text of {id}") });
+        fx.exec(
+            "INSERT INTO part (id, message_id, time_created, data) VALUES (?, ?, ?, ?)",
+            [
+                format!("prt_{id}").into(),
+                id.into(),
+                created.into(),
+                part.to_string().into(),
+            ],
+        );
+    }
+
+    /// OpenCode's own models.dev cache, reduced to the models these tests use.
+    /// Project config stays off: the fixture sessions' `/work/app` is a real
+    /// path on the machine running the suite.
+    fn catalog_sources(root: &std::path::Path) -> super::ModelLimitSources {
+        let catalog = root.join("models.json");
+        std::fs::write(
+            &catalog,
+            serde_json::json!({
+                "opencode": { "models": {
+                    "big-pickle": { "limit": { "context": 200000, "input": 160000, "output": 32000 } },
+                    "small": { "limit": { "context": 32000, "output": 4096 } }
+                } }
+            })
+            .to_string(),
+        )
+        .expect("write catalog");
+        super::ModelLimitSources {
+            catalog_file: Some(catalog),
+            ..Default::default()
+        }
+    }
+
+    /// The case a reopened session lost its gauge over: a model only
+    /// OpenCode's catalog knows (OpenCode Zen's `big-pickle`), whose window the
+    /// live view got from OpenCode's own `usage_update`.
+    #[test]
+    fn a_reopened_session_is_sized_like_opencode_sizes_it_live() {
+        use crate::parsers::AgentParser;
+
+        let t0: i64 = 1_790_612_421_000;
+        let mut fx = DbFixture::new(&LEGACY_TABLES);
+        fx.legacy_session("ses_zen", "Friendly greeting", t0, t0 + 9_000);
+        fx.legacy_text("ses_zen", "msg_u1", "user", t0 + 10, "hi");
+        legacy_message(
+            &mut fx,
+            "ses_zen",
+            "msg_a1",
+            t0 + 20,
+            serde_json::json!({
+                "role": "assistant",
+                "time": { "created": t0 + 20, "completed": t0 + 90 },
+                "providerID": "opencode",
+                "modelID": "small",
+                "tokens": { "input": 1000, "output": 50, "reasoning": 0, "cache": { "read": 0, "write": 0 } }
+            }),
+        );
+        fx.legacy_text("ses_zen", "msg_u2", "user", t0 + 100, "and again");
+        legacy_message(
+            &mut fx,
+            "ses_zen",
+            "msg_a2",
+            t0 + 110,
+            serde_json::json!({
+                "role": "assistant",
+                "time": { "created": t0 + 110, "completed": t0 + 190 },
+                "providerID": "opencode",
+                "modelID": "big-pickle",
+                "tokens": {
+                    "total": 9348, "input": 7399, "output": 10, "reasoning": 0,
+                    "cache": { "read": 1939, "write": 0 }
+                }
+            }),
+        );
+        let (dir, mut parser) = fx.build();
+
+        // Nothing to look the window up in: `big-pickle` means nothing to the
+        // name guess, so only the occupancy is known.
+        let stats = parser
+            .get_conversation("ses_zen")
+            .expect("detail")
+            .session_stats
+            .expect("stats");
+        assert_eq!(stats.context_window_max_tokens, None);
+        // `input + cache.read + cache.write` of the latest reply: its output is
+        // not resident in the window, and earlier replies are not added in.
+        assert_eq!(stats.context_window_used_tokens, Some(9_338));
+
+        parser.model_limits = catalog_sources(dir.path());
+        let stats = parser
+            .get_conversation("ses_zen")
+            .expect("detail")
+            .session_stats
+            .expect("stats");
+        // The latest reply's model decides, not the session's first.
+        assert_eq!(stats.context_window_max_tokens, Some(200_000));
+        assert_eq!(stats.context_window_used_tokens, Some(9_338));
+        let percent = stats.context_window_usage_percent.expect("percent");
+        assert!((percent - 4.669).abs() < 0.001, "percent was {percent}");
+    }
+
+    #[test]
+    fn a_2x_session_is_sized_by_the_model_its_latest_reply_named() {
+        use crate::parsers::AgentParser;
+
+        let t0: i64 = 1_790_612_421_000;
+        let mut fx = DbFixture::new(&V2_TABLES);
+        fx.v2_session("ses_v2", None, Some("Sized"), t0, t0 + 9_000);
+        fx.v2_message(
+            "ses_v2",
+            "msg_01",
+            1,
+            "user",
+            t0 + 10,
+            serde_json::json!({ "time": { "created": t0 + 10 }, "text": "hi" }),
+        );
+        fx.v2_message(
+            "ses_v2",
+            "msg_02",
+            2,
+            "assistant",
+            t0 + 20,
+            serde_json::json!({
+                "time": { "created": t0 + 20, "completed": t0 + 90 },
+                "model": { "id": "big-pickle", "providerID": "opencode", "variant": null },
+                "tokens": { "input": 3000, "output": 400, "reasoning": 0, "cache": { "read": 1000, "write": 500 } },
+                "content": [{ "type": "text", "text": "hello" }]
+            }),
+        );
+        let (dir, mut parser) = fx.build();
+        parser.model_limits = catalog_sources(dir.path());
+
+        let stats = parser
+            .get_conversation("ses_v2")
+            .expect("detail")
+            .session_stats
+            .expect("stats");
+        assert_eq!(stats.context_window_max_tokens, Some(200_000));
+        assert_eq!(stats.context_window_used_tokens, Some(4_500));
+    }
+
+    /// A custom provider's window lives only in the config it was declared
+    /// in, and a project's config is found from the session's own directory.
+    #[test]
+    fn a_custom_model_is_sized_by_the_config_of_the_sessions_project() {
+        use crate::parsers::AgentParser;
+
+        let t0: i64 = 1_790_612_421_000;
+        let project = tempfile::tempdir().expect("project dir");
+        std::fs::create_dir(project.path().join(".git")).expect("git dir");
+        std::fs::write(
+            project.path().join("opencode.jsonc"),
+            r#"{
+                // Declared by the project, not by the catalog.
+                "provider": { "X": { "models": { "xx": { "limit": { "context": 32768, }, }, }, }, },
+            }"#,
+        )
+        .expect("project config");
+
+        let mut fx = DbFixture::new(&LEGACY_TABLES);
+        fx.exec(
+            "INSERT INTO session (id, directory, title, time_created, time_updated) \
+             VALUES (?, ?, 'Custom', ?, ?)",
+            [
+                "ses_custom".into(),
+                project.path().to_string_lossy().into_owned().into(),
+                t0.into(),
+                (t0 + 9_000).into(),
+            ],
+        );
+        fx.legacy_text("ses_custom", "msg_u1", "user", t0 + 10, "hi");
+        legacy_message(
+            &mut fx,
+            "ses_custom",
+            "msg_a1",
+            t0 + 20,
+            serde_json::json!({
+                "role": "assistant",
+                "time": { "created": t0 + 20, "completed": t0 + 90 },
+                "providerID": "X",
+                "modelID": "xx",
+                "tokens": { "input": 2000, "output": 30, "reasoning": 0, "cache": { "read": 0, "write": 0 } }
+            }),
+        );
+        let (dir, mut parser) = fx.build();
+        parser.model_limits = super::ModelLimitSources {
+            project_config: true,
+            ..catalog_sources(dir.path())
+        };
+
+        let stats = parser
+            .get_conversation("ses_custom")
+            .expect("detail")
+            .session_stats
+            .expect("stats");
+        assert_eq!(stats.context_window_max_tokens, Some(32_768));
+        assert_eq!(stats.context_window_used_tokens, Some(2_000));
     }
 }
