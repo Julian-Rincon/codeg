@@ -112,7 +112,17 @@ fn trial_seconds_value() -> u64 {
 }
 
 #[cfg(not(feature = "tauri-runtime"))]
+// Tests keep exercising the upstream update machinery; real builds never use it.
+const PHANTOM_ALLOWS_UPSTREAM_SELF_UPDATE: bool = cfg!(test);
+
 fn ensure_supported() -> Result<(), AppCommandError> {
+    // Phantom is a fork built from source (scripts/install-local-build.sh):
+    // the upstream release tarball would replace it with stock Codeg.
+    if !PHANTOM_ALLOWS_UPSTREAM_SELF_UPDATE {
+        return Err(AppCommandError::invalid_input(
+            "Phantom se actualiza fusionando la nueva versión de Codeg en el fork, no desde la app",
+        ));
+    }
     if cfg!(target_os = "windows") {
         return Err(AppCommandError::invalid_input(
             "In-place server self-update is not supported on Windows yet",

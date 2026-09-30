@@ -141,11 +141,11 @@ fn server_self_update_supported() -> bool {
 
 #[cfg(not(feature = "tauri-runtime"))]
 fn server_self_update_supported() -> bool {
-    // Windows server self-update is intentionally disabled: swapping a running
-    // .exe and the standalone re-exec port rebind have not been validated on a
-    // real Windows host. Only Linux/macOS are supported for now. (The desktop
-    // Windows app is unaffected — it updates via tauri-plugin-updater.)
-    !cfg!(target_os = "windows") && crate::update::install::asset_basename().is_some()
+    // Phantom is a fork built from source (scripts/install-local-build.sh):
+    // the upstream release tarball would replace it with stock Codeg, so
+    // self-update stays off. The check still reports new upstream versions,
+    // which are merged into the fork instead.
+    false
 }
 
 #[cfg(feature = "tauri-runtime")]
