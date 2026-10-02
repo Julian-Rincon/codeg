@@ -63,6 +63,11 @@ fn release_accepts_listen_flags(version: &str) -> Option<bool> {
     if (version.major, version.minor, version.patch) == (0, 0, 0) {
         return None;
     }
+    // 2.x reworked `acp` (in-process, `--standalone` for a server) and dropped
+    // both flags; a newer major can move again, so let `acp --help` decide.
+    if version.major >= 2 {
+        return None;
+    }
     Some(version.cmp_precedence(&LISTEN_FLAGS_MIN_VERSION) != std::cmp::Ordering::Less)
 }
 
@@ -144,9 +149,10 @@ pub(crate) async fn listen_args(
     match verdict {
         Some(true) => LISTEN_ARGS,
         Some(false) => {
-            // Nothing lost: builds without the flags run no HTTP server.
+            // Nothing lost: builds without the flags run no HTTP server of
+            // their own here (pre-1.0.43, and 2.x where `acp` is in-process).
             tracing::info!(
-                "[ACP][OpenCode] {} (version {}) predates `acp --port/--hostname`; launching without them",
+                "[ACP][OpenCode] {} (version {}) does not accept `acp --port/--hostname`; launching without them",
                 bin.display(),
                 version.unwrap_or("unknown"),
             );
@@ -176,7 +182,6 @@ mod tests {
         assert_eq!(release_accepts_listen_flags("1.0.204"), Some(true));
         assert_eq!(release_accepts_listen_flags("1.18.33"), Some(true));
         assert_eq!(release_accepts_listen_flags(" 1.18.33\n"), Some(true));
-        assert_eq!(release_accepts_listen_flags("2.0.18"), Some(true));
         // A later release's prerelease is still past the floor.
         assert_eq!(release_accepts_listen_flags("1.18.34-beta.1"), Some(true));
 
@@ -196,6 +201,8 @@ mod tests {
         assert_eq!(release_accepts_listen_flags("local"), None);
         assert_eq!(release_accepts_listen_flags(""), None);
         assert_eq!(release_accepts_listen_flags("1.18"), None);
+        // OpenCode 2.x `acp` has neither flag: its help decides, not the number.
+        assert_eq!(release_accepts_listen_flags("2.0.18"), None);
     }
 
     /// `opencode acp --help` from 1.18.33 and 1.0.41, trimmed to the options.

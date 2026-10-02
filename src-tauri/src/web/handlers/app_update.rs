@@ -111,10 +111,11 @@ fn trial_seconds_value() -> u64 {
     }
 }
 
-#[cfg(not(feature = "tauri-runtime"))]
 // Tests keep exercising the upstream update machinery; real builds never use it.
+#[cfg(not(feature = "tauri-runtime"))]
 const PHANTOM_ALLOWS_UPSTREAM_SELF_UPDATE: bool = cfg!(test);
 
+#[cfg(not(feature = "tauri-runtime"))]
 fn ensure_supported() -> Result<(), AppCommandError> {
     // Phantom is a fork built from source (scripts/install-local-build.sh):
     // the upstream release tarball would replace it with stock Codeg.
