@@ -90,16 +90,18 @@ class MockMediaRecorder {
   }
 }
 
-let rafCallback: FrameRequestCallback | null = null
+// Every pending frame callback by id: the hook runs the mic loop and, while
+// it speaks, a separate TTS level loop at the same time.
+let rafCallbacks = new Map<number, FrameRequestCallback>()
 let rafId = 0
 let clockMs = 0
 
 function pumpFrame(amplitude: number, advanceMs: number) {
   mockAnalyserAmplitude = amplitude
   clockMs += advanceMs
-  const cb = rafCallback
-  rafCallback = null
-  cb?.(clockMs)
+  const pending = [...rafCallbacks.values()]
+  rafCallbacks = new Map()
+  for (const cb of pending) cb(clockMs)
 }
 
 function baseOptions(
@@ -119,7 +121,7 @@ function baseOptions(
 
 beforeEach(() => {
   mockAnalyserAmplitude = 0
-  rafCallback = null
+  rafCallbacks = new Map()
   rafId = 0
   clockMs = 0
   // jsdom doesn't implement the Blob URL registry; the hook only needs a
@@ -132,9 +134,9 @@ beforeEach(() => {
     tts: { engine: "e", voices: { es: "es", en: "en" } },
   })
   mockTranscribeAudio.mockReset().mockResolvedValue({
-    text: "hola mundo",
-    language: "es",
-    duration_ms: 500,
+    text: "what is on my screen",
+    language: "en",
+    duration_ms: 1500,
     elapsed_ms: 100,
   })
   mockSynthesizeSpeech
@@ -152,12 +154,12 @@ beforeEach(() => {
   vi.stubGlobal("Audio", MockAudioElement)
   vi.stubGlobal("MediaRecorder", MockMediaRecorder)
   vi.stubGlobal("requestAnimationFrame", (cb: FrameRequestCallback): number => {
-    rafCallback = cb
+    rafCallbacks.set(rafId + 1, cb)
     rafId += 1
     return rafId
   })
-  vi.stubGlobal("cancelAnimationFrame", () => {
-    rafCallback = null
+  vi.stubGlobal("cancelAnimationFrame", (id: number) => {
+    rafCallbacks.delete(id)
   })
   vi.spyOn(performance, "now").mockImplementation(() => clockMs)
 })
@@ -247,8 +249,53 @@ describe("useVoiceLive — full utterance -> send -> speak cycle", () => {
     act(() => pumpFrame(0.0005, 400))
 
     await waitFor(() => expect(mockTranscribeAudio).toHaveBeenCalled())
-    await waitFor(() => expect(sendText).toHaveBeenCalledWith("hola mundo"))
-    expect(result.current.lastUserTranscript).toBe("hola mundo")
+    await waitFor(() =>
+      expect(sendText).toHaveBeenCalledWith("what is on my screen")
+    )
+    expect(result.current.lastUserTranscript).toBe("what is on my screen")
+    // Confirms out loud that the instruction landed…
+    await waitFor(() =>
+      expect(mockSynthesizeSpeech).toHaveBeenCalledWith(
+        expect.objectContaining({ text: "Got it." }),
+        expect.anything()
+      )
+    )
+    // …and keeps waiting for the agent's answer instead of going back to
+    // listening as if nothing had been asked.
+    await waitFor(() => expect(result.current.phase).toBe("thinking"))
+  })
+
+  it("ignores noise while the agent works instead of cutting its turn", async () => {
+    const sendText = vi.fn()
+    const { result } = renderHook(() =>
+      useVoiceLive(baseOptions({ sendText, isAgentBusy: true }))
+    )
+    act(() => result.current.open())
+    await waitFor(() => expect(result.current.phase).toBe("listening"))
+
+    act(() => pumpFrame(0.0005, 50))
+    act(() => pumpFrame(0.5, 50))
+    act(() => pumpFrame(0.5, 400))
+    act(() => pumpFrame(0.0005, 400))
+    act(() => pumpFrame(0.0005, 400))
+    await waitFor(() => expect(sendText).toHaveBeenCalledTimes(1))
+    await waitFor(() => expect(result.current.phase).toBe("thinking"))
+
+    // A ~1 s burst Whisper hears as a stray word (the 2026-10-02 incident).
+    mockTranscribeAudio.mockResolvedValueOnce({
+      text: "Oh.",
+      language: "en",
+      duration_ms: 900,
+      elapsed_ms: 50,
+    })
+    act(() => pumpFrame(0.0005, 400))
+    act(() => pumpFrame(0.0005, 400))
+    act(() => pumpFrame(0.5, 50))
+    act(() => pumpFrame(0.5, 400))
+    act(() => pumpFrame(0.0005, 400))
+    act(() => pumpFrame(0.0005, 400))
+    await waitFor(() => expect(mockTranscribeAudio).toHaveBeenCalledTimes(2))
+    expect(sendText).toHaveBeenCalledTimes(1)
     expect(result.current.phase).toBe("thinking")
   })
 

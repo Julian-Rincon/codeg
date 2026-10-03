@@ -40,6 +40,18 @@ import {
   type VadState,
 } from "@/lib/voice/vad"
 import { SentenceChunker } from "@/lib/voice/sentence-chunker"
+import { shouldSendUtterance } from "@/lib/voice/utterance-filter"
+
+/** Spoken the moment an instruction is accepted, so the user knows it landed
+ *  before the agent's first sentence (which can take a while) arrives. */
+const ACK_TEXT: Record<"es" | "en", string> = {
+  es: "Entendido.",
+  en: "Got it.",
+}
+
+/** A voice turn the agent never picks up (send failed, nothing to run) must
+ *  not leave the overlay "thinking" forever. */
+const TURN_START_TIMEOUT_MS = 15_000
 
 export type VoicePhase =
   | "checking-health"
@@ -149,6 +161,34 @@ function pickRecorderMimeType(): string | undefined {
   return undefined
 }
 
+let chimeCtx: AudioContext | null = null
+
+/** Two soft rising notes: "your turn". Best effort — no audio, no chime. */
+function playListeningChime(): void {
+  try {
+    const Ctor = getAudioContextCtor()
+    if (!Ctor) return
+    chimeCtx = chimeCtx ?? new Ctor()
+    const ctx = chimeCtx
+    const t0 = ctx.currentTime
+    for (const [i, freq] of [660, 880].entries()) {
+      const osc = ctx.createOscillator()
+      const gain = ctx.createGain()
+      const start = t0 + i * 0.11
+      osc.type = "sine"
+      osc.frequency.value = freq
+      gain.gain.setValueAtTime(0, start)
+      gain.gain.linearRampToValueAtTime(0.06, start + 0.015)
+      gain.gain.exponentialRampToValueAtTime(0.0001, start + 0.16)
+      osc.connect(gain).connect(ctx.destination)
+      osc.start(start)
+      osc.stop(start + 0.18)
+    }
+  } catch {
+    // The cue is a nicety; voice mode works without it.
+  }
+}
+
 export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
   const {
     locale,
@@ -184,6 +224,11 @@ export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
   const suppressSpeechForTurnRef = useRef(false)
   const prevAwaitingRef = useRef(false)
   const prevBusyRef = useRef(isAgentBusy)
+  /** A voice-sent instruction is waiting for (or in) its agent turn. */
+  const turnPendingRef = useRef(false)
+  const turnStartTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  /** The acknowledgement clip, synthesized once per voice session. */
+  const ackBlobRef = useRef<Promise<Blob | null> | null>(null)
 
   useEffect(() => {
     isAgentBusyRef.current = isAgentBusy
@@ -205,8 +250,14 @@ export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
   }, [permissionCue])
 
   const setPhaseState = useCallback((next: VoicePhase) => {
+    const prev = phaseRef.current
     phaseRef.current = next
     setPhase(next)
+    // Back to listening after Phantom answered: a soft cue, so the user knows
+    // it is their turn again without watching the screen.
+    if (next === "listening" && (prev === "speaking" || prev === "thinking")) {
+      playListeningChime()
+    }
   }, [])
 
   // Mic capture + VAD
@@ -375,7 +426,11 @@ export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
       ttsRunningRef.current = false
       if (isOpenRef.current && !suppressSpeechForTurnRef.current) {
         if (ttsQueueRef.current.length === 0) {
-          setPhaseState(isAgentBusyRef.current ? "thinking" : "listening")
+          setPhaseState(
+            isAgentBusyRef.current || turnPendingRef.current
+              ? "thinking"
+              : "listening"
+          )
           setSpokenCaption("")
         }
       }
@@ -383,18 +438,43 @@ export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
   }, [fetchSentenceAudio, playBlob, prefetchNext, setPhaseState])
 
   const enqueueSentence = useCallback(
-    (text: string) => {
+    (text: string, blobPromise?: Promise<Blob | null>) => {
       const trimmed = text.trim()
       if (!trimmed) return
       ttsQueueRef.current = [
         ...ttsQueueRef.current,
-        { id: nextTtsId(), text: trimmed },
+        { id: nextTtsId(), text: trimmed, blobPromise },
       ]
       if (ttsQueueRef.current.length === 2) prefetchNext()
       void runTtsQueue()
     },
     [prefetchNext, runTtsQueue]
   )
+
+  const clearTurnPending = useCallback(() => {
+    turnPendingRef.current = false
+    if (turnStartTimerRef.current != null) {
+      clearTimeout(turnStartTimerRef.current)
+      turnStartTimerRef.current = null
+    }
+  }, [])
+
+  const markTurnPending = useCallback(() => {
+    clearTurnPending()
+    turnPendingRef.current = true
+    turnStartTimerRef.current = setTimeout(() => {
+      turnStartTimerRef.current = null
+      if (!turnPendingRef.current || isAgentBusyRef.current) return
+      turnPendingRef.current = false
+      if (
+        isOpenRef.current &&
+        phaseRef.current === "thinking" &&
+        !ttsRunningRef.current
+      ) {
+        setPhaseState("listening")
+      }
+    }, TURN_START_TIMEOUT_MS)
+  }, [clearTurnPending, setPhaseState])
 
   // --- Utterance recording (one MediaRecorder per detected utterance) ---
   const startRecordingUtterance = useCallback(() => {
@@ -420,7 +500,14 @@ export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
 
   const transcribeUtterance = useCallback(
     async (blob: Blob) => {
-      setPhaseState("transcribing")
+      // While Phantom is thinking or speaking the overlay keeps showing that;
+      // only an utterance that turns out to be real speech interrupts it.
+      const prevPhase = phaseRef.current
+      const agentBusy =
+        prevPhase === "thinking" ||
+        prevPhase === "speaking" ||
+        ttsQueueRef.current.length > 0
+      if (!agentBusy) setPhaseState("transcribing")
       const controller = new AbortController()
       sttAbortRef.current = controller
       try {
@@ -430,10 +517,21 @@ export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
         })
         const text = result.text.trim()
         if (!isOpenRef.current) return
-        if (!text) {
-          setPhaseState("listening")
+        const real = shouldSendUtterance({
+          text,
+          language: result.language ?? "",
+          durationMs: result.duration_ms ?? 0,
+          agentBusy,
+          expectedLang: resolveTtsLang(localeRef.current),
+        })
+        if (!real) {
+          // Noise, an echo of our own voice or a Whisper hallucination: drop
+          // it and carry on with whatever was happening.
+          if (!agentBusy) setPhaseState("listening")
           return
         }
+        // Barge-in, only now that we know the user really spoke.
+        if (agentBusy) stopSpeakingInternal()
         setLastUserTranscript(text)
         chunkerRef.current = new SentenceChunker({
           codeBlockNote: codeBlockNoteRef.current,
@@ -441,13 +539,24 @@ export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
         suppressSpeechForTurnRef.current = false
         setSpokenCaption("")
         setPhaseState("thinking")
+        markTurnPending()
         sendTextRef.current(text)
+        enqueueSentence(
+          ACK_TEXT[resolveTtsLang(localeRef.current)],
+          ackBlobRef.current ?? undefined
+        )
       } catch (err) {
         if (isAbortError(err)) return
-        if (isOpenRef.current) setPhaseState("listening")
+        if (isOpenRef.current && !agentBusy) setPhaseState("listening")
       }
     },
-    [clientOpts, setPhaseState]
+    [
+      clientOpts,
+      enqueueSentence,
+      markTurnPending,
+      setPhaseState,
+      stopSpeakingInternal,
+    ]
   )
 
   const stopRecordingUtterance = useCallback(
@@ -474,13 +583,9 @@ export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
     (event: VadEvent) => {
       if (!event) return
       if (event.type === "speech-start") {
-        // Barge-in: talking over the assistant stops playback immediately
-        // and returns to listening, WITHOUT cancelling the agent's turn.
-        if (phaseRef.current === "speaking" || ttsQueueRef.current.length > 0) {
-          stopSpeakingInternal()
-          suppressSpeechForTurnRef.current = true
-          setPhaseState("listening")
-        }
+        // Just record. Barge-in waits for the transcript (transcribeUtterance):
+        // stopping on raw energy let a cough, the keyboard or our own voice
+        // from the speakers silence a reply before it was heard.
         startRecordingUtterance()
       } else if (event.type === "speech-end") {
         stopRecordingUtterance(true)
@@ -488,12 +593,7 @@ export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
         stopRecordingUtterance(false)
       }
     },
-    [
-      setPhaseState,
-      startRecordingUtterance,
-      stopRecordingUtterance,
-      stopSpeakingInternal,
-    ]
+    [startRecordingUtterance, stopRecordingUtterance]
   )
 
   // --- Mic level + VAD poll loop ---
@@ -519,7 +619,15 @@ export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
   }, [handleVadEvent])
 
   const startMic = useCallback(async () => {
-    const stream = await navigator.mediaDevices.getUserMedia({ audio: true })
+    // Echo cancellation keeps Phantom's own voice out of the VAD; noise
+    // suppression and AGC keep keyboard clicks from reading as speech.
+    const stream = await navigator.mediaDevices.getUserMedia({
+      audio: {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: true,
+      },
+    })
     micStreamRef.current = stream
     const Ctor = getAudioContextCtor()
     if (Ctor) {
@@ -574,7 +682,8 @@ export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
     ttsLevelRef.current = 0
     suppressSpeechForTurnRef.current = false
     chunkerRef.current = null
-  }, [stopTtsLevelLoop])
+    clearTurnPending()
+  }, [clearTurnPending, stopTtsLevelLoop])
 
   const open = useCallback(() => {
     if (isOpenRef.current) return
@@ -603,6 +712,13 @@ export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
         return
       }
       if (!isOpenRef.current) return
+      ackBlobRef.current = synthesizeSpeech(
+        {
+          text: ACK_TEXT[resolveTtsLang(localeRef.current)],
+          lang: resolveTtsLang(localeRef.current),
+        },
+        clientOpts()
+      ).catch(() => null)
       setPhaseState("listening")
     })()
   }, [clientOpts, setPhaseState, startMic])
@@ -657,6 +773,7 @@ export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
 
   // Flush the trailing sentence fragment when the agent's turn ends.
   useEffect(() => {
+    if (!prevBusyRef.current && isAgentBusy) clearTurnPending()
     if (prevBusyRef.current && !isAgentBusy && isOpenRef.current) {
       if (!suppressSpeechForTurnRef.current) {
         const tail = chunkerRef.current?.flush() ?? null
@@ -667,7 +784,7 @@ export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
       }
     }
     prevBusyRef.current = isAgentBusy
-  }, [isAgentBusy, enqueueSentence, setPhaseState])
+  }, [isAgentBusy, clearTurnPending, enqueueSentence, setPhaseState])
 
   // Speak the permission/question cue once per rising edge.
   useEffect(() => {
