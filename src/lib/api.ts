@@ -3258,6 +3258,7 @@ export type SettingsSection =
   | "office-tools"
   | "collaboration"
   | "browser"
+  | "computer-use"
   | "version-control"
   | "shortcuts"
   | "system"
