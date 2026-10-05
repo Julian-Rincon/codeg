@@ -196,9 +196,6 @@ export function TurnStats({
           </Tooltip>
         )}
         {hasCopy && (
-          <ListenButton text={copyText} className={iconButtonClass} />
-        )}
-        {hasCopy && (
           <Tooltip>
             <TooltipTrigger asChild>
               <button
@@ -329,6 +326,11 @@ export function TurnStats({
               {t("jumpToPreviousUserMessage")}
             </TooltipContent>
           </Tooltip>
+        )}
+        {/* Last of the icons, right before the time: adding it must not shift
+            the buttons people already know by position. */}
+        {hasCopy && (
+          <ListenButton text={copyText} className={iconButtonClass} />
         )}
         {hasCompletedAt && completedTooltip && (
           <Tooltip>

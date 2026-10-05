@@ -69,7 +69,7 @@ export function ListenButton({
               className="h-3.5 w-3.5 animate-spin"
             />
           ) : state === "playing" ? (
-            <SquareIcon aria-hidden="true" className="h-3 w-3" />
+            <SquareIcon aria-hidden="true" className="h-3.5 w-3.5" />
           ) : (
             <Volume2Icon aria-hidden="true" className="h-3.5 w-3.5" />
           )}
