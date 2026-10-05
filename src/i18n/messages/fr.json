@@ -3489,7 +3489,11 @@
         "completedAt": "Terminé à",
         "jumpToPreviousUserMessage": "Aller au message utilisateur",
         "showMore": "Afficher plus",
-        "showLess": "Afficher moins"
+        "showLess": "Afficher moins",
+        "listen": "Écouter",
+        "stopListening": "Arrêter",
+        "listenUnavailable": "Service vocal indisponible",
+        "listenCodeBlock": "Bloc de code."
       },
       "liveTurnStats": {
         "thinking": "Réflexion...",

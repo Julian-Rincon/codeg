@@ -3489,7 +3489,11 @@
         "completedAt": "Concluído às",
         "jumpToPreviousUserMessage": "Ir para a mensagem do usuário",
         "showMore": "Mostrar mais",
-        "showLess": "Mostrar menos"
+        "showLess": "Mostrar menos",
+        "listen": "Ouvir",
+        "stopListening": "Parar",
+        "listenUnavailable": "Serviço de voz indisponível",
+        "listenCodeBlock": "Bloco de código."
       },
       "liveTurnStats": {
         "thinking": "Pensando...",

@@ -3489,7 +3489,11 @@
         "completedAt": "Abgeschlossen um",
         "jumpToPreviousUserMessage": "Zur Benutzernachricht springen",
         "showMore": "Mehr anzeigen",
-        "showLess": "Weniger anzeigen"
+        "showLess": "Weniger anzeigen",
+        "listen": "Anhören",
+        "stopListening": "Stoppen",
+        "listenUnavailable": "Sprachdienst nicht verfügbar",
+        "listenCodeBlock": "Codeblock."
       },
       "liveTurnStats": {
         "thinking": "Denkt nach...",

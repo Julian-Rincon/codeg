@@ -3489,7 +3489,11 @@
         "completedAt": "完成時間",
         "jumpToPreviousUserMessage": "跳轉到上一條使用者訊息",
         "showMore": "展開",
-        "showLess": "收合"
+        "showLess": "收合",
+        "listen": "朗讀",
+        "stopListening": "停止",
+        "listenUnavailable": "語音服務無法使用",
+        "listenCodeBlock": "程式碼區塊。"
       },
       "liveTurnStats": {
         "thinking": "思考中...",

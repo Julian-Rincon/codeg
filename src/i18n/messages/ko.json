@@ -3489,7 +3489,11 @@
         "completedAt": "완료 시각",
         "jumpToPreviousUserMessage": "이전 사용자 메시지로 이동",
         "showMore": "더보기",
-        "showLess": "접기"
+        "showLess": "접기",
+        "listen": "듣기",
+        "stopListening": "중지",
+        "listenUnavailable": "음성 서비스를 사용할 수 없음",
+        "listenCodeBlock": "코드 블록."
       },
       "liveTurnStats": {
         "thinking": "생각 중...",

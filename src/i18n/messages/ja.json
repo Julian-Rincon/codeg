@@ -3489,7 +3489,11 @@
         "completedAt": "完了時刻",
         "jumpToPreviousUserMessage": "前のユーザーメッセージへ",
         "showMore": "もっと見る",
-        "showLess": "折りたたむ"
+        "showLess": "折りたたむ",
+        "listen": "読み上げ",
+        "stopListening": "停止",
+        "listenUnavailable": "音声サービスを利用できません",
+        "listenCodeBlock": "コードブロック。"
       },
       "liveTurnStats": {
         "thinking": "考え中...",

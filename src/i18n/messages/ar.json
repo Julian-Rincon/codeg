@@ -3489,7 +3489,11 @@
         "completedAt": "وقت الإنجاز",
         "jumpToPreviousUserMessage": "الانتقال إلى رسالة المستخدم",
         "showMore": "عرض المزيد",
-        "showLess": "طي"
+        "showLess": "طي",
+        "listen": "استماع",
+        "stopListening": "إيقاف",
+        "listenUnavailable": "خدمة الصوت غير متاحة",
+        "listenCodeBlock": "كتلة برمجية."
       },
       "liveTurnStats": {
         "thinking": "جارٍ التفكير...",

@@ -20,6 +20,7 @@ import {
 import { useMessageScroll } from "@/components/message/message-scroll-context"
 import { useModelLabel } from "@/components/message/model-label-context"
 import { useCreateTaskFromMessage } from "./use-create-task-from-message"
+import { ListenButton } from "./listen-button"
 import { formatTokenCount } from "@/lib/token-format"
 import { cn, copyTextToClipboard } from "@/lib/utils"
 import type { TurnUsage } from "@/lib/types"
@@ -193,6 +194,9 @@ export function TurnStats({
               {isCopied ? t("copied") : t("copyMessage")}
             </TooltipContent>
           </Tooltip>
+        )}
+        {hasCopy && (
+          <ListenButton text={copyText} className={iconButtonClass} />
         )}
         {hasCopy && (
           <Tooltip>

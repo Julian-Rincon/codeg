@@ -3489,7 +3489,11 @@
         "completedAt": "完成时间",
         "jumpToPreviousUserMessage": "跳转到上一条用户消息",
         "showMore": "展开",
-        "showLess": "收起"
+        "showLess": "收起",
+        "listen": "朗读",
+        "stopListening": "停止",
+        "listenUnavailable": "语音服务不可用",
+        "listenCodeBlock": "代码块。"
       },
       "liveTurnStats": {
         "thinking": "思考中...",

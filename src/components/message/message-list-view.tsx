@@ -87,6 +87,7 @@ import { unescapeComposerText } from "@/lib/composer-copy-text"
 import { useStickToBottomContext } from "use-stick-to-bottom"
 import { useAppWorkspaceStore } from "@/stores/app-workspace-store"
 import { MarkdownImageProvider } from "@/components/ai-elements/markdown-local-image"
+import { VoiceIdentityProvider } from "@/lib/voice/voice-identity-context"
 
 interface MessageListViewProps {
   conversationId: number
@@ -1085,6 +1086,10 @@ export function MessageListView({
   // Resolved once for the whole thread rather than per reply: the labels are a
   // property of the agent, not of any one turn.
   const modelLabel = useModelLabels(agentType)
+  const voiceIdentity = useMemo(
+    () => ({ persona: agentType, conversationId }),
+    [agentType, conversationId]
+  )
   // Subscribe to only this conversation's session + derived timeline. Another
   // conversation's streaming token no longer re-renders this view; the timeline
   // selector returns a reference-stable array (memoized per session object) so
@@ -1741,7 +1746,11 @@ export function MessageListView({
     <MarkdownImageProvider
       rootPath={imageRoot === undefined ? storedImageRoot : imageRoot}
     >
-      <ModelLabelProvider value={modelLabel}>{thread}</ModelLabelProvider>
+      <ModelLabelProvider value={modelLabel}>
+        <VoiceIdentityProvider value={voiceIdentity}>
+          {thread}
+        </VoiceIdentityProvider>
+      </ModelLabelProvider>
     </MarkdownImageProvider>
   )
 }
