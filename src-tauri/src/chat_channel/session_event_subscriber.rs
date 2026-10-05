@@ -374,6 +374,12 @@ async fn handle_acp_envelope(
             };
 
             if let Some((target, agent_label, last_tool)) = flush_info {
+                if super::compact::is_compact(db, target.channel_id).await {
+                    if super::compact::should_send_typing(connection_id) {
+                        manager.send_typing_to_target(&target).await;
+                    }
+                    return;
+                }
                 let lang = get_lang(db).await;
                 let mut status = super::i18n::agent_responding(lang, &agent_label);
                 if let Some(tool) = last_tool {
@@ -492,8 +498,10 @@ async fn handle_acp_envelope(
                                 .and_then(extract_agent_type)
                                 .unwrap_or_else(|| "agent".to_string());
                             drop(guard);
-                            let msg = RichMessage::info(format_delegation_ack(&agent));
-                            let _ = manager.send_to_target(&target, &msg).await;
+                            if !super::compact::is_compact(db, target.channel_id).await {
+                                let msg = RichMessage::info(format_delegation_ack(&agent));
+                                let _ = manager.send_to_target(&target, &msg).await;
+                            }
                         }
                     } else {
                         let stored_input = session.tool_call_inputs.remove(tool_call_id);
@@ -501,8 +509,14 @@ async fn handle_acp_envelope(
                         let body =
                             format!(">> {}", format_tool_call_detail(effective_title, input_ref));
                         drop(guard);
-                        let msg = RichMessage::info(body);
-                        let _ = manager.send_to_target(&target, &msg).await;
+                        if super::compact::is_compact(db, target.channel_id).await {
+                            if super::compact::should_send_typing(connection_id) {
+                                manager.send_typing_to_target(&target).await;
+                            }
+                        } else {
+                            let msg = RichMessage::info(body);
+                            let _ = manager.send_to_target(&target, &msg).await;
+                        }
                     }
                 }
             }
@@ -662,6 +676,12 @@ async fn handle_acp_envelope(
                 // `chat_channel::directives`.
                 let (clean_content, file_directives) =
                     crate::chat_channel::directives::parse_send_file_directives(&content);
+                if super::compact::is_compact(db, target.channel_id).await {
+                    let reply = super::compact::final_reply(&clean_content, stop_reason, lang);
+                    for part in super::compact::split_message(&reply, super::compact::MAX_CHUNK) {
+                        let _ = manager.send_to_target(&target, &RichMessage::info(part)).await;
+                    }
+                } else {
                 let body = format_completion(&clean_content, tool_count, lang);
 
                 let msg = RichMessage::info(body)
@@ -679,6 +699,7 @@ async fn handle_acp_envelope(
                     );
 
                 let _ = manager.send_to_target(&target, &msg).await;
+                }
 
                 if !file_directives.is_empty() {
                     send_directed_files(manager, &target, &file_directives, lang).await;
@@ -851,6 +872,13 @@ async fn flush_progress(
     };
 
     for (target, text) in updates {
+        if super::compact::is_compact(db, target.channel_id).await {
+            let key = format!("progress:{}:{:?}", target.channel_id, target.chat_id);
+            if super::compact::should_send_typing(&key) {
+                manager.send_typing_to_target(&target).await;
+            }
+            continue;
+        }
         let msg = RichMessage::info(text);
         let _ = manager.send_to_target(&target, &msg).await;
     }
@@ -1652,6 +1680,86 @@ mod async_relay_dedup_tests {
         assert_eq!(msgs.len(), 2, "ack + result, got {msgs:?}");
         assert!(msgs[0].contains("running in background"));
         assert!(msgs[1].starts_with("✅ codex"));
+    }
+
+    /// Compact mode (a real channel row without `"verbose": true`): tool calls
+    /// produce no messages and the turn ends with just the answer, as plain text.
+    #[tokio::test]
+    async fn compact_channel_sends_only_the_plain_answer() {
+        let db = test_helpers::fresh_in_memory_db().await;
+        let ch = crate::db::service::chat_channel_service::create(
+            &db.conn,
+            "Telegram".into(),
+            "telegram".into(),
+            r#"{"chat_id": "1"}"#.into(),
+            true,
+            false,
+            None,
+        )
+        .await
+        .unwrap();
+        let bridge = Arc::new(Mutex::new(SessionBridge::new()));
+        bridge.lock().await.register(
+            "conn".into(),
+            ActiveSession {
+                channel_id: ch.id,
+                sender_id: "u".into(),
+                target: crate::chat_channel::types::ChannelMessageTarget::channel(ch.id),
+                conversation_id: 1,
+                connection_id: "conn".into(),
+                agent_type: AgentType::ClaudeCode,
+                content_buffer: String::new(),
+                tool_calls: Vec::new(),
+                tool_call_inputs: HashMap::new(),
+                delegation_rendered: HashSet::new(),
+                last_flushed: Instant::now(),
+                pending_prompt: None,
+                permission_pending: None,
+                pending_voice_reply_lang: None,
+            },
+        );
+        let chat = ChatChannelManager::new();
+        let rec = Recorder::default();
+        chat.add_channel(
+            ch.id,
+            "test".into(),
+            ChannelType::Telegram,
+            Box::new(RecordingBackend { rec: rec.clone() }),
+        )
+        .await;
+        let conn = ConnectionManager::new();
+
+        let tool = EventEnvelope {
+            seq: 1,
+            connection_id: "conn".into(),
+            payload: AcpEvent::ToolCallUpdate {
+                tool_call_id: "tc-bash".into(),
+                title: Some("Bash".into()),
+                status: Some("completed".into()),
+                content: None,
+                raw_input: Some(r#"{"command":"ls"}"#.to_string()),
+                raw_output: Some("ok".into()),
+                raw_output_append: None,
+                locations: None,
+                meta: None,
+                images: None,
+            },
+        };
+        handle_acp_envelope(&tool, &bridge, &chat, &conn, &db.conn, &EventEmitter::Noop).await;
+        assert!(sent(&rec).await.is_empty(), "no tool-call lines in compact mode");
+
+        bridge.lock().await.get_mut("conn").unwrap().content_buffer = "## Hola\n**Listo**".into();
+        let complete = EventEnvelope {
+            seq: 2,
+            connection_id: "conn".into(),
+            payload: AcpEvent::TurnComplete {
+                session_id: "S1".into(),
+                stop_reason: "end_turn".into(),
+                agent_type: "claude".into(),
+            },
+        };
+        handle_acp_envelope(&complete, &bridge, &chat, &conn, &db.conn, &EventEmitter::Noop).await;
+        assert_eq!(sent(&rec).await, vec!["Hola\nListo".to_string()]);
     }
 
     /// A late running-ack `ToolCallUpdate` (with raw_input) arriving AFTER the

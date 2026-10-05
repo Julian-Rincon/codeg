@@ -848,6 +848,22 @@ impl ChatChannelBackend for TelegramBackend {
             .await
     }
 
+    async fn send_typing(&self, target: &ChannelMessageTarget) -> Result<(), ChatChannelError> {
+        // Same chat/topic resolution as sendMessage, minus the text.
+        let mut body = telegram_send_message_body(&self.chat_id, "", None, Some(target), None)?;
+        if let Some(obj) = body.as_object_mut() {
+            obj.remove("text");
+            obj.insert("action".to_string(), serde_json::json!("typing"));
+        }
+        self.client
+            .post(self.api_url("sendChatAction"))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| ChatChannelError::SendFailed(redact_token(e.to_string(), &self.bot_token)))?;
+        Ok(())
+    }
+
     async fn send_voice(
         &self,
         target: &ChannelMessageTarget,

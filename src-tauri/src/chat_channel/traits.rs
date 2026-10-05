@@ -144,4 +144,10 @@ pub trait ChatChannelBackend: Send + Sync + 'static {
             "voice upload is not supported by this channel".to_string(),
         ))
     }
+
+    /// Show the platform's native "typing…" indicator (compact mode's
+    /// progress signal). No-op where the backend has no such concept.
+    async fn send_typing(&self, _target: &ChannelMessageTarget) -> Result<(), ChatChannelError> {
+        Ok(())
+    }
 }

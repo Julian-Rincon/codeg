@@ -161,6 +161,18 @@ impl ChatChannelManager {
         backend.send_rich_message_to(message, target).await
     }
 
+    /// Native "typing…" indicator on a target; errors are irrelevant to callers.
+    pub async fn send_typing_to_target(&self, target: &ChannelMessageTarget) {
+        let backend = {
+            let channels = self.inner.channels.lock().await;
+            match channels.get(&target.channel_id) {
+                Some(entry) => entry.backend.clone(),
+                None => return,
+            }
+        };
+        let _ = backend.send_typing(target).await;
+    }
+
     /// Upload a document to a thread/topic target. `Unsupported` on a
     /// backend without a document-upload API (see
     /// `ChatChannelBackend::send_document`'s default).

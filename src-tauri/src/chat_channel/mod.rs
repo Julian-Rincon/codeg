@@ -2,6 +2,7 @@ pub mod backends;
 pub mod chat_preamble;
 pub mod command_dispatcher;
 pub mod command_handlers;
+pub mod compact;
 pub mod directives;
 pub mod error;
 pub mod event_subscriber;
