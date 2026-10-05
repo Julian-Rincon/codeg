@@ -43,6 +43,10 @@ export interface TtsRequest {
   lang: "es" | "en"
   voice?: string
   speed?: number
+  /** Agent whose voice to use (`agentType`); phantom-voice maps it to a voice. */
+  persona?: string
+  /** Lets phantom-voice detect conversations in the NEXUS folder. */
+  conversationId?: number
 }
 
 export interface VoiceClientOptions {

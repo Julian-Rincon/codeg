@@ -516,6 +516,8 @@ export function MessageInput({
     onCancelTurn: onCancel,
     codeBlockNote: t("voice.codeBlockNote"),
     permissionCue: t("voice.permissionCue"),
+    persona: agentType ?? null,
+    conversationId,
   })
   const openVoiceLive = useCallback(() => {
     setVoiceOverlayOpen(true)

@@ -89,6 +89,10 @@ export interface UseVoiceLiveOptions {
   permissionCue: string
   /** Override for tests / alternate deployments. */
   baseUrl?: string
+  /** Agent of the conversation (`agentType`): picks that agent's voice. */
+  persona?: string | null
+  /** Conversation id, so a conversation in the NEXUS folder speaks as NEXUS. */
+  conversationId?: number | null
 }
 
 export interface UseVoiceLiveResult {
@@ -200,6 +204,8 @@ export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
     codeBlockNote,
     permissionCue,
     baseUrl,
+    persona = null,
+    conversationId = null,
   } = options
 
   const [isOpen, setIsOpen] = useState(false)
@@ -217,6 +223,7 @@ export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
   const mutedRef = useRef(false)
   const isAgentBusyRef = useRef(isAgentBusy)
   const localeRef = useRef(locale)
+  const voiceIdentityRef = useRef<{ persona?: string; conversationId?: number }>({})
   const sendTextRef = useRef(sendText)
   const onCancelTurnRef = useRef(onCancelTurn)
   const codeBlockNoteRef = useRef(codeBlockNote)
@@ -236,6 +243,12 @@ export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
   useEffect(() => {
     localeRef.current = locale
   }, [locale])
+  useEffect(() => {
+    voiceIdentityRef.current = {
+      ...(persona ? { persona } : {}),
+      ...(conversationId != null ? { conversationId } : {}),
+    }
+  }, [persona, conversationId])
   useEffect(() => {
     sendTextRef.current = sendText
   }, [sendText])
@@ -386,7 +399,11 @@ export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
   const fetchSentenceAudio = useCallback(
     (text: string): Promise<Blob | null> =>
       synthesizeSpeech(
-        { text, lang: resolveTtsLang(localeRef.current) },
+        {
+          text,
+          lang: resolveTtsLang(localeRef.current),
+          ...voiceIdentityRef.current,
+        },
         clientOpts()
       ).catch(() => null),
     [clientOpts]
@@ -716,6 +733,7 @@ export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
         {
           text: ACK_TEXT[resolveTtsLang(localeRef.current)],
           lang: resolveTtsLang(localeRef.current),
+          ...voiceIdentityRef.current,
         },
         clientOpts()
       ).catch(() => null)

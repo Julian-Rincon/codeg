@@ -346,3 +346,27 @@ describe("useVoiceLive — cancelTurn", () => {
     expect(onCancelTurn).toHaveBeenCalled()
   })
 })
+
+describe("useVoiceLive — voz por agente", () => {
+  it("manda persona y conversationId a /tts", async () => {
+    const { result } = renderHook(() =>
+      useVoiceLive(baseOptions({ persona: "open_code", conversationId: 91 }))
+    )
+    act(() => result.current.open())
+    await waitFor(() => expect(result.current.phase).toBe("listening"))
+    expect(mockSynthesizeSpeech).toHaveBeenCalledWith(
+      expect.objectContaining({ persona: "open_code", conversationId: 91 }),
+      expect.anything()
+    )
+  })
+
+  it("no manda campos vacíos cuando no hay agente ni conversación", async () => {
+    const { result } = renderHook(() => useVoiceLive(baseOptions()))
+    act(() => result.current.open())
+    await waitFor(() => expect(result.current.phase).toBe("listening"))
+    const calls = mockSynthesizeSpeech.mock.calls
+    const request = calls[calls.length - 1][0] as Record<string, unknown>
+    expect("persona" in request).toBe(false)
+    expect("conversationId" in request).toBe(false)
+  })
+})
