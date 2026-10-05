@@ -223,7 +223,10 @@ export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
   const mutedRef = useRef(false)
   const isAgentBusyRef = useRef(isAgentBusy)
   const localeRef = useRef(locale)
-  const voiceIdentityRef = useRef<{ persona?: string; conversationId?: number }>({})
+  const voiceIdentityRef = useRef<{
+    persona?: string
+    conversationId?: number
+  }>({})
   const sendTextRef = useRef(sendText)
   const onCancelTurnRef = useRef(onCancelTurn)
   const codeBlockNoteRef = useRef(codeBlockNote)

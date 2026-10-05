@@ -156,6 +156,19 @@ fn median_of(mut durations: Vec<u64>) -> Option<f64> {
 struct ScoredModel {
     entry: ModelScorecardEntry,
     timed_turns: u64,
+    /// The id the agent's live catalog lists for this model, when matched.
+    /// History may record a shorter id ("space-bunny-free" vs
+    /// "opencode/space-bunny-free"); handoffs must use the catalog's.
+    catalog_id: Option<String>,
+}
+
+impl ScoredModel {
+    /// The model id to hand to the agent: the catalog's when known.
+    fn handoff_id(&self) -> String {
+        self.catalog_id
+            .clone()
+            .unwrap_or_else(|| self.entry.model.clone())
+    }
 }
 
 /// Fold filtered fact rows plus the live catalog into the full scorecard.
@@ -307,6 +320,7 @@ fn score_one(
         .get(&agent_type)
         .map(|c| c.models.iter().any(|m| catalog_entry_matches(&model, m)));
     let label = catalog_entry.and_then(|m| m.label.clone());
+    let catalog_id = catalog_entry.map(|m| m.id.clone());
 
     let timed_turns = agg.timed_durations.len() as u64;
     let avg_turn_ms = if timed_turns > 0 {
@@ -377,7 +391,11 @@ fn score_one(
         limited,
         limit_resets_at,
     };
-    ScoredModel { entry, timed_turns }
+    ScoredModel {
+        entry,
+        timed_turns,
+        catalog_id,
+    }
 }
 
 // ─── Spec matching (models.dev) ─────────────────────────────────────────
@@ -585,7 +603,7 @@ fn compute_best_for(scored: &[ScoredModel], now: DateTime<Utc>) -> Vec<BestForEn
         .filter_map(|s| {
             s.entry.category_error_pct.edit.map(|v| Candidate {
                 agent_type: s.entry.agent_type.clone(),
-                model: s.entry.model.clone(),
+                model: s.handoff_id(),
                 value: v,
                 sample: s.entry.category_calls.edit,
                 rank_key: wilson_upper_pct(v, s.entry.category_calls.edit),
@@ -604,7 +622,7 @@ fn compute_best_for(scored: &[ScoredModel], now: DateTime<Utc>) -> Vec<BestForEn
         .filter_map(|s| {
             s.entry.category_error_pct.read.map(|v| Candidate {
                 agent_type: s.entry.agent_type.clone(),
-                model: s.entry.model.clone(),
+                model: s.handoff_id(),
                 value: v,
                 sample: s.entry.category_calls.read,
                 rank_key: wilson_upper_pct(v, s.entry.category_calls.read),
@@ -623,7 +641,7 @@ fn compute_best_for(scored: &[ScoredModel], now: DateTime<Utc>) -> Vec<BestForEn
         .filter_map(|s| {
             s.entry.category_error_pct.shell.map(|v| Candidate {
                 agent_type: s.entry.agent_type.clone(),
-                model: s.entry.model.clone(),
+                model: s.handoff_id(),
                 value: v,
                 sample: s.entry.category_calls.shell,
                 rank_key: wilson_upper_pct(v, s.entry.category_calls.shell),
@@ -642,7 +660,7 @@ fn compute_best_for(scored: &[ScoredModel], now: DateTime<Utc>) -> Vec<BestForEn
         .filter_map(|s| {
             s.entry.category_error_pct.web.map(|v| Candidate {
                 agent_type: s.entry.agent_type.clone(),
-                model: s.entry.model.clone(),
+                model: s.handoff_id(),
                 value: v,
                 sample: s.entry.category_calls.web,
                 rank_key: wilson_upper_pct(v, s.entry.category_calls.web),
@@ -661,7 +679,7 @@ fn compute_best_for(scored: &[ScoredModel], now: DateTime<Utc>) -> Vec<BestForEn
         .filter_map(|s| {
             s.entry.output_tokens_per_s.map(|v| Candidate {
                 agent_type: s.entry.agent_type.clone(),
-                model: s.entry.model.clone(),
+                model: s.handoff_id(),
                 value: v,
                 sample: s.timed_turns,
                 rank_key: v,
@@ -688,7 +706,7 @@ fn compute_best_for(scored: &[ScoredModel], now: DateTime<Utc>) -> Vec<BestForEn
             let context = spec.context?;
             Some(Candidate {
                 agent_type: s.entry.agent_type.clone(),
-                model: s.entry.model.clone(),
+                model: s.handoff_id(),
                 value: context as f64,
                 sample: s.entry.turns,
                 rank_key: context as f64,
@@ -713,7 +731,7 @@ fn compute_best_for(scored: &[ScoredModel], now: DateTime<Utc>) -> Vec<BestForEn
         .filter_map(|s| {
             s.entry.tool_error_pct.map(|v| Candidate {
                 agent_type: s.entry.agent_type.clone(),
-                model: s.entry.model.clone(),
+                model: s.handoff_id(),
                 value: v,
                 sample: s.entry.tool_calls,
                 rank_key: wilson_upper_pct(v, s.entry.tool_calls),
@@ -1116,6 +1134,40 @@ mod tests {
         let rows = rows_with_edit_calls("stale-model", 20, 0, old);
         let card = build_scorecard(&rows, &HashMap::new(), &HashMap::new(), now);
         assert!(card.best_for.iter().all(|b| b.model != "stale-model"));
+    }
+
+    #[test]
+    fn best_for_recommends_the_catalog_id_the_agent_accepts() {
+        // Measured as "space-bunny-free", offered by the agent as
+        // "opencode/space-bunny-free": a handoff with the short id is
+        // rejected at connect ("the agent no longer offers that value").
+        let now = ts("2026-09-24T00:00:00Z");
+        let rows = rows_with_edit_calls("space-bunny-free", 20, 0, now);
+        let mut catalog = HashMap::new();
+        catalog.insert(
+            "claude_code".to_string(),
+            StoredCatalog {
+                models: vec![crate::acp::model_catalog::ModelCatalogEntry {
+                    id: "opencode/space-bunny-free".to_string(),
+                    label: None,
+                }],
+                seen_at: now,
+            },
+        );
+        let card = build_scorecard(&rows, &catalog, &HashMap::new(), now);
+        let edit = card.best_for.iter().find(|b| b.category == "edit").unwrap();
+        assert_eq!(edit.model, "opencode/space-bunny-free");
+        // The per-model table keeps the measured id.
+        assert_eq!(card.models[0].model, "space-bunny-free");
+    }
+
+    #[test]
+    fn best_for_keeps_the_measured_id_without_a_catalog() {
+        let now = ts("2026-09-24T00:00:00Z");
+        let rows = rows_with_edit_calls("solo-model", 20, 0, now);
+        let card = build_scorecard(&rows, &HashMap::new(), &HashMap::new(), now);
+        let edit = card.best_for.iter().find(|b| b.category == "edit").unwrap();
+        assert_eq!(edit.model, "solo-model");
     }
 
     #[test]

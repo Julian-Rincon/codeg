@@ -7,6 +7,7 @@ pub mod error;
 pub mod event_subscriber;
 pub mod i18n;
 pub mod manager;
+pub mod menu;
 pub mod message_formatter;
 pub mod scheduler;
 pub mod session_bridge;

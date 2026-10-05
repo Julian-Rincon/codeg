@@ -9,6 +9,7 @@ use tokio::task::JoinHandle;
 use super::command_handlers;
 use super::i18n::{self, Lang};
 use super::manager::ChatChannelManager;
+use super::menu;
 use super::session_bridge::SessionBridge;
 use super::session_commands;
 use super::types::{ChannelMessageTarget, IncomingCommand, InteractiveMessage, RichMessage};
@@ -219,6 +220,15 @@ async fn dispatch_command(
     lang: Lang,
     voice_reply_lang: Option<String>,
 ) -> DispatchResponse {
+    // `nav:` buttons (from /menu and /resume) stand for plain commands: turn
+    // the tap into that command's text so it takes the normal command route.
+    let nav_text = callback_data
+        .and_then(menu::nav_command)
+        .map(|cmd| format!("{prefix}{cmd}"));
+    let (text, callback_data) = match nav_text.as_deref() {
+        Some(t) => (t, None),
+        None => (text, callback_data),
+    };
     if let Some(data) = callback_data.filter(|d| d.starts_with("fo:")) {
         let result = session_commands::handle_failover_callback(
             data, db, channel_id, sender_id, target, manager, conn_mgr, emitter, bridge, lang,
@@ -444,12 +454,27 @@ async fn dispatch_command(
                 .await,
             target,
         ),
-        "resume" => DispatchResponse::current(
-            session_commands::handle_resume(
+        "resume" => {
+            let message = session_commands::handle_resume(
                 db, args, channel_id, sender_id, target, manager, conn_mgr, emitter, bridge, lang,
                 prefix, data_dir,
             )
-            .await,
+            .await;
+            if message.title.as_deref() == Some(i18n::session_resumed_title(lang)) {
+                DispatchResponse::from_session_message(
+                    session_commands::SessionCommandMessage::Interactive(menu::with_nav_buttons(
+                        message, lang,
+                    )),
+                    target,
+                )
+            } else {
+                DispatchResponse::current(message, target)
+            }
+        }
+        "menu" | "chats" => DispatchResponse::from_session_message(
+            session_commands::SessionCommandMessage::Interactive(
+                menu::handle_menu(db, channel_id, sender_id, lang).await,
+            ),
             target,
         ),
         "cancel" => DispatchResponse::current(
@@ -611,6 +636,39 @@ mod tests {
 
         assert!(matches!(response.message, Some(DispatchMessage::Rich(_))));
         assert_eq!(ctx.current_folder_id, Some(folder_id));
+    }
+
+    #[tokio::test]
+    async fn nav_callback_runs_the_menu_command() {
+        let db = fresh_in_memory_db().await;
+        let channel_id = seed_chat_channel(&db).await;
+        let target = ChannelMessageTarget::telegram_general(channel_id, "-100123");
+        let bridge = Arc::new(Mutex::new(SessionBridge::new()));
+
+        let response = dispatch_command(
+            "nav:menu",
+            "/",
+            &db.conn,
+            &ChatChannelManager::new(),
+            &ConnectionManager::new(),
+            &EventEmitter::Noop,
+            &bridge,
+            std::path::Path::new("/tmp/codeg-dispatch-data"),
+            channel_id,
+            "sender-1",
+            &target,
+            Some("nav:menu"),
+            Lang::Es,
+            None,
+        )
+        .await;
+
+        match response.message {
+            Some(DispatchMessage::Interactive(m)) => {
+                assert_eq!(m.buttons.last().map(|b| b.id.as_str()), Some("nav:new"));
+            }
+            _ => panic!("expected the interactive menu"),
+        }
     }
 
     #[tokio::test]
