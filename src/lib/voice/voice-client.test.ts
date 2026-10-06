@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest"
 import {
   checkVoiceHealth,
   PHANTOM_VOICE_BASE_URL,
+  voiceBaseUrlFor,
   resolveTtsLang,
   synthesizeSpeech,
   transcribeAudio,
@@ -167,5 +168,31 @@ describe("resolveTtsLang", () => {
     expect(resolveTtsLang("ja")).toBe("en")
     expect(resolveTtsLang("zh-CN")).toBe("en")
     expect(resolveTtsLang("ar")).toBe("en")
+  })
+})
+
+describe("voiceBaseUrlFor", () => {
+  it("en el PC (loopback) usa el servicio local", () => {
+    expect(
+      voiceBaseUrlFor({
+        hostname: "127.0.0.1",
+        origin: "http://127.0.0.1:3080",
+      })
+    ).toBe(PHANTOM_VOICE_BASE_URL)
+    expect(
+      voiceBaseUrlFor({
+        hostname: "localhost",
+        origin: "http://localhost:3080",
+      })
+    ).toBe(PHANTOM_VOICE_BASE_URL)
+  })
+
+  it("desde otra máquina (celular por Tailscale) usa /voice del mismo origen", () => {
+    expect(
+      voiceBaseUrlFor({
+        hostname: "julian-pc.tail6db58d.ts.net",
+        origin: "https://julian-pc.tail6db58d.ts.net",
+      })
+    ).toBe("https://julian-pc.tail6db58d.ts.net/voice")
   })
 })

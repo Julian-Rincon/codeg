@@ -59,8 +59,26 @@ function authHeaders(): Record<string, string> {
   return token ? { Authorization: `Bearer ${token}` } : {}
 }
 
+const LOOPBACK_HOSTS = new Set(["127.0.0.1", "localhost", "[::1]", "::1"])
+
+/** Where the voice service lives as seen from this page. On the PC itself the
+ *  page is served from loopback and the service is at its own port; opened
+ *  from another device (the phone, through `tailscale serve`) that loopback
+ *  address would point at the phone, so the service is reached through the
+ *  same origin under `/voice`, which the tailnet proxy maps to it. */
+export function voiceBaseUrlFor(loc: {
+  hostname: string
+  origin: string
+}): string {
+  return LOOPBACK_HOSTS.has(loc.hostname)
+    ? PHANTOM_VOICE_BASE_URL
+    : `${loc.origin}/voice`
+}
+
 function resolveBaseUrl(baseUrl?: string): string {
-  return baseUrl ?? PHANTOM_VOICE_BASE_URL
+  if (baseUrl) return baseUrl
+  if (typeof window === "undefined") return PHANTOM_VOICE_BASE_URL
+  return voiceBaseUrlFor(window.location)
 }
 
 /** GET /health — used to gate opening voice mode: if this fails, the UI must
