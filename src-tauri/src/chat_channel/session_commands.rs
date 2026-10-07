@@ -9,6 +9,7 @@ use tokio::sync::Mutex;
 use super::i18n::{self, Lang};
 use super::manager::ChatChannelManager;
 use super::permission_buttons;
+use super::question_buttons;
 use super::session_bridge::{ActiveSession, SessionBridge};
 use super::types::{
     ButtonStyle, ChannelMessageTarget, InteractiveMessage, MessageButton, MessageLevel, RichMessage,
@@ -1190,6 +1191,33 @@ pub async fn handle_permission_response(
         msg = msg.with_field("", i18n::auto_approve_enabled(lang));
     }
     msg.with_title(i18n::permission_response_title(lang))
+}
+
+/// A tap on a question button (`q:<token>:<index|x>`).
+pub async fn handle_question_button(
+    data: &str,
+    conn_mgr: &ConnectionManager,
+    lang: Lang,
+) -> RichMessage {
+    let es = lang == Lang::Es;
+    let Some(t) = question_buttons::take(data) else {
+        return RichMessage::info(if es {
+            "Esa pregunta ya no está pendiente."
+        } else {
+            "That question is no longer pending."
+        });
+    };
+    if let Err(e) = conn_mgr
+        .answer_question(&t.connection_id, &t.question_id, t.answer)
+        .await
+    {
+        return RichMessage::error(format!("{e}"));
+    }
+    RichMessage::info(format!(
+        "{} {}",
+        if es { "Respondido:" } else { "Answered:" },
+        t.label
+    ))
 }
 
 /// A tap on a permission button (`perm:<token>:<index>`). Works for any

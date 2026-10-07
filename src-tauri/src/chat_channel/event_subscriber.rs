@@ -11,6 +11,7 @@ use super::i18n::Lang;
 use super::manager::ChatChannelManager;
 use super::message_formatter;
 use super::permission_buttons;
+use super::question_buttons;
 use super::session_bridge::SessionBridge;
 use super::types::RichMessage;
 use crate::acp::internal_bus::InternalEventBus;
@@ -384,6 +385,13 @@ async fn process_envelope(
                 config.lang,
             ))
         }
+        AcpEvent::QuestionRequest {
+            question_id,
+            questions,
+        } => question_buttons::eligible(questions).map(|spec| {
+            let token = question_buttons::register(&envelope.connection_id, question_id, spec);
+            question_buttons::with_buttons(msg.clone(), &token, spec, config.lang)
+        }),
         _ => None,
     };
 

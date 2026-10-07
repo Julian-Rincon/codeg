@@ -11,6 +11,7 @@ use super::i18n::{self, Lang};
 use super::manager::ChatChannelManager;
 use super::menu;
 use super::permission_buttons;
+use super::question_buttons;
 use super::session_bridge::SessionBridge;
 use super::session_commands;
 use super::types::{
@@ -142,7 +143,10 @@ pub fn spawn_command_dispatcher(
             let is_answer_tap = cmd
                 .callback_data
                 .as_deref()
-                .is_some_and(permission_buttons::is_permission_callback);
+                .is_some_and(|d| {
+                    permission_buttons::is_permission_callback(d)
+                        || question_buttons::is_question_callback(d)
+                });
             if let (true, Some(id), Some(DispatchMessage::Rich(rich))) =
                 (is_answer_tap, tapped_id.as_ref(), response.message.as_ref())
             {
@@ -251,6 +255,12 @@ async fn dispatch_command(
         Some(t) => (t, None),
         None => (text, callback_data),
     };
+    if let Some(data) = callback_data.filter(|d| question_buttons::is_question_callback(d)) {
+        return DispatchResponse::current(
+            session_commands::handle_question_button(data, conn_mgr, lang).await,
+            target,
+        );
+    }
     if let Some(data) = callback_data.filter(|d| permission_buttons::is_permission_callback(d)) {
         return DispatchResponse::current(
             session_commands::handle_permission_button(data, conn_mgr, bridge, lang).await,
