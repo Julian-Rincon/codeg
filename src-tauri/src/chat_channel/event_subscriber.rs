@@ -10,6 +10,7 @@ use tokio::task::JoinHandle;
 use super::i18n::Lang;
 use super::manager::ChatChannelManager;
 use super::message_formatter;
+use super::permission_buttons;
 use super::session_bridge::SessionBridge;
 use super::types::RichMessage;
 use crate::acp::internal_bus::InternalEventBus;
@@ -360,6 +361,32 @@ async fn process_envelope(
         "permission_request" | "user_prompt_sent" | "question_request"
     );
 
+    // A desktop / web permission request gets approve / deny buttons so the
+    // blocked agent can be answered from the phone. Registered once per
+    // request, whatever the number of channels.
+    let interactive = match &envelope.payload {
+        AcpEvent::PermissionRequest {
+            request_id,
+            options,
+            ..
+        } if !options.is_empty() => {
+            let tool_desc = msg.fields.first().map(|(_, v)| v.as_str()).unwrap_or("");
+            let token = permission_buttons::register(
+                &envelope.connection_id,
+                request_id,
+                options,
+                tool_desc,
+            );
+            Some(permission_buttons::with_buttons(
+                msg.clone(),
+                &token,
+                options,
+                config.lang,
+            ))
+        }
+        _ => None,
+    };
+
     for ch in &config.enabled_channels {
         // Per-channel event filter
         if let Some(filter_json) = &ch.event_filter_json {
@@ -383,7 +410,10 @@ async fn process_envelope(
         }
 
         // Send
-        let send_result = manager.send_to_channel(ch.id, &msg).await;
+        let send_result = match &interactive {
+            Some(im) => manager.send_interactive_to_channel(ch.id, im).await,
+            None => manager.send_to_channel(ch.id, &msg).await,
+        };
         let (status, error_detail) = match &send_result {
             Ok(_) => {
                 // Only update the debounce timestamp on success, and only for

@@ -10,6 +10,7 @@ pub mod i18n;
 pub mod manager;
 pub mod menu;
 pub mod message_formatter;
+pub mod permission_buttons;
 pub mod scheduler;
 pub mod session_bridge;
 pub mod session_commands;

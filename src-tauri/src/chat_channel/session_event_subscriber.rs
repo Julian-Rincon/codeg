@@ -7,6 +7,7 @@ use tokio::sync::Mutex;
 use tokio::task::JoinHandle;
 
 use super::i18n::Lang;
+use super::permission_buttons;
 use super::session_bridge::{PendingPermission, SessionBridge};
 use super::tool_detail::{format_tool_call_detail, truncate_str};
 use super::types::{ChannelMessageTarget, MessageLevel, RichMessage};
@@ -580,11 +581,8 @@ async fn handle_acp_envelope(
                         .unwrap_or(false);
 
                 if auto_approve {
-                    let option_id = options
-                        .iter()
-                        .find(|o| o.kind == "allow" || o.kind == "allowForSession")
-                        .or_else(|| options.first())
-                        .map(|o| o.option_id.clone());
+                    let option_id =
+                        permission_buttons::pick_option(options, true).map(|o| o.option_id.clone());
 
                     drop(guard);
 
@@ -642,7 +640,18 @@ async fn handle_acp_envelope(
                     fields: Vec::new(),
                     level: MessageLevel::Warning,
                 };
-                let _ = manager.send_to_target(&target, &msg).await;
+                let _ = if options.is_empty() {
+                    manager.send_to_target(&target, &msg).await
+                } else {
+                    let token = permission_buttons::register(
+                        connection_id,
+                        request_id,
+                        options,
+                        &tool_desc,
+                    );
+                    let interactive = permission_buttons::with_buttons(msg, &token, options, lang);
+                    manager.send_interactive_to_target(&target, &interactive).await
+                };
             }
         }
 

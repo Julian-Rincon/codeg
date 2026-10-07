@@ -10,6 +10,7 @@ use super::command_handlers;
 use super::i18n::{self, Lang};
 use super::manager::ChatChannelManager;
 use super::menu;
+use super::permission_buttons;
 use super::session_bridge::SessionBridge;
 use super::session_commands;
 use super::types::{ChannelMessageTarget, IncomingCommand, InteractiveMessage, RichMessage};
@@ -229,6 +230,12 @@ async fn dispatch_command(
         Some(t) => (t, None),
         None => (text, callback_data),
     };
+    if let Some(data) = callback_data.filter(|d| permission_buttons::is_permission_callback(d)) {
+        return DispatchResponse::current(
+            session_commands::handle_permission_button(data, conn_mgr, bridge, lang).await,
+            target,
+        );
+    }
     if let Some(data) = callback_data.filter(|d| d.starts_with("fo:")) {
         let result = session_commands::handle_failover_callback(
             data, db, channel_id, sender_id, target, manager, conn_mgr, emitter, bridge, lang,

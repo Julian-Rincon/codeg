@@ -8,6 +8,7 @@ use tokio::sync::Mutex;
 
 use super::i18n::{self, Lang};
 use super::manager::ChatChannelManager;
+use super::permission_buttons;
 use super::session_bridge::{ActiveSession, SessionBridge};
 use super::types::{
     ButtonStyle, ChannelMessageTarget, InteractiveMessage, MessageButton, MessageLevel, RichMessage,
@@ -1156,22 +1157,8 @@ pub async fn handle_permission_response(
         }
     };
 
-    // Find the appropriate option_id
-    let option_id = if approve {
-        pending
-            .options
-            .iter()
-            .find(|o| o.kind == "allow" || o.kind == "allowForSession")
-            .or_else(|| pending.options.first())
-            .map(|o| o.option_id.clone())
-    } else {
-        pending
-            .options
-            .iter()
-            .find(|o| o.kind == "deny")
-            .or_else(|| pending.options.last())
-            .map(|o| o.option_id.clone())
-    };
+    let option_id =
+        permission_buttons::pick_option(&pending.options, approve).map(|o| o.option_id.clone());
 
     let Some(option_id) = option_id else {
         return RichMessage::info(i18n::no_valid_permission_option(lang));
@@ -1203,6 +1190,47 @@ pub async fn handle_permission_response(
         msg = msg.with_field("", i18n::auto_approve_enabled(lang));
     }
     msg.with_title(i18n::permission_response_title(lang))
+}
+
+/// A tap on a permission button (`perm:<token>:<index>`). Works for any
+/// session — desktop, web or chat-started — because the token carries the
+/// connection and request it belongs to.
+pub async fn handle_permission_button(
+    data: &str,
+    conn_mgr: &ConnectionManager,
+    bridge: &Arc<Mutex<SessionBridge>>,
+    lang: Lang,
+) -> RichMessage {
+    let Some(r) = permission_buttons::take(data) else {
+        return RichMessage::info(i18n::no_pending_permission(lang));
+    };
+    if let Err(e) = conn_mgr
+        .respond_permission(&r.connection_id, &r.request_id, &r.option.option_id)
+        .await
+    {
+        return RichMessage::error(format!(
+            "{}{e}",
+            i18n::failed_permission_response_label(lang)
+        ));
+    }
+    // A chat-started session also tracks the request for `/approve`; it's
+    // answered now, so drop it there too.
+    if let Some(session) = bridge.lock().await.get_mut(&r.connection_id) {
+        if session
+            .permission_pending
+            .as_ref()
+            .is_some_and(|p| p.request_id == r.request_id)
+        {
+            session.permission_pending = None;
+        }
+    }
+    let action = if r.approved() {
+        i18n::approved_label(lang)
+    } else {
+        i18n::denied_label(lang)
+    };
+    RichMessage::info(format!("{}: {}", action, r.tool_description))
+        .with_title(i18n::permission_response_title(lang))
 }
 
 // ── follow-up (non-command text) ──
