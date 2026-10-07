@@ -650,7 +650,9 @@ async fn handle_acp_envelope(
                         &tool_desc,
                     );
                     let interactive = permission_buttons::with_buttons(msg, &token, options, lang);
-                    manager.send_interactive_to_target(&target, &interactive).await
+                    manager
+                        .send_interactive_to_target(&target, &interactive)
+                        .await
                 };
             }
         }

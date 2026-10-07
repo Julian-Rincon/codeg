@@ -140,17 +140,18 @@ pub fn spawn_command_dispatcher(
                 .pointer("/callback_query/message/message_id")
                 .and_then(|v| v.as_i64())
                 .map(|id| SentMessageId(id.to_string()));
-            let is_answer_tap = cmd
-                .callback_data
-                .as_deref()
-                .is_some_and(|d| {
-                    permission_buttons::is_permission_callback(d)
-                        || question_buttons::is_question_callback(d)
-                });
+            let is_answer_tap = cmd.callback_data.as_deref().is_some_and(|d| {
+                permission_buttons::is_permission_callback(d)
+                    || question_buttons::is_question_callback(d)
+            });
             if let (true, Some(id), Some(DispatchMessage::Rich(rich))) =
                 (is_answer_tap, tapped_id.as_ref(), response.message.as_ref())
             {
-                if manager.update_on_channel(cmd.channel_id, id, rich).await.is_ok() {
+                if manager
+                    .update_on_channel(cmd.channel_id, id, rich)
+                    .await
+                    .is_ok()
+                {
                     continue;
                 }
             }

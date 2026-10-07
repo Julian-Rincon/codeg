@@ -144,7 +144,10 @@ pub fn with_buttons(
 /// The option `/approve` or `/deny` picks. Approving prefers a one-time grant
 /// (ACP `allow_once`) over a standing rule; the legacy kinds are kept for
 /// agents that still send them.
-pub fn pick_option(options: &[PermissionOptionInfo], approve: bool) -> Option<&PermissionOptionInfo> {
+pub fn pick_option(
+    options: &[PermissionOptionInfo],
+    approve: bool,
+) -> Option<&PermissionOptionInfo> {
     let by_kind = |kinds: &[&str]| {
         kinds
             .iter()
@@ -203,7 +206,10 @@ mod tests {
         assert_eq!(r.request_id, "req");
         assert_eq!(r.option.option_id, "allow_id");
         assert!(r.approved());
-        assert!(take(&data).is_none(), "un segundo toque no vuelve a responder");
+        assert!(
+            take(&data).is_none(),
+            "un segundo toque no vuelve a responder"
+        );
     }
 
     #[test]
