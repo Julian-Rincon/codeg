@@ -55,6 +55,14 @@ pub fn register(connection_id: &str, question_id: &str, spec: &QuestionSpec) -> 
     token
 }
 
+/// The question was answered elsewhere: its buttons must not claim to answer it.
+pub fn forget_question(question_id: &str) {
+    PENDING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|_, e| e.question_id != question_id);
+}
+
 pub fn is_question_callback(data: &str) -> bool {
     data.starts_with(PREFIX)
 }
@@ -177,6 +185,14 @@ mod tests {
         assert_eq!(t.answer.answers[0].labels, vec!["Opción 2".to_string()]);
         assert!(!t.answer.declined);
         assert!(take(&format!("q:{token}:2")).is_none());
+    }
+
+    #[test]
+    fn question_answered_elsewhere_kills_its_buttons() {
+        let s = spec(false, 2);
+        let token = register("conn", "qid-elsewhere", &s);
+        forget_question("qid-elsewhere");
+        assert!(take(&format!("q:{token}:0")).is_none());
     }
 
     #[test]

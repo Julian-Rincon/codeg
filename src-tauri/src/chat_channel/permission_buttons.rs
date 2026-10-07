@@ -74,6 +74,15 @@ pub fn register(
     token
 }
 
+/// The request was answered elsewhere (desktop UI, `/approve`): its buttons
+/// must not claim to approve it later.
+pub fn forget_request(request_id: &str) {
+    PENDING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .retain(|_, e| e.request_id != request_id);
+}
+
 pub fn is_permission_callback(data: &str) -> bool {
     data.starts_with(PREFIX)
 }
@@ -218,6 +227,16 @@ mod tests {
         let token = register("conn", "req", &options, "x");
         assert!(take(&format!("perm:{token}:2")).is_some());
         assert!(take(&format!("perm:{token}:0")).is_none());
+    }
+
+    #[test]
+    fn request_answered_elsewhere_kills_its_buttons() {
+        // Julian rechaza en el PC y luego toca "Aprobar" en el cel: no debe
+        // confirmar algo que no se aplicó.
+        let options = claude_options();
+        let token = register("conn", "req-elsewhere", &options, "x");
+        forget_request("req-elsewhere");
+        assert!(take(&format!("perm:{token}:1")).is_none());
     }
 
     #[test]

@@ -287,6 +287,18 @@ async fn process_envelope(
     last_push: &mut HashMap<(i32, String), Instant>,
     webhook_client: &reqwest::Client,
 ) {
+    // Answered from any client: retire its phone buttons so a later tap can't
+    // report an approval that never happened.
+    match &envelope.payload {
+        AcpEvent::PermissionResolved { request_id } => {
+            permission_buttons::forget_request(request_id)
+        }
+        AcpEvent::QuestionResolved { question_id } => {
+            question_buttons::forget_question(question_id)
+        }
+        _ => {}
+    }
+
     let Some((event_type, msg)) = parse_acp_event(&envelope.payload, config.lang) else {
         return;
     };
