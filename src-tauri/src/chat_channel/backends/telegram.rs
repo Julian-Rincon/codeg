@@ -97,6 +97,35 @@ impl TelegramBackend {
             .await
     }
 
+    async fn edit_text(
+        &self,
+        message_id: &str,
+        text: &str,
+        parse_mode: Option<&str>,
+    ) -> Result<(), ChatChannelError> {
+        let body = telegram_edit_message_body(&self.chat_id, message_id, text, parse_mode)?;
+        let resp = self
+            .client
+            .post(self.api_url("editMessageText"))
+            .json(&body)
+            .send()
+            .await
+            .map_err(|e| {
+                ChatChannelError::SendFailed(redact_token(e.to_string(), &self.bot_token))
+            })?;
+        let result: serde_json::Value = resp.json().await.map_err(|e| {
+            ChatChannelError::SendFailed(redact_token(e.to_string(), &self.bot_token))
+        })?;
+        if result.get("ok").and_then(|v| v.as_bool()) != Some(true) {
+            let desc = result
+                .get("description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("unknown error");
+            return Err(ChatChannelError::SendFailed(desc.to_string()));
+        }
+        Ok(())
+    }
+
     async fn send_text_with_reply_markup(
         &self,
         text: &str,
@@ -776,6 +805,24 @@ impl ChatChannelBackend for TelegramBackend {
         }
     }
 
+    async fn update_message(
+        &self,
+        message_id: &SentMessageId,
+        message: &RichMessage,
+    ) -> Result<(), ChatChannelError> {
+        let markdown = format_telegram_markdown(message);
+        match self
+            .edit_text(&message_id.0, &markdown, Some("MarkdownV2"))
+            .await
+        {
+            Ok(()) => Ok(()),
+            Err(_) => {
+                self.edit_text(&message_id.0, &message.to_plain_text(), None)
+                    .await
+            }
+        }
+    }
+
     async fn test_connection(&self) -> Result<(), ChatChannelError> {
         let resp = self
             .client
@@ -1203,6 +1250,25 @@ fn telegram_inline_keyboard(message: &InteractiveMessage) -> Option<serde_json::
     Some(serde_json::json!({ "inline_keyboard": rows }))
 }
 
+fn telegram_edit_message_body(
+    chat_id: &str,
+    message_id: &str,
+    text: &str,
+    parse_mode: Option<&str>,
+) -> Result<serde_json::Value, ChatChannelError> {
+    let message_id: i64 = message_id
+        .parse()
+        .map_err(|_| ChatChannelError::SendFailed("invalid Telegram message_id".to_string()))?;
+    // No reply_markup: the edit drops the inline keyboard, so the tapped
+    // buttons can't be pressed again.
+    let mut body =
+        serde_json::json!({ "chat_id": chat_id, "message_id": message_id, "text": text });
+    if let Some(mode) = parse_mode {
+        body["parse_mode"] = serde_json::Value::String(mode.to_string());
+    }
+    Ok(body)
+}
+
 fn telegram_send_message_body(
     default_chat_id: &str,
     text: &str,
@@ -1296,6 +1362,17 @@ fn escape_markdown(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn edit_body_targets_the_tapped_message_and_drops_the_keyboard() {
+        let body = telegram_edit_message_body("42", "777", "Aprobado: Bash ls", None).unwrap();
+        assert_eq!(body["chat_id"], "42");
+        assert_eq!(body["message_id"], 777);
+        assert_eq!(body["text"], "Aprobado: Bash ls");
+        assert!(body.get("reply_markup").is_none());
+        assert!(body.get("parse_mode").is_none());
+        assert!(telegram_edit_message_body("42", "no-num", "x", None).is_err());
+    }
 
     #[test]
     fn redact_token_scrubs_token_from_error_url() {

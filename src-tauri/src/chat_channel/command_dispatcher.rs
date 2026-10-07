@@ -13,7 +13,9 @@ use super::menu;
 use super::permission_buttons;
 use super::session_bridge::SessionBridge;
 use super::session_commands;
-use super::types::{ChannelMessageTarget, IncomingCommand, InteractiveMessage, RichMessage};
+use super::types::{
+    ChannelMessageTarget, IncomingCommand, InteractiveMessage, RichMessage, SentMessageId,
+};
 use crate::acp::manager::ConnectionManager;
 use crate::db::service::{app_metadata_service, chat_channel_message_log_service};
 use crate::web::event_bridge::EventEmitter;
@@ -129,6 +131,25 @@ pub fn spawn_command_dispatcher(
                 tracing::debug!("[ChatChannel] dispatch result: no response");
                 continue;
             };
+
+            // A permission / question button answers in place: edit the tapped
+            // message (dropping its keyboard) instead of posting a new one.
+            let tapped_id = cmd
+                .metadata
+                .pointer("/callback_query/message/message_id")
+                .and_then(|v| v.as_i64())
+                .map(|id| SentMessageId(id.to_string()));
+            let is_answer_tap = cmd
+                .callback_data
+                .as_deref()
+                .is_some_and(permission_buttons::is_permission_callback);
+            if let (true, Some(id), Some(DispatchMessage::Rich(rich))) =
+                (is_answer_tap, tapped_id.as_ref(), response.message.as_ref())
+            {
+                if manager.update_on_channel(cmd.channel_id, id, rich).await.is_ok() {
+                    continue;
+                }
+            }
 
             let mut messages = Vec::new();
             if let Some(message) = response.message {
