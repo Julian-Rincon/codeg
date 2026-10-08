@@ -1619,6 +1619,17 @@ export function MessageInput({
     historyDraftRef.current = null
   }, [clearAttachments, closeSlashMenu])
 
+  // Async steering must compare against the current draft, including images
+  // added or removed while delivery was awaiting confirmation.
+  const currentComposerRef = useRef({
+    buildDraft,
+    draftStorageKey: effectiveDraftStorageKey,
+  })
+  currentComposerRef.current = {
+    buildDraft,
+    draftStorageKey: effectiveDraftStorageKey,
+  }
+
   const handleSend = useCallback(() => {
     // The editor stays editable while `disabled` (the agent is busy) so the user
     // can keep typing, but a plain send is blocked — only enqueue / queue-edit
@@ -1695,10 +1706,23 @@ export function MessageInput({
     }
     const draft = buildDraft()
     if (!draft) return
+    const sentEditor = editorRef.current?.getEditor()
+    // Keep the whole edited draft: appending during delivery can retain text
+    // already sent, but clearing or trimming it would discard the user's edits.
+    const clearSentDraft = () => {
+      const current = currentComposerRef.current
+      if (
+        current.draftStorageKey === effectiveDraftStorageKey &&
+        editorRef.current?.getEditor() === sentEditor &&
+        JSON.stringify(current.buildDraft()) === JSON.stringify(draft)
+      ) {
+        resetComposer()
+      }
+    }
     const enqueueInstead = () => {
       if (!onEnqueue) return
       onEnqueue(draft, showModeSelector ? effectiveModeId : null)
-      resetComposer()
+      clearSentDraft()
       toast.info(t("steerQueuedInstead"))
     }
     const payload = buildSteerPayload(draft)
@@ -1706,7 +1730,7 @@ export function MessageInput({
     setSteering(true)
     try {
       await onSteer(payload.text, payload.blocks)
-      resetComposer()
+      clearSentDraft()
     } catch (err) {
       if (isNoActiveTurnRejection(err)) {
         // The turn ended in the race window — reroute through the queue.
@@ -1729,6 +1753,7 @@ export function MessageInput({
     onEnqueue,
     showModeSelector,
     effectiveModeId,
+    effectiveDraftStorageKey,
     resetComposer,
     steerChannel,
     t,

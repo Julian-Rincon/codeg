@@ -2853,6 +2853,7 @@ mod tests {
             parent_tool_use_id: Some(parent_tool_use_id.into()),
             delegation_call_id: Some("call-1".into()),
             origin_cwd: None,
+            tag_ids: Vec::new(),
         }
     }
 
@@ -6654,6 +6655,7 @@ mod tests {
                 parent_tool_use_id: None,
                 delegation_call_id: None,
                 origin_cwd: None,
+                tag_ids: Vec::new(),
             },
             turns,
             session_stats: None,
