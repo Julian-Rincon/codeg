@@ -390,8 +390,10 @@ async fn process_envelope(
                 options,
                 tool_desc,
             );
+            let mut base = msg.clone();
+            base.body = super::i18n::permission_request_body_with_buttons(config.lang).to_string();
             Some(permission_buttons::with_buttons(
-                msg.clone(),
+                base,
                 &token,
                 options,
                 config.lang,
@@ -402,7 +404,9 @@ async fn process_envelope(
             questions,
         } => question_buttons::eligible(questions).map(|spec| {
             let token = question_buttons::register(&envelope.connection_id, question_id, spec);
-            question_buttons::with_buttons(msg.clone(), &token, spec, config.lang)
+            let mut base = msg.clone();
+            base.body = super::i18n::question_request_body_with_buttons(config.lang).to_string();
+            question_buttons::with_buttons(base, &token, spec, config.lang)
         }),
         _ => None,
     };
@@ -749,6 +753,42 @@ mod permission_push_tests {
         assert_eq!(msgs.len(), 1, "expected one push, got {msgs:?}");
         assert!(msgs[0].contains("Permission Request"), "got {:?}", msgs[0]);
         assert!(msgs[0].contains("Bash: npm test"), "got {:?}", msgs[0]);
+    }
+
+    /// With buttons attached the push no longer says to go to Phantom: it can be
+    /// answered right there.
+    #[tokio::test]
+    async fn permission_push_with_buttons_says_it_can_be_answered_here() {
+        let db = test_helpers::fresh_in_memory_db().await;
+        let (chat, rec) = manager_with_recorder(7).await;
+        let bridge = Arc::new(Mutex::new(SessionBridge::new()));
+        let config = config_all_on(7);
+        let mut last_push = HashMap::new();
+        let mut env = permission_envelope("desktop-conn-buttons");
+        if let AcpEvent::PermissionRequest { options, .. } = &mut env.payload {
+            *options = vec![crate::acp::types::PermissionOptionInfo {
+                option_id: "a".into(),
+                name: "Allow".into(),
+                kind: "allow_once".into(),
+                meta: None,
+            }];
+        }
+
+        process_envelope(
+            &env,
+            &bridge,
+            &chat,
+            &db.conn,
+            &config,
+            &mut last_push,
+            &test_client(),
+        )
+        .await;
+
+        let msgs = sent(&rec).await;
+        assert!(msgs[0].contains("Bash: npm test"), "got {:?}", msgs[0]);
+        assert!(msgs[0].contains("here or in Phantom"), "got {:?}", msgs[0]);
+        assert!(msgs[0].contains("Approve"), "got {:?}", msgs[0]);
     }
 
     /// A permission request from a chat-channel-bridged connection is suppressed

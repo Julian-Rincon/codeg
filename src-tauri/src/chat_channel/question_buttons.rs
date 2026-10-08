@@ -13,7 +13,8 @@ use super::types::{ButtonStyle, InteractiveMessage, MessageButton, RichMessage};
 
 const PREFIX: &str = "q:";
 const SKIP: &str = "x";
-const TTL: Duration = Duration::from_secs(24 * 3600);
+// A blocked agent can wait days for an answer; entries are tiny.
+const TTL: Duration = Duration::from_secs(7 * 24 * 3600);
 
 struct Entry {
     connection_id: String,
@@ -61,6 +62,18 @@ pub fn forget_question(question_id: &str) {
         .lock()
         .unwrap_or_else(|e| e.into_inner())
         .retain(|_, e| e.question_id != question_id);
+}
+
+/// Whether a tap would still answer something — without consuming the token.
+pub fn is_live(data: &str) -> bool {
+    let Some((token, _)) = data.strip_prefix(PREFIX).and_then(|r| r.rsplit_once(':')) else {
+        return false;
+    };
+    PENDING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(token)
+        .is_some_and(|e| e.created.elapsed() < TTL)
 }
 
 pub fn is_question_callback(data: &str) -> bool {
@@ -193,6 +206,15 @@ mod tests {
         let token = register("conn", "qid-elsewhere", &s);
         forget_question("qid-elsewhere");
         assert!(take(&format!("q:{token}:0")).is_none());
+    }
+
+    #[test]
+    fn is_live_peeks_without_consuming() {
+        let s = spec(false, 2);
+        let token = register("conn", "qid-live", &s);
+        assert!(is_live(&format!("q:{token}:0")));
+        assert!(take(&format!("q:{token}:0")).is_some());
+        assert!(!is_live(&format!("q:{token}:1")));
     }
 
     #[test]

@@ -237,6 +237,24 @@ pub fn question_request_title(lang: Lang) -> &'static str {
     }
 }
 
+/// Body of a permission push that carries answer buttons.
+pub fn permission_request_body_with_buttons(lang: Lang) -> &'static str {
+    match lang {
+        Lang::Es => "Un agente solicita permiso. Respóndelo aquí o en Phantom.",
+        Lang::En => "An agent is requesting permission. Answer it here or in Phantom.",
+        other => permission_request_body(other),
+    }
+}
+
+/// Body of a question push that carries answer buttons.
+pub fn question_request_body_with_buttons(lang: Lang) -> &'static str {
+    match lang {
+        Lang::Es => "Un agente te hace una pregunta. Respóndela aquí o en Phantom.",
+        Lang::En => "An agent is asking you a question. Answer it here or in Phantom.",
+        other => question_request_body(other),
+    }
+}
+
 pub fn question_request_body(lang: Lang) -> &'static str {
     match lang {
         Lang::ZhCn => "智能体正在向你提问，请在 Phantom 中回答。",

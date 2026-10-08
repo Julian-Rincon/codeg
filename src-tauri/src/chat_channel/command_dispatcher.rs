@@ -107,6 +107,40 @@ pub fn spawn_command_dispatcher(
 
             config.refresh_if_needed(&db_conn).await;
 
+            // A tap on a permission / question button that no longer answers anything
+            // (answered elsewhere, expired, Phantom restarted): keep the message's text,
+            // mark it closed and drop its keyboard — instead of replacing it with a
+            // generic "nothing pending".
+            if let Some(data) = cmd.callback_data.as_deref().filter(|d| {
+                permission_buttons::is_permission_callback(d)
+                    || question_buttons::is_question_callback(d)
+            }) {
+                if !permission_buttons::is_live(data) && !question_buttons::is_live(data) {
+                    let tapped = cmd
+                        .metadata
+                        .pointer("/callback_query/message/message_id")
+                        .and_then(|v| v.as_i64());
+                    let original = cmd
+                        .metadata
+                        .pointer("/callback_query/message/text")
+                        .and_then(|v| v.as_str());
+                    if let (Some(id), Some(original)) = (tapped, original) {
+                        let closed = RichMessage::info(permission_buttons::stale_tap_text(
+                            original,
+                            config.lang,
+                        ));
+                        let _ = manager
+                            .update_on_channel(
+                                cmd.channel_id,
+                                &SentMessageId(id.to_string()),
+                                &closed,
+                            )
+                            .await;
+                        continue;
+                    }
+                }
+            }
+
             let response = dispatch_command(
                 text,
                 &config.prefix,

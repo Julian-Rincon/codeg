@@ -16,7 +16,8 @@ use super::i18n::Lang;
 use super::types::{ButtonStyle, InteractiveMessage, MessageButton, RichMessage};
 
 const PREFIX: &str = "perm:";
-const TTL: Duration = Duration::from_secs(24 * 3600);
+// A blocked agent can wait days for an answer; entries are tiny.
+const TTL: Duration = Duration::from_secs(7 * 24 * 3600);
 
 struct Entry {
     connection_id: String,
@@ -83,6 +84,18 @@ pub fn forget_request(request_id: &str) {
         .retain(|_, e| e.request_id != request_id);
 }
 
+/// Whether a tap would still answer something — without consuming the token.
+pub fn is_live(data: &str) -> bool {
+    let Some((token, _)) = data.strip_prefix(PREFIX).and_then(|r| r.rsplit_once(':')) else {
+        return false;
+    };
+    PENDING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .get(token)
+        .is_some_and(|e| e.created.elapsed() < TTL)
+}
+
 pub fn is_permission_callback(data: &str) -> bool {
     data.starts_with(PREFIX)
 }
@@ -118,6 +131,17 @@ fn label(option: &PermissionOptionInfo, lang: Lang) -> String {
         "reject_always" => if es { "❌ Nunca" } else { "❌ Never" }.to_string(),
         _ => option.name.clone(),
     }
+}
+
+/// A tap on a button that no longer answers anything (answered elsewhere, expired,
+/// or Phantom restarted): keep what the message said and mark it as closed.
+pub fn stale_tap_text(original: &str, lang: Lang) -> String {
+    let note = if lang == Lang::Es {
+        "⏱ Ya no está pendiente: se respondió en otro lado o expiró."
+    } else {
+        "⏱ No longer pending: answered elsewhere or expired."
+    };
+    format!("{original}\n\n{note}")
 }
 
 /// One button per option the agent offered (the same choices Phantom shows),
@@ -237,6 +261,25 @@ mod tests {
         let token = register("conn", "req-elsewhere", &options, "x");
         forget_request("req-elsewhere");
         assert!(take(&format!("perm:{token}:1")).is_none());
+    }
+
+    #[test]
+    fn is_live_peeks_without_consuming() {
+        let options = claude_options();
+        let token = register("conn", "req-live", &options, "x");
+        let data = format!("perm:{token}:1");
+        assert!(is_live(&data));
+        assert!(is_live(&data), "mirar no consume");
+        assert!(take(&data).is_some());
+        assert!(!is_live(&data));
+        assert!(!is_live("perm:nope:0"));
+    }
+
+    #[test]
+    fn stale_tap_keeps_the_original_text() {
+        let t = stale_tap_text("Solicitud de permiso\nBash: rm -rf build", Lang::Es);
+        assert!(t.starts_with("Solicitud de permiso\nBash: rm -rf build"));
+        assert!(t.to_lowercase().contains("ya no está pendiente"));
     }
 
     #[test]
