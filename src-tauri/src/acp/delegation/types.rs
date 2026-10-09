@@ -77,6 +77,11 @@ pub struct DelegationRequest {
     /// connect, so the child falls back to its own default model.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub model: Option<String>,
+    /// Reasoning effort for the child (`low`..`max`), from the lead or the
+    /// router. Applied at connect as the closest level the child's model
+    /// offers (see `acp::connection::EFFORT_CATEGORY_CONFIG_KEY`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 /// Everything the broker needs to resume one interrupted delegation task.
@@ -108,6 +113,12 @@ pub struct ResumeDelegationRequest {
     /// [`DelegationRequest::external_handle`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub external_handle: Option<String>,
+    /// Model / effort the original delegation ran with (from its route), so a
+    /// resumed child keeps them instead of falling back to agent defaults.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub model: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub effort: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

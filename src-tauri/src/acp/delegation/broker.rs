@@ -2477,6 +2477,12 @@ impl DelegationBroker {
                 model.to_string(),
             );
         }
+        if let Some(effort) = req.effort.as_deref() {
+            preferred_config_values.insert(
+                crate::acp::connection::EFFORT_CATEGORY_CONFIG_KEY.to_string(),
+                effort.to_string(),
+            );
+        }
         // Checkpoint #1 (opportunistic): if a parent cancel already landed
         // during the claim/depth phase, bail before spawning a child the parent
         // has abandoned. No child exists yet, so there's nothing to tear down.
@@ -4044,11 +4050,24 @@ impl DelegationBroker {
         // --- Re-spawn the child, resuming its agent session --------------------
         // Same per-agent defaults as a fresh spawn; no depth re-check — the
         // child row already exists at its chain position, resume adds no node.
-        let (preferred_mode_id, preferred_config_values) = cfg
+        let (preferred_mode_id, mut preferred_config_values) = cfg
             .agent_defaults
             .get(&ctx.agent_type)
             .map(|d: &AgentDelegationDefaults| (d.mode_id.clone(), d.config_values.clone()))
             .unwrap_or((None, BTreeMap::new()));
+        // Keep the routed model / effort across the resume.
+        if let Some(model) = req.model.as_deref() {
+            preferred_config_values.insert(
+                crate::acp::connection::MODEL_CATEGORY_CONFIG_KEY.to_string(),
+                model.to_string(),
+            );
+        }
+        if let Some(effort) = req.effort.as_deref() {
+            preferred_config_values.insert(
+                crate::acp::connection::EFFORT_CATEGORY_CONFIG_KEY.to_string(),
+                effort.to_string(),
+            );
+        }
         // Checkpoint #1: a parent cancel during the gates — nothing spawned yet.
         if self.take_inflight_cancel(inflight_id).await {
             return report_from_outcome(
@@ -4667,6 +4686,7 @@ mod tests {
             requested_working_dir: None,
             external_handle: None,
             model: None,
+            effort: None,
         }
     }
 
@@ -5344,6 +5364,40 @@ mod tests {
             DelegationOutcome::Err { code, .. } => assert_eq!(code, "spawn_failed"),
             other => panic!("expected Err, got {other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn requested_effort_reaches_the_spawner_as_alias() {
+        let mock = Arc::new(MockSpawner::new());
+        mock.queue_spawn(Ok("child-1".into())).await;
+        mock.queue_send(Err(SpawnerError::Send("stop after spawn".into())))
+            .await;
+        let broker =
+            DelegationBroker::new(mock.clone() as Arc<dyn ConnectionSpawner>, shallow_lookup());
+        broker
+            .set_config(DelegationConfig {
+                enabled: true,
+                depth_limit: 8,
+                ..DelegationConfig::default()
+            })
+            .await;
+
+        let mut req = request(1, "pt-effort");
+        req.model = Some("opus".into());
+        req.effort = Some("high".into());
+        let _ = broker.handle_request(req).await;
+
+        let args = mock.spawn_args.lock().await;
+        assert_eq!(args.len(), 1);
+        let values = &args[0].preferred_config_values;
+        assert_eq!(
+            values.get(crate::acp::connection::EFFORT_CATEGORY_CONFIG_KEY).map(String::as_str),
+            Some("high")
+        );
+        assert_eq!(
+            values.get(crate::acp::connection::MODEL_CATEGORY_CONFIG_KEY).map(String::as_str),
+            Some("opus")
+        );
     }
 
     #[tokio::test]
@@ -9437,6 +9491,8 @@ mod tests {
             task_id: task_id.into(),
             reason: None,
             external_handle: None,
+            model: None,
+            effort: None,
         }
     }
 

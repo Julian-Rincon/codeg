@@ -1,7 +1,7 @@
 [
   {
     "name": "delegate_to_agent",
-    "description": "Hand off a self-contained sub-task to a separate local AI agent that runs in its own session. ASYNCHRONOUS: returns a task_id right away and the sub-agent keeps working in the background — this call never blocks. So you can fan out several delegations at once and keep working, then collect the results with get_delegation_status by passing the task_ids array (one id to poll a single task, or many at once to poll the whole fan-out in one call) — or stop one early with cancel_delegation(task_id). The sub-agent CANNOT see this conversation, your open files, or earlier turns — it starts cold, so `task` must carry everything it needs. Best for independent, parallelizable work you can describe up front; not for steps that need your ongoing back-and-forth. RECOGNIZING AN EXPLICIT DELEGATION REQUEST: the user can name a sub-agent directly in their message — it appears as `@AgentName` or as a Markdown link `[@AgentName](codeg://agent/<agent_type>)`. Such a mention IS an explicit instruction to delegate the associated work to that agent, even when the user never names this tool. If the message names several agents, make one call per agent, each carrying that agent's slice of the work.",
+    "description": "Hand off a self-contained sub-task to a separate local AI agent that runs in its own session. ASYNCHRONOUS: returns a task_id right away and the sub-agent keeps working in the background — this call never blocks. So you can fan out several delegations at once and keep working, then collect the results with get_delegation_status by passing the task_ids array (one id to poll a single task, or many at once to poll the whole fan-out in one call) — or stop one early with cancel_delegation(task_id). The sub-agent CANNOT see this conversation, your open files, or earlier turns — it starts cold, so `task` must carry everything it needs. Best for independent, parallelizable work you can describe up front; not for steps that need your ongoing back-and-forth. RECOGNIZING AN EXPLICIT DELEGATION REQUEST: the user can name a sub-agent directly in their message — it appears as `@AgentName` or as a Markdown link `[@AgentName](codeg://agent/<agent_type>)`. Such a mention IS an explicit instruction to delegate the associated work to that agent, even when the user never names this tool. If the message names several agents, make one call per agent, each carrying that agent's slice of the work. Prefer agent_type \"auto\" with task_kind and difficulty: Phantom routes to the best measured agent/model/effort and learns from results; then call rate_delegation after reviewing the result.",
     "inputSchema": {
       "type": "object",
       "required": [
@@ -12,6 +12,7 @@
         "agent_type": {
           "type": "string",
           "enum": [
+            "auto",
             "claude_code",
             "codex",
             "open_code",
@@ -28,7 +29,45 @@
             "qoder",
             "antigravity"
           ],
-          "description": "Which local agent runs the sub-task. Pick the one best suited to the work — or, when the user's message names an agent via `@AgentName` / `codeg://agent/<agent_type>`, use that exact `<agent_type>` slug (e.g. `codeg://agent/claude_code` means `claude_code`)."
+          "description": "Which local agent runs the sub-task. \"auto\" lets Phantom's router pick the agent, the model and the reasoning effort for you from task_kind/difficulty — use it when you are not sure which agent is best (recommended). With a concrete slug, the router keeps your choice and only fills in the effort; or, when the user's message names an agent via `@AgentName` / `codeg://agent/<agent_type>`, use that exact `<agent_type>` slug (e.g. `codeg://agent/claude_code` means `claude_code`)."
+        },
+        "task_kind": {
+          "type": "string",
+          "enum": [
+            "plan",
+            "implement",
+            "refactor",
+            "debug",
+            "review",
+            "test",
+            "explore",
+            "research",
+            "shell",
+            "docs",
+            "quick"
+          ],
+          "description": "What kind of work the sub-task is. Used with agent_type \"auto\" so the router can match it to the agents and models that measure best at that kind of work."
+        },
+        "difficulty": {
+          "type": "string",
+          "enum": [
+            "trivial",
+            "normal",
+            "hard",
+            "long"
+          ],
+          "description": "How hard the sub-task is, which also sets the default reasoning effort: trivial = one obvious step, normal = well-specified routine work, hard = tricky reasoning or multi-file, long = >30 min agentic work."
+        },
+        "effort": {
+          "type": "string",
+          "enum": [
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max"
+          ],
+          "description": "Reasoning effort for the sub-agent. Omit it to let Phantom choose one from task_kind/difficulty; \"max\" is only for frontier problems. Works with or without \"auto\"."
         },
         "task": {
           "type": "string",
@@ -102,6 +141,35 @@
         "reason": {
           "type": "string",
           "description": "Optional: why the task is being resumed / how it was interrupted (e.g. 'session crashed during a long refactor'). Interruption context only — do NOT put new instructions or task changes here; they will not be honored."
+        }
+      }
+    }
+  },
+  {
+    "name": "rate_delegation",
+    "description": "Tell Phantom's router whether a finished delegation's result was good or bad after you reviewed it. This is the quality signal the router learns from — call it once per task you reviewed.",
+    "inputSchema": {
+      "type": "object",
+      "required": [
+        "task_id",
+        "verdict"
+      ],
+      "properties": {
+        "task_id": {
+          "type": "string",
+          "description": "The task_id returned by delegate_to_agent (or reported by get_delegation_status)."
+        },
+        "verdict": {
+          "type": "string",
+          "enum": [
+            "good",
+            "bad"
+          ],
+          "description": "Whether the sub-agent's result was good or bad, judged after reviewing it."
+        },
+        "note": {
+          "type": "string",
+          "description": "Optional one-line reason (max ~300 chars) kept with the rating, e.g. what was wrong or what worked."
         }
       }
     }

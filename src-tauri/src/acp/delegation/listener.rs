@@ -172,6 +172,10 @@ pub struct DelegationListener {
     /// (`computer_*`). Desktop-only like the browser — server mode gets
     /// `NoComputerDesktop` — and like it, re-checks its switch at call time.
     pub computer: Arc<dyn ComputerToolAccess>,
+    /// Resolves `agent_type: "auto"` / `task_kind` / `difficulty` / `effort`
+    /// into a concrete route and records what the router learns. `NoRouting`
+    /// unless [`Self::with_routing`] wires the DB-backed one.
+    pub routing: Arc<dyn super::routing::DelegationRouting>,
 }
 
 impl DelegationListener {
@@ -199,7 +203,19 @@ impl DelegationListener {
             authoring,
             browser,
             computer,
+            routing: Arc::new(super::routing::NoRouting),
         })
+    }
+
+    /// Install a router on a freshly built listener (before it is shared).
+    pub fn with_routing(
+        mut self: Arc<Self>,
+        routing: Arc<dyn super::routing::DelegationRouting>,
+    ) -> Arc<Self> {
+        Arc::get_mut(&mut self)
+            .expect("with_routing must be called before the listener is shared")
+            .routing = routing;
+        self
     }
 
     /// Bind the socket, then serve it forever. Kept as the one-call entry
@@ -439,7 +455,10 @@ impl DelegationListener {
             BrokerMessage::Ping => BrokerResponse {
                 outcome: serde_json::json!({ "ok": true }),
             },
-            BrokerMessage::Call(req) => report_response(self.process(req).await)?,
+            BrokerMessage::Call(req) => {
+                let (report, route) = self.process(req).await;
+                routed_report_response(report, route.as_ref())?
+            }
             BrokerMessage::Status(req) => {
                 // A status long-poll — especially `wait_ms = 0` (block until
                 // terminal) — can park for the whole lifetime of the child.
@@ -458,10 +477,13 @@ impl DelegationListener {
                     reports = &mut status_fut => reports,
                     _ = conn.read(&mut probe) => return Ok(()),
                 };
-                reports_response(reports)?
+                self.routed_reports_response(reports).await?
             }
             BrokerMessage::CancelTask(req) => report_response(self.process_cancel_task(req).await)?,
             BrokerMessage::ResumeTask(req) => report_response(self.process_resume_task(req).await)?,
+            BrokerMessage::RateDelegation(req) => BrokerResponse {
+                outcome: self.process_rate(req).await,
+            },
             BrokerMessage::Feedback(req) => {
                 // at-least-once delivery: READ pending notes (no mutation),
                 // WRITE the response, and COMMIT them delivered ONLY on a
@@ -808,6 +830,13 @@ impl DelegationListener {
         else {
             return cancel("parent has no active conversation");
         };
+        let route = self.routing.route_of(&req.task_id).await;
+        let routed = |field: fn(&super::routing::RouteInfo) -> &String| {
+            route
+                .as_ref()
+                .map(|r| field(r).clone())
+                .filter(|v| v != "default")
+        };
         self.broker
             .resume_delegation(ResumeDelegationRequest {
                 parent_connection_id: entry.parent_connection_id,
@@ -815,6 +844,8 @@ impl DelegationListener {
                 task_id: req.task_id,
                 reason: req.reason,
                 external_handle: req.external_handle,
+                model: routed(|r| &r.model),
+                effort: routed(|r| &r.effort),
             })
             .await
     }
@@ -1184,16 +1215,29 @@ impl DelegationListener {
         self.authoring.create_work_task(ctx, req.spec).await
     }
 
-    async fn process(&self, req: BrokerRequest) -> DelegationTaskReport {
+    async fn process(
+        &self,
+        req: BrokerRequest,
+    ) -> (DelegationTaskReport, Option<super::routing::RouteInfo>) {
+        match self.process_inner(req).await {
+            Ok(routed) => routed,
+            Err(report) => (report, None),
+        }
+    }
+
+    async fn process_inner(
+        &self,
+        req: BrokerRequest,
+    ) -> Result<(DelegationTaskReport, Option<super::routing::RouteInfo>), DelegationTaskReport> {
         // 1. Token + parent_connection_id consistency check. Treat both as
         //    "canceled" since the LLM can't usefully react to either —
         //    the parent has either been torn down or is impersonating.
         let entry = match self.tokens.lookup(&req.token).await {
             Some(e) => e,
-            None => return cancel("invalid token"),
+            None => return Err(cancel("invalid token")),
         };
         if entry.parent_connection_id != req.parent_connection_id {
-            return cancel("token does not match parent connection");
+            return Err(cancel("token does not match parent connection"));
         }
 
         // 2. Resolve the parent's current conversation. Without one the
@@ -1204,22 +1248,64 @@ impl DelegationListener {
             .await
         {
             Some(id) => id,
-            None => return cancel("parent has no active conversation"),
+            None => return Err(cancel("parent has no active conversation")),
         };
 
         // 3. Parse the delegate_to_agent arguments. Schema validation lives
         //    on the LLM side; we only enforce what the broker can't.
-        let agent_type = match req.input.get("agent_type").and_then(|v| v.as_str()) {
-            Some(raw) => match parse_agent_type(raw) {
-                Some(t) => t,
-                None => return invalid_agent_type(raw),
+        let raw_agent = req
+            .input
+            .get("agent_type")
+            .and_then(|v| v.as_str())
+            .map(str::trim)
+            .unwrap_or("");
+        let auto = raw_agent.eq_ignore_ascii_case("auto");
+        let agent_type = if auto {
+            None
+        } else {
+            match parse_agent_type(raw_agent) {
+                Some(t) => Some(t),
+                None => return Err(invalid_agent_type(raw_agent)),
+            }
+        };
+        let arg = |key: &str| req.input.get(key).and_then(|v| v.as_str()).map(str::trim);
+        let task_kind = match arg("task_kind") {
+            Some(raw) if !raw.is_empty() => match super::router::TaskKind::parse(raw) {
+                Some(k) => Some(k),
+                None => {
+                    return Err(report_failed(
+                        "invalid_routing",
+                        &format!("invalid task_kind: {raw}"),
+                    ))
+                }
             },
-            None => return invalid_agent_type(""),
+            _ => None,
+        };
+        let difficulty = match arg("difficulty") {
+            Some(raw) if !raw.is_empty() => match super::router::Difficulty::parse(raw) {
+                Some(d) => Some(d),
+                None => {
+                    return Err(report_failed(
+                        "invalid_routing",
+                        &format!("invalid difficulty: {raw}"),
+                    ))
+                }
+            },
+            _ => None,
+        };
+        let effort = match arg("effort") {
+            Some(raw) if !raw.is_empty() => match super::router::Effort::parse(raw) {
+                Some(e) => Some(e),
+                None => {
+                    return Err(report_failed("invalid_routing", &format!("invalid effort: {raw}")))
+                }
+            },
+            _ => None,
         };
         let task = match req.input.get("task").and_then(|v| v.as_str()) {
             Some(s) if !s.trim().is_empty() => s.to_string(),
             _ => {
-                return report_failed("invalid_working_dir", "missing or empty task");
+                return Err(report_failed("invalid_working_dir", "missing or empty task"));
             }
         };
         // The `working_dir` the LLM explicitly passed (before defaulting),
@@ -1242,19 +1328,152 @@ impl DelegationListener {
             .filter(|m| !m.is_empty())
             .map(str::to_string);
 
+        let plan = self
+            .routing
+            .plan(&super::routing::RoutingArgs {
+                auto,
+                agent_type,
+                model,
+                task_kind,
+                difficulty,
+                effort,
+            })
+            .await
+            .map_err(|e| report_failed("routing_failed", &e))?;
+
         let delegation_req = DelegationRequest {
             parent_connection_id: req.parent_connection_id,
             parent_conversation_id,
             parent_tool_use_id: req.parent_tool_use_id,
-            agent_type,
+            agent_type: plan.agent_type,
             task,
             working_dir,
             requested_working_dir,
             external_handle: req.external_handle,
-            model,
+            model: plan.model,
+            effort: plan.effort,
         };
-        self.broker.start_delegation(delegation_req).await
+        let report = self.broker.start_delegation(delegation_req).await;
+        if let (Some(task_id), Some(info)) = (report.task_id.as_deref(), plan.info.as_ref()) {
+            self.routing
+                .remember(task_id, info, parent_conversation_id)
+                .await;
+            // A child that already finished during setup is reported right here
+            // and may never be polled: count it now.
+            if let Some(signal) = terminal_signal(&report) {
+                let _ = self.routing.record(task_id, signal, None).await;
+            }
+        }
+        Ok((report, plan.info))
     }
+
+    /// `rate_delegation`: the lead's verdict on a reviewed result.
+    async fn process_rate(&self, req: super::transport::BrokerRateDelegationRequest) -> Value {
+        let Some(entry) = self.tokens.lookup(&req.token).await else {
+            return serde_json::json!({ "ok": false, "error": "invalid token" });
+        };
+        let signal = match req.verdict.trim() {
+            "good" => super::router::Signal::RatedGood,
+            "bad" => super::router::Signal::RatedBad,
+            other => {
+                return serde_json::json!({
+                    "ok": false,
+                    "error": format!("verdict must be good or bad, got {other:?}"),
+                })
+            }
+        };
+        // Ratings are scoped to the conversation that delegated the task.
+        let caller = self
+            .parent_lookup
+            .current_conversation_id(&entry.parent_connection_id)
+            .await;
+        match self.routing.record(req.task_id.trim(), signal, caller).await {
+            Ok(info) => {
+                let mut out = serde_json::json!({
+                    "ok": true,
+                    "note": format!(
+                        "router learned: {} {} on {}/{} (effort {}).",
+                        info.task_kind, req.verdict.trim(), info.agent_type, info.model, info.effort
+                    ),
+                });
+                if signal == super::router::Signal::RatedBad {
+                    out["escalate"] = super::routing::escalate_value(&info);
+                }
+                out
+            }
+            Err(error) => serde_json::json!({ "ok": false, "error": error }),
+        }
+    }
+
+    /// Status reports plus routing: records terminal outcomes (once per task)
+    /// and attaches `route` / `escalate` for the lead.
+    async fn routed_reports_response(
+        &self,
+        reports: Vec<DelegationTaskReport>,
+    ) -> std::io::Result<BrokerResponse> {
+        let mut tasks = Vec::with_capacity(reports.len());
+        for report in reports {
+            let mut value = serde_json::to_value(&report).map_err(|e| {
+                std::io::Error::new(std::io::ErrorKind::InvalidData, format!("encode: {e}"))
+            })?;
+            if let Some(task_id) = report.task_id.as_deref() {
+                let route = match terminal_signal(&report) {
+                    Some(sig) => match self.routing.record(task_id, sig, None).await {
+                        Ok(info) => Some(info),
+                        Err(_) => self.routing.route_of(task_id).await,
+                    },
+                    None => self.routing.route_of(task_id).await,
+                };
+                if let Some(info) = route {
+                    attach_route(&mut value, &info);
+                    if report.status == TaskStatus::Failed {
+                        value["escalate"] = super::routing::escalate_value(&info);
+                    }
+                }
+            }
+            tasks.push(value);
+        }
+        Ok(BrokerResponse {
+            outcome: serde_json::json!({ "tasks": tasks }),
+        })
+    }
+}
+
+/// The learning signal a report carries: completions, and failures that come
+/// from the model's own turn (not spawn/auth/quota infrastructure).
+fn terminal_signal(report: &DelegationTaskReport) -> Option<super::router::Signal> {
+    match report.status {
+        TaskStatus::Completed => Some(super::router::Signal::Completed),
+        TaskStatus::Failed if super::routing::is_model_failure(report.error_code.as_deref()) => {
+            Some(super::router::Signal::Failed)
+        }
+        _ => None,
+    }
+}
+
+fn attach_route(value: &mut Value, info: &super::routing::RouteInfo) {
+    value["route"] = serde_json::json!({
+        "agent_type": info.agent_type,
+        "model": info.model,
+        "effort": info.effort,
+        "profile": info.profile,
+        "reason": info.reason,
+    });
+}
+
+/// A `delegate_to_agent` report, with its route when the router picked or
+/// annotated it.
+fn routed_report_response(
+    report: DelegationTaskReport,
+    route: Option<&super::routing::RouteInfo>,
+) -> std::io::Result<BrokerResponse> {
+    let mut outcome = serde_json::to_value(&report).map_err(|e| {
+        std::io::Error::new(std::io::ErrorKind::InvalidData, format!("encode: {e}"))
+    })?;
+    if let Some(info) = route {
+        attach_route(&mut outcome, info);
+    }
+    Ok(BrokerResponse { outcome })
 }
 
 /// Serialize a [`DelegationTaskReport`] into a [`BrokerResponse`] for the wire.
@@ -1267,19 +1486,6 @@ fn report_response(report: DelegationTaskReport) -> std::io::Result<BrokerRespon
     })
 }
 
-/// Serialize a batch of [`DelegationTaskReport`]s into a `{ "tasks": [..] }`
-/// envelope for the `Status` arm. The companion reads this back and renders it
-/// uniformly as a `{ "tasks": [..] }` result — one entry per requested id,
-/// whether the poll asked for a single id or a whole fan-out.
-fn reports_response(reports: Vec<DelegationTaskReport>) -> std::io::Result<BrokerResponse> {
-    Ok(BrokerResponse {
-        outcome: serde_json::json!({
-            "tasks": serde_json::to_value(&reports).map_err(|e| {
-                std::io::Error::new(std::io::ErrorKind::InvalidData, format!("encode: {e}"))
-            })?,
-        }),
-    })
-}
 
 /// Serialize the pending feedback notes into a
 /// `{ "count": N, "feedback": [..], "_commit_ids": [..] }` envelope for the
@@ -2114,7 +2320,8 @@ mod tests {
         );
         let report = listener
             .process(make_request(json!({"agent_type": "codex", "task": "x"})).await)
-            .await;
+            .await
+            .0;
         assert_eq!(report.status, TaskStatus::Canceled);
         assert_eq!(report.error_code.as_deref(), Some("canceled"));
         assert!(report.message.unwrap().contains("invalid token"));
@@ -2139,7 +2346,8 @@ mod tests {
         );
         let report = listener
             .process(make_request(json!({"agent_type": "codex", "task": "x"})).await)
-            .await;
+            .await
+            .0;
         assert_eq!(report.status, TaskStatus::Canceled);
         assert!(report.message.unwrap().contains("does not match"));
     }
@@ -2164,7 +2372,8 @@ mod tests {
         );
         let report = listener
             .process(make_request(json!({"agent_type": "codex", "task": "x"})).await)
-            .await;
+            .await
+            .0;
         assert_eq!(report.status, TaskStatus::Canceled);
         assert!(report.message.unwrap().contains("no active conversation"));
     }
@@ -2188,7 +2397,8 @@ mod tests {
         );
         let report = listener
             .process(make_request(json!({"agent_type": "garbage", "task": "x"})).await)
-            .await;
+            .await
+            .0;
         assert_eq!(report.status, TaskStatus::Failed);
         assert_eq!(report.error_code.as_deref(), Some("invalid_agent_type"));
     }
@@ -2297,6 +2507,7 @@ mod tests {
                 requested_working_dir: None,
                 external_handle: None,
                 model: None,
+                effort: None,
             })
             .await;
         let task_id = ack.task_id.clone().expect("running task carries an id");
@@ -2451,6 +2662,7 @@ mod tests {
                         requested_working_dir: None,
                         external_handle: None,
                         model: None,
+                        effort: None,
                     })
                     .await
                     .task_id
@@ -2554,6 +2766,7 @@ mod tests {
                 requested_working_dir: None,
                 external_handle: None,
                 model: None,
+                effort: None,
             })
             .await;
         let task_id = ack.task_id.clone().unwrap();
@@ -2606,6 +2819,7 @@ mod tests {
                     requested_working_dir: None,
                     external_handle: Some("h-1".into()),
                     model: None,
+                    effort: None,
                 };
                 broker.handle_request(req).await
             })
@@ -2829,7 +3043,8 @@ mod tests {
 
         let report = listener
             .process(make_request(json!({"agent_type": "codex", "task": "x"})).await)
-            .await;
+            .await
+            .0;
         assert_eq!(report.status, TaskStatus::Failed);
         assert_eq!(report.error_code.as_deref(), Some("spawn_failed"));
     }

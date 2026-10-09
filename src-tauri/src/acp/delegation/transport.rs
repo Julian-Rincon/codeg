@@ -32,6 +32,9 @@
 //!   * `resume_task` — [`BrokerResumeTaskRequest`] for `resume_delegation`;
 //!     returns a task report (a `Running` ack under the unchanged task id, or
 //!     a refusal).
+//!   * `rate_delegation` — [`BrokerRateDelegationRequest`] for the
+//!     `rate_delegation` tool; the reviewer's `good` / `bad` verdict on a
+//!     finished task, the quality signal the router learns from.
 //!   * `cancel` — fire-and-forget [`BrokerCancelRequest`] from MCP
 //!     `notifications/cancelled`, targeting an in-flight `delegate_to_agent`
 //!     or `resume_delegation` call by `external_handle`; gets a `Value::Null`
@@ -123,6 +126,21 @@ pub struct BrokerStatusRequest {
     /// soon as ANY requested task reaches a terminal state.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub wait_ms: Option<u64>,
+}
+
+/// Record the reviewer's quality verdict for one finished delegation task.
+/// Backs the `rate_delegation` MCP tool: the leader, having read the sub-agent's
+/// result, tells the router whether that route was `good` or `bad`. This is the
+/// signal the router actually learns from — a task that merely completed says
+/// nothing about whether the result was usable. The optional `note` is a short
+/// reason kept alongside the rating.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct BrokerRateDelegationRequest {
+    pub token: String,
+    pub task_id: String,
+    pub verdict: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
 }
 
 /// Cancel a previously-issued delegation task by its broker `task_id`. Backs
@@ -423,6 +441,7 @@ pub enum BrokerMessage {
     Status(BrokerStatusRequest),
     CancelTask(BrokerCancelTaskRequest),
     ResumeTask(BrokerResumeTaskRequest),
+    RateDelegation(BrokerRateDelegationRequest),
     Feedback(BrokerFeedbackRequest),
     CommitFeedback(BrokerCommitFeedbackRequest),
     Ask(BrokerAskRequest),
@@ -567,6 +586,15 @@ pub async fn client_resume_task_round_trip(
     req: &BrokerResumeTaskRequest,
 ) -> io::Result<BrokerResponse> {
     message_round_trip(socket_path, &BrokerMessage::ResumeTask(req.clone())).await
+}
+
+/// Dispatch a `rate_delegation` verdict and read back the `{ ok, note? }` ack
+/// the router side answers with.
+pub async fn client_rate_delegation_round_trip(
+    socket_path: &str,
+    req: &BrokerRateDelegationRequest,
+) -> io::Result<BrokerResponse> {
+    message_round_trip(socket_path, &BrokerMessage::RateDelegation(req.clone())).await
 }
 
 /// Dispatch a `check_user_feedback` query and read back the
@@ -934,6 +962,42 @@ mod tests {
                 assert_eq!(req.external_handle.as_deref(), Some("h1"));
             }
             other => panic!("expected ResumeTask variant, got {other:?}"),
+        }
+    }
+
+    #[tokio::test]
+    async fn rate_delegation_message_round_trip_in_memory() {
+        let (mut a, mut b) = duplex(8 * 1024);
+        let msg = BrokerMessage::RateDelegation(BrokerRateDelegationRequest {
+            token: "tok".into(),
+            task_id: "task-7".into(),
+            verdict: "bad".into(),
+            note: Some("hallucinated the API".into()),
+        });
+        write_frame(&mut a, &msg).await.unwrap();
+        let got: BrokerMessage = read_frame(&mut b).await.unwrap();
+        match got {
+            BrokerMessage::RateDelegation(req) => {
+                assert_eq!(req.token, "tok");
+                assert_eq!(req.task_id, "task-7");
+                assert_eq!(req.verdict, "bad");
+                assert_eq!(req.note.as_deref(), Some("hallucinated the API"));
+            }
+            other => panic!("expected RateDelegation variant, got {other:?}"),
+        }
+        // The optional note is omitted, not null, when absent.
+        let (mut a, mut b) = duplex(8 * 1024);
+        let msg = BrokerMessage::RateDelegation(BrokerRateDelegationRequest {
+            token: "tok".into(),
+            task_id: "task-8".into(),
+            verdict: "good".into(),
+            note: None,
+        });
+        write_frame(&mut a, &msg).await.unwrap();
+        let got: BrokerMessage = read_frame(&mut b).await.unwrap();
+        match got {
+            BrokerMessage::RateDelegation(req) => assert!(req.note.is_none()),
+            other => panic!("expected RateDelegation variant, got {other:?}"),
         }
     }
 

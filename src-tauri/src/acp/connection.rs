@@ -8764,6 +8764,67 @@ fn is_model_config_option(option: &SessionConfigOption) -> bool {
 /// option id; it is rewritten to the real id against the advertised list.
 pub(crate) const MODEL_CATEGORY_CONFIG_KEY: &str = "@model";
 
+/// Reserved `preferred_config_values` key meaning "set this agent's reasoning
+/// effort (its `thought_level` option) as close as possible to this level".
+/// Delegation routing uses it because levels are per model (OpenCode's
+/// `exo-free` offers only `high`/`default`): it is resolved AFTER the model
+/// switch, against the options the new model advertises.
+pub(crate) const EFFORT_CATEGORY_CONFIG_KEY: &str = "@effort";
+
+/// Canonical effort ladder, low to high.
+const EFFORT_LADDER: [&str; 5] = ["low", "medium", "high", "xhigh", "max"];
+
+/// The advertised `thought_level` option and the value closest to `requested`
+/// (exact match first; else the nearest ladder level, ties going up; else
+/// `default` when that is all the model offers). `None` when the agent has no
+/// effort option or nothing usable.
+fn resolve_effort_alias(
+    options: &[SessionConfigOption],
+    requested: &str,
+) -> Option<(String, String)> {
+    let option = options
+        .iter()
+        .find(|o| matches!(o.category, Some(SessionConfigOptionCategory::ThoughtLevel)))?;
+    let SessionConfigKind::Select(select) = &option.kind else {
+        return None;
+    };
+    let values: Vec<String> = match &select.options {
+        SessionConfigSelectOptions::Ungrouped(options) => {
+            options.iter().map(|o| o.value.to_string()).collect()
+        }
+        SessionConfigSelectOptions::Grouped(groups) => groups
+            .iter()
+            .flat_map(|group| group.options.iter().map(|o| o.value.to_string()))
+            .collect(),
+        _ => Vec::new(),
+    };
+    nearest_effort_value(&values, requested).map(|v| (option.id.to_string(), v))
+}
+
+fn nearest_effort_value(values: &[String], requested: &str) -> Option<String> {
+    let wanted = requested.trim().to_ascii_lowercase();
+    if let Some(exact) = values.iter().find(|v| v.eq_ignore_ascii_case(&wanted)) {
+        return Some(exact.clone());
+    }
+    let rank = |v: &str| EFFORT_LADDER.iter().position(|l| l.eq_ignore_ascii_case(v));
+    if let Some(target) = rank(&wanted) {
+        let best = values
+            .iter()
+            .filter_map(|v| rank(v).map(|r| (r, v)))
+            // `max` is never reached by approximation: only an explicit ask.
+            .filter(|(r, _)| EFFORT_LADDER[*r] != "max")
+            .min_by_key(|(r, _)| {
+                let distance = r.abs_diff(target);
+                // Ties go to the higher level: quality first.
+                (distance, usize::MAX - r)
+            });
+        if let Some((_, v)) = best {
+            return Some(v.clone());
+        }
+    }
+    values.iter().find(|v| v.eq_ignore_ascii_case("default")).cloned()
+}
+
 /// Rewrite [`MODEL_CATEGORY_CONFIG_KEY`] to the id of the advertised model
 /// option. `None` when the alias is absent (callers keep the original map).
 /// An agent without a model selector simply drops the alias.
@@ -8948,6 +9009,19 @@ async fn apply_preferred_session_options(
     let mut options = initial_config_options;
     let aliased = resolve_model_category_alias(&options, preferred_config_values);
     let preferred_config_values = aliased.as_ref().unwrap_or(preferred_config_values);
+    // `@effort` is applied after the replay below, once the model is settled.
+    let requested_effort = preferred_config_values
+        .get(EFFORT_CATEGORY_CONFIG_KEY)
+        .cloned();
+    let without_effort;
+    let preferred_config_values = if requested_effort.is_some() {
+        let mut map = preferred_config_values.clone();
+        map.remove(EFFORT_CATEGORY_CONFIG_KEY);
+        without_effort = map;
+        &without_effort
+    } else {
+        preferred_config_values
+    };
     // Ids this launch must not replay a saved preference for. Two rules:
     //
     //   * what this launch's environment froze — a set can only fail, and it is
@@ -9032,6 +9106,33 @@ async fn apply_preferred_session_options(
         }
     }
 
+    let mut applied_effort: Option<(String, String)> = None;
+    if let Some(requested) = requested_effort.as_deref() {
+        match resolve_effort_alias(&options, requested) {
+            Some((config_id, value)) => {
+                applied_effort = Some((config_id.clone(), value.clone()));
+                let holds = options
+                    .iter()
+                    .find(|o| o.id.to_string() == config_id)
+                    .is_some_and(|o| config_option_already_holds(o, &value));
+                if !holds {
+                    let encoded = encode_config_option_value(false, &value);
+                    match set_session_config_option_inner(cx, &session_id, config_id.clone(), encoded)
+                        .await
+                    {
+                        Ok(updated) => options = updated,
+                        Err(e) => tracing::error!(
+                            "[ACP] failed to apply effort '{config_id}'='{value}' on connect: {e}"
+                        ),
+                    }
+                }
+            }
+            None => tracing::info!(
+                "[ACP] requested effort '{requested}' skipped: the agent offers no matching effort option"
+            ),
+        }
+    }
+
     // Record what the agent CONFIRMED, not what we asked for, so a rejected or
     // rewritten pick is never re-asserted against the agent's own verdict
     // (`config_option_rejection` already tells the user about those). See
@@ -9043,11 +9144,18 @@ async fn apply_preferred_session_options(
     // the previous session left behind would defend values this session never
     // asserted — and, when the agent rejected them here, values it has already
     // refused once.
-    state.write().await.asserted_config_values = preferred_config_values
+    let mut asserted: BTreeMap<String, String> = preferred_config_values
         .iter()
         .filter(|(config_id, value_id)| settled.get(*config_id) == Some(*value_id))
         .map(|(config_id, value_id)| (config_id.clone(), value_id.clone()))
         .collect();
+    // The routed effort is defended like any other asserted value.
+    if let Some((config_id, value)) = applied_effort {
+        if settled.get(&config_id) == Some(&value) {
+            asserted.insert(config_id, value);
+        }
+    }
+    state.write().await.asserted_config_values = asserted;
 
     options
 }
@@ -33423,5 +33531,43 @@ mod tests {
             "a prompt's late turn_completed ends nothing"
         );
         assert!(grok_turn_completed_ends(Some("f"), &done(None)));
+    }
+}
+
+#[cfg(test)]
+mod effort_alias_tests {
+    use super::nearest_effort_value;
+
+    fn v(items: &[&str]) -> Vec<String> {
+        items.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn exact_level_wins() {
+        let offered = v(&["low", "medium", "high", "xhigh", "max"]);
+        assert_eq!(nearest_effort_value(&offered, "xhigh").as_deref(), Some("xhigh"));
+        assert_eq!(nearest_effort_value(&offered, " Medium ").as_deref(), Some("medium"));
+    }
+
+    #[test]
+    fn missing_level_goes_to_nearest_with_ties_up() {
+        // OpenCode exo-free: only high/default.
+        let offered = v(&["high", "default"]);
+        assert_eq!(nearest_effort_value(&offered, "medium").as_deref(), Some("high"));
+        assert_eq!(nearest_effort_value(&offered, "xhigh").as_deref(), Some("high"));
+        // medium requested, low and high both one step away -> high.
+        let offered = v(&["low", "high"]);
+        assert_eq!(nearest_effort_value(&offered, "medium").as_deref(), Some("high"));
+        // xhigh requested on a model without xhigh -> never approximated up to max.
+        let offered = v(&["low", "medium", "high", "max"]);
+        assert_eq!(nearest_effort_value(&offered, "xhigh").as_deref(), Some("high"));
+        assert_eq!(nearest_effort_value(&offered, "max").as_deref(), Some("max"));
+    }
+
+    #[test]
+    fn default_only_or_nothing() {
+        assert_eq!(nearest_effort_value(&v(&["default"]), "low").as_deref(), Some("default"));
+        assert_eq!(nearest_effort_value(&v(&["fast", "slow"]), "low"), None);
+        assert_eq!(nearest_effort_value(&[], "low"), None);
     }
 }

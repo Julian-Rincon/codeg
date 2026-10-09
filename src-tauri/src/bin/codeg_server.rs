@@ -456,7 +456,9 @@ async fn async_main() -> ExitCode {
                     as Arc<dyn codeg_lib::acp::computer_tools::ComputerToolAccess>,
                 None => Arc::new(codeg_lib::acp::computer_tools::NoComputerDesktop),
             },
-        );
+        ).with_routing(Arc::new(
+            codeg_lib::acp::delegation::routing::DbRouting::new(state.db.conn.clone()),
+        ));
         // Bind through the service handle rather than a bare `listener.run`
         // spawn: it keeps the bind error and the accept-loop handle around, so
         // the workspace status indicator can report why the broker socket is

@@ -758,6 +758,11 @@ fn format_routing_guide(card: &ModelScorecard) -> String {
         "Model routing guide (measured from your own usage; error % = failed tool \
          calls, ranked by 95% Wilson upper bound so small samples must earn it):\n",
     );
+    out.push_str(
+        "Router: prefer agent_type \"auto\" + task_kind + difficulty — Phantom picks \
+         agent/model/effort from these numbers and learns; rate_delegation(task_id, \
+         good|bad) after you review a result.\n",
+    );
 
     if card.best_for.is_empty() {
         out.push_str("No category has enough measured samples yet for a recommendation.\n");

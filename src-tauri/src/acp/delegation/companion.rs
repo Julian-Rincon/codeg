@@ -5,9 +5,12 @@
 //! The companion speaks newline-delimited JSON-RPC 2.0 on stdio:
 //! one request → one response per line, with concurrent dispatch so
 //! `notifications/cancelled` can race an in-flight `tools/call`. It exposes up
-//! to six tools — `delegate_to_agent` (async; returns a `task_id` ack),
+//! to the delegation tools — `delegate_to_agent` (async; returns a `task_id`
+//! ack, with `agent_type: "auto"` letting the router pick agent/model/effort),
 //! `get_delegation_status` (poll/long-poll for the result), `cancel_delegation`,
-//! `check_user_feedback` (pull the user's mid-turn steering notes),
+//! `resume_delegation`, `rate_delegation` (the reviewer's good/bad verdict on a
+//! finished task — the router's learning signal) — plus `check_user_feedback`
+//! (pull the user's mid-turn steering notes),
 //! `ask_user_question` (block on a multiple-choice card), and `get_session_info`
 //! (resolve a referenced session by id) — whose schemas are embedded at compile
 //! time from [`TOOL_SCHEMA_JSON`] and gated by the `--features` groups (delegation
@@ -54,18 +57,19 @@ use crate::acp::delegation::transport::{
     client_computer_launch_round_trip, client_computer_snapshot_round_trip,
     client_computer_verify_round_trip, client_computer_windows_round_trip,
     client_create_automation_round_trip, client_create_work_task_round_trip,
-    client_feedback_round_trip, client_resume_task_round_trip, client_round_trip,
-    client_session_round_trip, client_status_round_trip, client_task_complete_round_trip,
-    client_task_progress_round_trip, BrokerAskRequest, BrokerBrowserActRequest,
-    BrokerBrowserCaptureRequest, BrokerBrowserConsoleRequest, BrokerBrowserEvalRequest,
-    BrokerBrowserSnapshotRequest, BrokerBrowserTabOpRequest, BrokerBrowserTabsRequest,
-    BrokerCancelRequest, BrokerCancelTaskRequest, BrokerCommitFeedbackRequest,
-    BrokerComputerActRequest, BrokerComputerAppsRequest, BrokerComputerCaptureRequest,
-    BrokerComputerClipboardRequest, BrokerComputerLaunchRequest, BrokerComputerSnapshotRequest,
-    BrokerComputerVerifyRequest, BrokerComputerWindowsRequest, BrokerCreateAutomationRequest,
-    BrokerCreateWorkTaskRequest, BrokerFeedbackRequest, BrokerRequest, BrokerResponse,
-    BrokerResumeTaskRequest, BrokerSessionRequest, BrokerStatusRequest,
-    BrokerTaskCompleteRequest, BrokerTaskProgressRequest,
+    client_feedback_round_trip, client_rate_delegation_round_trip, client_resume_task_round_trip,
+    client_round_trip, client_session_round_trip, client_status_round_trip,
+    client_task_complete_round_trip, client_task_progress_round_trip, BrokerAskRequest,
+    BrokerBrowserActRequest, BrokerBrowserCaptureRequest, BrokerBrowserConsoleRequest,
+    BrokerBrowserEvalRequest, BrokerBrowserSnapshotRequest, BrokerBrowserTabOpRequest,
+    BrokerBrowserTabsRequest, BrokerCancelRequest, BrokerCancelTaskRequest,
+    BrokerCommitFeedbackRequest, BrokerComputerActRequest, BrokerComputerAppsRequest,
+    BrokerComputerCaptureRequest, BrokerComputerClipboardRequest, BrokerComputerLaunchRequest,
+    BrokerComputerSnapshotRequest, BrokerComputerVerifyRequest, BrokerComputerWindowsRequest,
+    BrokerCreateAutomationRequest, BrokerCreateWorkTaskRequest, BrokerFeedbackRequest,
+    BrokerRateDelegationRequest, BrokerRequest, BrokerResponse, BrokerResumeTaskRequest,
+    BrokerSessionRequest, BrokerStatusRequest, BrokerTaskCompleteRequest,
+    BrokerTaskProgressRequest,
 };
 use crate::acp::question::parse_questions;
 use crate::acp::session_info::MAX_SESSION_MESSAGES;
@@ -303,7 +307,8 @@ impl CompanionFeatures {
             "delegate_to_agent"
             | "get_delegation_status"
             | "cancel_delegation"
-            | "resume_delegation" => self.delegation,
+            | "resume_delegation"
+            | "rate_delegation" => self.delegation,
             _ => false,
         }
     }
@@ -770,6 +775,31 @@ async fn build_tools_call_spawn(
             )
             .await
         }
+        "rate_delegation" => {
+            // Validated HERE so a malformed call gets a synchronous -32602 the
+            // LLM can fix, rather than round-tripping bad data: the verdict is
+            // the router's learning signal, so an unrecognized one must not
+            // reach the broker.
+            let (task_id, verdict, note) = match parse_rate_arguments(&arguments) {
+                Ok(parsed) => parsed,
+                Err(msg) => return LineAction::Respond(err(id, -32602, msg)),
+            };
+            let req = BrokerRateDelegationRequest {
+                token: ctx.token.clone(),
+                task_id,
+                verdict,
+                note,
+            };
+            // No external_handle: a canceled rating has nothing to tear down
+            // broker-side — suppressing its response is the whole effect.
+            let (task_id, verdict) = (req.task_id.clone(), req.verdict.clone());
+            let round_trip =
+                Box::pin(async move { client_rate_delegation_round_trip(&socket, &req).await });
+            register_and_spawn(inflight, id, None, round_trip, move |outcome| {
+                render_rate_result(outcome, &task_id, &verdict)
+            })
+            .await
+        }
         "check_user_feedback" => {
             let req = BrokerFeedbackRequest {
                 token: ctx.token.clone(),
@@ -1198,13 +1228,19 @@ async fn build_tools_call_spawn(
 /// result body: `delegate_to_agent` / `cancel_delegation` pass
 /// [`render_task_report`] (a single report); `get_delegation_status` passes
 /// [`render_status_result`] (always a `{tasks:[..]}` envelope, one entry per id).
-async fn register_and_spawn(
+/// It takes the renderer by value rather than as a bare `fn` pointer so an arm
+/// can carry its own call context into the text (as `rate_delegation` does with
+/// the rated task id + verdict).
+async fn register_and_spawn<F>(
     inflight: Arc<InflightCalls>,
     id: Value,
     external_handle: Option<String>,
     round_trip: futures_util::future::BoxFuture<'static, std::io::Result<BrokerResponse>>,
-    render: fn(&Value) -> Value,
-) -> LineAction {
+    render: F,
+) -> LineAction
+where
+    F: Fn(&Value) -> Value + Send + 'static,
+{
     let (cancel_tx, cancel_rx) = oneshot::channel();
     let id_key = request_id_key(&id);
     inflight
@@ -1516,18 +1552,73 @@ fn render_batch_report(tasks: &[Value]) -> Value {
     })
 }
 
-/// Map a serialized [`super::types::DelegationTaskReport`] into MCP `tools/call`
-/// result content. Shared by `delegate_to_agent` and `cancel_delegation`, which
-/// each resolve to a single report; `get_delegation_status` no longer uses this
-/// path — it always renders via [`render_status_result`] / [`render_batch_report`].
-/// Kept separate so unit tests can assert the mapping without a real socket.
-///
-/// The human-readable `content` text is the result for a `completed` task and
-/// the `message` (status note / failure reason) otherwise. `isError` is set
-/// ONLY for `failed` — `running` (ack), `canceled` (a successful cancel or a
-/// canceled task), and `unknown` are all valid tool results the LLM should read
-/// rather than treat as errors. The full report rides along in
-/// `structuredContent` so the frontend can read `status` + the child ids.
+/// Cap on the optional `note` a `rate_delegation` call may carry, so a runaway
+/// reason cannot bloat the persisted routing signal.
+const RATE_NOTE_MAX_CHARS: usize = 300;
+
+/// Normalize the MCP `rate_delegation` arguments into
+/// `(task_id, verdict, note)`. `task_id` must be a non-blank string and `verdict`
+/// exactly `good` or `bad` — the router's learning signal only understands those
+/// two, so anything else is refused here rather than round-tripped. The optional
+/// `note` is trimmed, dropped when blank, and capped at
+/// [`RATE_NOTE_MAX_CHARS`] characters.
+fn parse_rate_arguments(arguments: &Value) -> Result<(String, String, Option<String>), String> {
+    let task_id = match arguments.get("task_id").and_then(|v| v.as_str()) {
+        Some(s) if !s.trim().is_empty() => s.trim().to_string(),
+        _ => return Err("rate_delegation requires a non-empty string task_id".to_string()),
+    };
+    let verdict = match arguments.get("verdict").and_then(|v| v.as_str()) {
+        Some(v @ ("good" | "bad")) => v.to_string(),
+        Some(other) => {
+            return Err(format!(
+                "rate_delegation verdict must be \"good\" or \"bad\", got \"{other}\""
+            ))
+        }
+        None => return Err("rate_delegation requires a verdict of \"good\" or \"bad\"".to_string()),
+    };
+    let note = arguments
+        .get("note")
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| s.chars().take(RATE_NOTE_MAX_CHARS).collect::<String>());
+    Ok((task_id, verdict, note))
+}
+
+/// Map a `rate_delegation` round-trip outcome (a `{ ok, note?, error? }` answer
+/// from the listener) into an MCP `tools/call` result. A recorded verdict reads
+/// back as a confirmation naming what was rated, so the LLM can tell two
+/// ratings apart in a transcript; a refusal carries the listener's `error`
+/// text, or a generic line when it reported none. `isError` is set only for a
+/// refusal — a rating the router could not record is worth the LLM noticing,
+/// unlike the soft refusals elsewhere.
+pub fn render_rate_result(outcome: &Value, task_id: &str, verdict: &str) -> Value {
+    let recorded = outcome.get("ok").and_then(|v| v.as_bool()).unwrap_or(false);
+    let text = if recorded {
+        let mut s = format!("Recorded: {verdict} for task {task_id}.");
+        if let Some(note) = outcome
+            .get("note")
+            .and_then(|v| v.as_str())
+            .filter(|n| !n.is_empty())
+        {
+            s.push_str(&format!(" {note}"));
+        }
+        s
+    } else {
+        outcome
+            .get("error")
+            .and_then(|v| v.as_str())
+            .filter(|e| !e.is_empty())
+            .unwrap_or("The rating could not be recorded; no reason was reported.")
+            .to_string()
+    };
+    json!({
+        "content": [{ "type": "text", "text": text }],
+        "isError": !recorded,
+        "structuredContent": outcome.clone(),
+    })
+}
+
 /// Map the `check_user_feedback` round-trip outcome (a `{ count, feedback:[..] }`
 /// envelope from the listener) into an MCP `tools/call` result.
 ///
@@ -3950,6 +4041,19 @@ fn render_session_summary_text(o: &Value) -> String {
     out
 }
 
+/// Map a serialized [`super::types::DelegationTaskReport`] into MCP `tools/call`
+/// result content. Shared by `delegate_to_agent` and `cancel_delegation`, which
+/// each resolve to a single report; `get_delegation_status` no longer uses this
+/// path — it always renders via [`render_status_result`] / [`render_batch_report`].
+/// Kept separate so unit tests can assert the mapping without a real socket.
+///
+/// The human-readable `content` text is the result for a `completed` task and
+/// the `message` (status note / failure reason) otherwise, plus one line per
+/// router signal the report carries (`route`, `escalate` — see [`routing_lines`]).
+/// `isError` is set ONLY for `failed` — `running` (ack), `canceled` (a successful
+/// cancel or a canceled task), and `unknown` are all valid tool results the LLM
+/// should read rather than treat as errors. The full report rides along in
+/// `structuredContent` so the frontend can read `status` + the child ids.
 pub fn render_task_report(report: &Value) -> Value {
     let status = report.get("status").and_then(|v| v.as_str()).unwrap_or("");
     let is_error = status == "failed";
@@ -3959,7 +4063,7 @@ pub fn render_task_report(report: &Value) -> Value {
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
     };
-    let text = if status == "completed" {
+    let mut text = if status == "completed" {
         // Prefer the result text; fall back to `message` so the DB-fallback note
         // ("Result no longer cached; open child session N…") for an evicted
         // result isn't rendered as empty content.
@@ -3973,11 +4077,60 @@ pub fn render_task_report(report: &Value) -> Value {
             .unwrap_or("")
             .to_string()
     };
+    // Router metadata: which route this task ran on, and — when it failed or
+    // was rated bad — how to escalate. Absent (any report from a non-routed or
+    // pre-router task) leaves the text byte-identical.
+    for line in routing_lines(report) {
+        if !text.is_empty() {
+            text.push('\n');
+        }
+        text.push_str(&line);
+    }
     json!({
         "content": [{ "type": "text", "text": text }],
         "isError": is_error,
         "structuredContent": report.clone(),
     })
+}
+
+/// One line per router signal carried by a task report: `route` (what the router
+/// picked, and why) and `escalate` (the level to retry at, with a hint). Any
+/// partial object yields no line — a half-populated route would print empty
+/// segments rather than a readable one.
+fn routing_lines(report: &Value) -> Vec<String> {
+    fn field<'a>(v: &'a Value, key: &str) -> Option<&'a str> {
+        v.get(key)
+            .and_then(|x| x.as_str())
+            .map(str::trim)
+            .filter(|x| !x.is_empty())
+    }
+    let mut lines = Vec::new();
+    if let Some(route) = report.get("route").filter(|r| r.is_object()) {
+        if let (Some(agent_type), Some(model)) = (field(route, "agent_type"), field(route, "model"))
+        {
+            let mut line = format!("Route: {agent_type}/{model}");
+            if let Some(effort) = field(route, "effort") {
+                line.push_str(&format!(" · effort {effort}"));
+            }
+            if let Some(profile) = field(route, "profile") {
+                line.push_str(&format!(" · {profile}"));
+            }
+            if let Some(reason) = field(route, "reason") {
+                line.push_str(&format!(" — {reason}"));
+            }
+            lines.push(line);
+        }
+    }
+    if let Some(escalate) = report.get("escalate").filter(|e| e.is_object()) {
+        if let Some(difficulty) = field(escalate, "difficulty") {
+            let mut line = format!("Escalate: retry with difficulty {difficulty}");
+            if let Some(hint) = field(escalate, "hint") {
+                line.push_str(&format!(" — {hint}"));
+            }
+            lines.push(line);
+        }
+    }
+    lines
 }
 
 #[cfg(test)]
@@ -4093,17 +4246,18 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn tools_list_returns_four_delegation_tools() {
+    async fn tools_list_returns_five_delegation_tools() {
         let line = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#;
         let resp = unwrap_respond(dispatch_for_test(line).await);
         let result = resp.result.unwrap();
         let tools = result["tools"].as_array().unwrap();
-        assert_eq!(tools.len(), 4);
+        assert_eq!(tools.len(), 5);
         let names: Vec<&str> = tools.iter().map(|t| t["name"].as_str().unwrap()).collect();
         assert!(names.contains(&"delegate_to_agent"));
         assert!(names.contains(&"get_delegation_status"));
         assert!(names.contains(&"cancel_delegation"));
         assert!(names.contains(&"resume_delegation"));
+        assert!(names.contains(&"rate_delegation"));
         // resume_delegation requires only task_id; reason is optional and
         // there is deliberately NO task-text parameter (no new iterations).
         let resume = tools
@@ -4116,7 +4270,8 @@ mod tests {
         let required = resume["inputSchema"]["required"].as_array().unwrap();
         assert_eq!(required.len(), 1);
         assert!(required.iter().any(|v| v == "task_id"));
-        // delegate_to_agent schema still enumerates all 13 agent types.
+        // delegate_to_agent advertises the 15 built-in agents plus the router's
+        // own "auto", which leads the enum.
         let delegate = tools
             .iter()
             .find(|t| t["name"] == "delegate_to_agent")
@@ -4124,7 +4279,8 @@ mod tests {
         let agents = delegate["inputSchema"]["properties"]["agent_type"]["enum"]
             .as_array()
             .unwrap();
-        assert_eq!(agents.len(), 15);
+        assert_eq!(agents.len(), 16);
+        assert_eq!(agents[0], "auto");
         assert!(agents.iter().any(|a| a == "hermes"));
         assert!(agents.iter().any(|a| a == "code_buddy"));
         assert!(agents.iter().any(|a| a == "kimi_code"));
@@ -4173,11 +4329,12 @@ mod tests {
             .as_array()
             .unwrap()
             .clone();
-        assert_eq!(agents.len(), 17, "15 builtins + 2 distinct customs");
+        assert_eq!(agents.len(), 18, "auto + 15 builtins + 2 distinct customs");
         // Builtins keep the embedded order and come first.
-        assert_eq!(agents[0], "claude_code");
-        assert_eq!(agents[15], "custom:goose");
-        assert_eq!(agents[16], "custom:amp");
+        assert_eq!(agents[0], "auto");
+        assert_eq!(agents[1], "claude_code");
+        assert_eq!(agents[16], "custom:goose");
+        assert_eq!(agents[17], "custom:amp");
         // The other delegation tools carry no agent_type and are untouched.
         let status = tools
             .as_array()
@@ -4212,13 +4369,18 @@ mod tests {
             .as_array()
             .unwrap()
             .clone();
-        assert_eq!(agents.len(), 14, "15 builtins - 2 disabled + 1 custom");
+        assert_eq!(
+            agents.len(),
+            15,
+            "auto + 15 builtins - 2 disabled + 1 custom"
+        );
         assert!(!agents.contains(&serde_json::json!("codex")));
         assert!(!agents.contains(&serde_json::json!("grok")));
         // Survivors keep the embedded order, customs still come last.
-        assert_eq!(agents[0], "claude_code");
-        assert_eq!(agents[1], "open_code");
-        assert_eq!(agents[13], "custom:goose");
+        assert_eq!(agents[0], "auto");
+        assert_eq!(agents[1], "claude_code");
+        assert_eq!(agents[2], "open_code");
+        assert_eq!(agents[14], "custom:goose");
     }
 
     // An empty disabled list (the parent omitted `--disabled-agents`) leaves
@@ -4240,9 +4402,9 @@ mod tests {
             .as_array()
             .unwrap()
             .clone();
-        assert_eq!(agents.len(), 15);
-        assert_eq!(agents[0], "claude_code");
-        assert_eq!(agents[14], "antigravity");
+        assert_eq!(agents.len(), 16);
+        assert_eq!(agents[0], "auto");
+        assert_eq!(agents[15], "antigravity");
     }
 
     #[tokio::test]
@@ -4731,7 +4893,7 @@ mod tests {
             dispatch_for_test(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#).await,
         );
         assert!(!names.contains(&"check_user_feedback".to_string()));
-        assert_eq!(names.len(), 4);
+        assert_eq!(names.len(), 5);
     }
 
     #[tokio::test]
@@ -4740,7 +4902,7 @@ mod tests {
             dispatch_with_features(BOTH, r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#).await,
         );
         assert!(names.contains(&"check_user_feedback".to_string()));
-        assert_eq!(names.len(), 5);
+        assert_eq!(names.len(), 6);
     }
 
     #[tokio::test]
@@ -4841,6 +5003,280 @@ mod tests {
         let e = resp.error.unwrap();
         assert_eq!(e.code, -32602);
         assert!(e.message.contains("unknown tool"));
+    }
+
+    // -- rate_delegation validation + feature gating + rendering ------------
+
+    #[tokio::test]
+    async fn rate_delegation_advertises_task_id_verdict_and_optional_note() {
+        let names = list_tool_names(
+            dispatch_for_test(r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#).await,
+        );
+        assert!(names.contains(&"rate_delegation".to_string()));
+        let resp = unwrap_respond(
+            dispatch_for_test(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#).await,
+        );
+        let tools = resp.result.unwrap()["tools"].clone();
+        let rate = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "rate_delegation")
+            .cloned()
+            .unwrap();
+        let required = rate["inputSchema"]["required"].as_array().unwrap();
+        assert_eq!(required.len(), 2);
+        assert!(required.iter().any(|v| v == "task_id"));
+        assert!(required.iter().any(|v| v == "verdict"));
+        let props = rate["inputSchema"]["properties"].clone();
+        let verdicts = props["verdict"]["enum"].as_array().unwrap();
+        assert_eq!(verdicts, &vec![json!("good"), json!("bad")]);
+        // The note is optional context, not part of the required contract.
+        assert!(props["note"].is_object());
+        assert!(props["task"].is_null());
+    }
+
+    #[tokio::test]
+    async fn delegate_schema_exposes_router_arguments() {
+        // "auto" plus the three optional router hints; all backward compatible
+        // (none of them is in `required`).
+        let resp = unwrap_respond(
+            dispatch_for_test(r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#).await,
+        );
+        let tools = resp.result.unwrap()["tools"].clone();
+        let delegate = tools
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|t| t["name"] == "delegate_to_agent")
+            .cloned()
+            .unwrap();
+        let props = delegate["inputSchema"]["properties"].clone();
+        let required = delegate["inputSchema"]["required"].as_array().unwrap();
+        assert_eq!(required, &vec![json!("agent_type"), json!("task")]);
+        assert_eq!(
+            props["agent_type"]["enum"][0],
+            json!("auto"),
+            "auto must lead the agent_type enum"
+        );
+        assert_eq!(
+            props["task_kind"]["enum"].as_array().unwrap().len(),
+            11,
+            "plan, implement, refactor, debug, review, test, explore, research, shell, docs, quick"
+        );
+        assert_eq!(props["difficulty"]["enum"].as_array().unwrap().len(), 4);
+        assert_eq!(props["effort"]["enum"].as_array().unwrap().len(), 5);
+        let desc = delegate["description"].as_str().unwrap();
+        assert!(desc.contains("rate_delegation"));
+    }
+
+    #[tokio::test]
+    async fn rate_delegation_requires_task_id() {
+        for arguments in [json!({}), json!({"task_id": ""}), json!({"task_id": 42})] {
+            let line = json!({
+                "jsonrpc": "2.0", "id": 36, "method": "tools/call",
+                "params": { "name": "rate_delegation", "arguments": arguments }
+            })
+            .to_string();
+            let resp = unwrap_respond(dispatch_for_test(&line).await);
+            let e = resp.error.unwrap();
+            assert_eq!(e.code, -32602);
+            assert!(e.message.contains("task_id"));
+        }
+    }
+
+    #[tokio::test]
+    async fn rate_delegation_rejects_unknown_verdict() {
+        // Anything but good/bad is refused synchronously — the verdict is the
+        // router's learning signal, so a typo must never reach the broker.
+        for arguments in [
+            json!({"task_id": "t-1"}),
+            json!({"task_id": "t-1", "verdict": "great"}),
+            json!({"task_id": "t-1", "verdict": ""}),
+            json!({"task_id": "t-1", "verdict": 1}),
+        ] {
+            let line = json!({
+                "jsonrpc": "2.0", "id": 37, "method": "tools/call",
+                "params": { "name": "rate_delegation", "arguments": arguments }
+            })
+            .to_string();
+            let resp = unwrap_respond(dispatch_for_test(&line).await);
+            let e = resp
+                .error
+                .expect("a missing / unrecognized verdict must be rejected");
+            assert_eq!(e.code, -32602);
+            assert!(e.message.contains("verdict"));
+        }
+    }
+
+    #[tokio::test]
+    async fn rate_delegation_spawns_with_valid_args() {
+        for arguments in [
+            json!({"task_id": "t-1", "verdict": "good"}),
+            json!({"task_id": "t-1", "verdict": "bad", "note": "wrong API"}),
+        ] {
+            let line = json!({
+                "jsonrpc": "2.0", "id": 38, "method": "tools/call",
+                "params": { "name": "rate_delegation", "arguments": arguments }
+            })
+            .to_string();
+            assert!(matches!(
+                dispatch_for_test(&line).await,
+                LineAction::Spawn(_)
+            ));
+        }
+    }
+
+    #[tokio::test]
+    async fn rate_delegation_rejected_as_unknown_when_delegation_off() {
+        let line = json!({
+            "jsonrpc": "2.0", "id": 39, "method": "tools/call",
+            "params": { "name": "rate_delegation",
+                        "arguments": {"task_id": "t-1", "verdict": "good"} }
+        })
+        .to_string();
+        let resp = unwrap_respond(dispatch_with_features(FEEDBACK_ONLY, &line).await);
+        let e = resp.error.unwrap();
+        assert_eq!(e.code, -32602);
+        assert!(e.message.contains("unknown tool"));
+    }
+
+    #[test]
+    fn parse_rate_arguments_caps_the_note() {
+        let long = "x".repeat(RATE_NOTE_MAX_CHARS + 120);
+        let args = json!({ "task_id": " t-1 ", "verdict": "bad", "note": long });
+        let (task_id, verdict, note) = parse_rate_arguments(&args).unwrap();
+        assert_eq!(task_id, "t-1");
+        assert_eq!(verdict, "bad");
+        assert_eq!(note.as_ref().map(|n| n.chars().count()), Some(300));
+        // Blank / missing notes collapse to None rather than an empty string.
+        assert_eq!(
+            parse_rate_arguments(&json!({ "task_id": "t-1", "verdict": "good", "note": "  " }))
+                .unwrap()
+                .2,
+            None
+        );
+        assert_eq!(
+            parse_rate_arguments(&json!({ "task_id": "t-1", "verdict": "good" }))
+                .unwrap()
+                .2,
+            None
+        );
+    }
+
+    #[test]
+    fn render_rate_result_confirms_recorded_verdict() {
+        let rendered = render_rate_result(&json!({ "ok": true }), "t-1", "good");
+        assert_eq!(rendered["isError"], false);
+        assert_eq!(
+            rendered["content"][0]["text"],
+            "Recorded: good for task t-1."
+        );
+        assert_eq!(rendered["structuredContent"]["ok"], true);
+        // A listener note rides along after the confirmation.
+        let with_note = render_rate_result(
+            &json!({ "ok": true, "note": "stats updated" }),
+            "t-2",
+            "bad",
+        );
+        assert_eq!(
+            with_note["content"][0]["text"],
+            "Recorded: bad for task t-2. stats updated"
+        );
+    }
+
+    #[test]
+    fn render_rate_result_surfaces_refusal_error() {
+        let rendered = render_rate_result(
+            &json!({ "ok": false, "error": "unknown task id" }),
+            "t-1",
+            "good",
+        );
+        assert_eq!(rendered["isError"], true);
+        assert_eq!(rendered["content"][0]["text"], "unknown task id");
+        // No reported reason still yields readable text, never an empty one.
+        let silent = render_rate_result(&json!({ "ok": false }), "t-1", "good");
+        assert_eq!(silent["isError"], true);
+        assert!(!silent["content"][0]["text"].as_str().unwrap().is_empty());
+    }
+
+    #[test]
+    fn render_task_report_appends_route_and_escalate_lines() {
+        let report = json!({
+            "task_id": "t1",
+            "status": "failed",
+            "message": "the sub-agent gave up",
+            "route": {
+                "agent_type": "claude_code",
+                "model": "claude-sonnet-5-5",
+                "effort": "high",
+                "profile": "calidad",
+                "reason": "best measured for implement"
+            },
+            "escalate": { "difficulty": "hard", "hint": "retry with difficulty hard" }
+        });
+        let rendered = render_task_report(&report);
+        assert_eq!(rendered["isError"], true);
+        let text = rendered["content"][0]["text"].as_str().unwrap();
+        assert_eq!(
+            text,
+            "the sub-agent gave up\n\
+             Route: claude_code/claude-sonnet-5-5 · effort high · calidad — best measured for implement\n\
+             Escalate: retry with difficulty hard — retry with difficulty hard"
+        );
+    }
+
+    #[test]
+    fn render_task_report_route_only_survives_partial_objects() {
+        // No `escalate` → only the Route line.
+        let routed = render_task_report(&json!({
+            "task_id": "t1",
+            "status": "completed",
+            "text": "done",
+            "route": { "agent_type": "open_code", "model": "space-bunny-free", "reason": "free and measured best" }
+        }));
+        assert_eq!(
+            routed["content"][0]["text"],
+            "done\nRoute: open_code/space-bunny-free — free and measured best"
+        );
+        // A route missing agent/model renders nothing rather than empty segments.
+        let partial = render_task_report(&json!({
+            "task_id": "t1",
+            "status": "completed",
+            "text": "done",
+            "route": { "effort": "high" }
+        }));
+        assert_eq!(partial["content"][0]["text"], "done");
+        // structuredContent still carries the raw report for the frontend.
+        assert_eq!(
+            routed["structuredContent"]["route"]["agent_type"],
+            "open_code"
+        );
+    }
+
+    #[test]
+    fn render_task_report_without_routing_is_unchanged() {
+        // No `route` / `escalate` (every pre-router report): byte-identical text.
+        let report = json!({
+            "task_id": "t1",
+            "status": "completed",
+            "child_conversation_id": 3,
+            "text": "the result"
+        });
+        assert_eq!(
+            render_task_report(&report)["content"][0]["text"],
+            "the result"
+        );
+        let escalated_only = render_task_report(&json!({
+            "task_id": "t1",
+            "status": "failed",
+            "message": "boom",
+            "escalate": { "difficulty": "long", "hint": "split the work" }
+        }));
+        assert_eq!(
+            escalated_only["content"][0]["text"],
+            "boom\nEscalate: retry with difficulty long — split the work"
+        );
     }
 
     // -- ask_user_question feature gating + validation + rendering ----------

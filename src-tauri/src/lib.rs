@@ -1194,7 +1194,9 @@ mod tauri_app {
                         std::sync::Arc::new(crate::commands::computer::McpComputerTools::new(
                             computer_service,
                         )),
-                    );
+                    ).with_routing(std::sync::Arc::new(
+                        crate::acp::delegation::routing::DbRouting::new(db_conn.clone()),
+                    ));
                     // Bind through the service handle rather than a bare
                     // `listener.run` spawn: it keeps the bind error and the
                     // accept-loop handle around, which is what lets the

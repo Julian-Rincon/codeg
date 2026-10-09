@@ -3007,6 +3007,7 @@ mod tests {
             requested_working_dir: None,
             external_handle: None,
             model: None,
+            effort: None,
         }
     }
 
