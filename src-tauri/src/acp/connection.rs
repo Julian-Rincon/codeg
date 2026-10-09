@@ -9120,7 +9120,12 @@ async fn apply_preferred_session_options(
                     match set_session_config_option_inner(cx, &session_id, config_id.clone(), encoded)
                         .await
                     {
-                        Ok(updated) => options = updated,
+                        Ok(updated) => {
+                            tracing::info!(
+                                "[ACP] effort '{config_id}'='{value}' applied on connect (requested '{requested}')"
+                            );
+                            options = updated
+                        }
                         Err(e) => tracing::error!(
                             "[ACP] failed to apply effort '{config_id}'='{value}' on connect: {e}"
                         ),

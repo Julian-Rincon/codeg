@@ -225,10 +225,11 @@ pub fn candidates_from_scorecard(
             continue;
         }
         let better = |cur: &ModelScorecardEntry| {
-            // Prefer the bare family alias (`opus`), then the shorter id.
+            // Prefer the bare family alias (`opus`), then the newest version
+            // (`claude-opus-5-5` over `claude-opus-5` over `claude-opus-4-8`).
             let alias = |m: &str| m == family;
-            (alias(&e.model), std::cmp::Reverse(e.model.len()))
-                > (alias(&cur.model), std::cmp::Reverse(cur.model.len()))
+            (alias(&e.model), version_key(&e.model))
+                > (alias(&cur.model), version_key(&cur.model))
         };
         match chosen.get(&key) {
             Some(cur) if !better(cur) => {}
@@ -279,6 +280,19 @@ const MODEL_FAILURE_CODES: &[&str] = &[
 /// Whether a `Failed` report's code should count against the routed model.
 pub fn is_model_failure(error_code: Option<&str>) -> bool {
     error_code.is_some_and(|c| MODEL_FAILURE_CODES.contains(&c))
+}
+
+/// Numeric version parts of a model id, dates dropped:
+/// `claude-opus-5-5` → [5, 5], `claude-opus-4-5-20251101` → [4, 5].
+fn version_key(model: &str) -> Vec<u32> {
+    model
+        .rsplit('/')
+        .next()
+        .unwrap_or(model)
+        .split(['-', '.', ':'])
+        .filter_map(|part| part.parse::<u32>().ok())
+        .filter(|n| *n < 10_000)
+        .collect()
 }
 
 /// Broker-facing routing service.
@@ -761,6 +775,20 @@ mod tests {
     fn grok_is_not_a_candidate() {
         let entries = vec![entry("grok", "grok-4", true, 0)];
         assert!(candidates_from_scorecard(&entries).0.is_empty());
+    }
+
+    #[test]
+    fn newest_version_wins_when_there_is_no_alias() {
+        let entries = vec![
+            entry("claude_code", "claude-opus-5", true, 593),
+            entry("claude_code", "claude-opus-5-5", true, 67),
+            entry("claude_code", "claude-opus-4-8", true, 0),
+            entry("claude_code", "claude-opus-4-5-20251101", true, 0),
+        ];
+        let (candidates, _) = candidates_from_scorecard(&entries);
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].model, "claude-opus-5-5");
+        assert_eq!(version_key("claude-opus-4-5-20251101"), vec![4, 5]);
     }
 }
 
