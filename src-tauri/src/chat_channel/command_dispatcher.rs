@@ -6,6 +6,7 @@ use sea_orm::DatabaseConnection;
 use tokio::sync::{mpsc, Mutex};
 use tokio::task::JoinHandle;
 
+use super::agenda_tap;
 use super::command_handlers;
 use super::i18n::{self, Lang};
 use super::manager::ChatChannelManager;
@@ -106,6 +107,34 @@ pub fn spawn_command_dispatcher(
             .await;
 
             config.refresh_if_needed(&db_conn).await;
+
+            // NEXUS agenda button: applied by the local `nexus` CLI (stateless, the
+            // callback carries the calendar event id); the tapped message keeps its
+            // text, gets the result underneath and loses its keyboard.
+            if let Some(data) = cmd
+                .callback_data
+                .as_deref()
+                .filter(|d| agenda_tap::is_agenda_callback(d))
+            {
+                let tapped = cmd
+                    .metadata
+                    .pointer("/callback_query/message/message_id")
+                    .and_then(|v| v.as_i64());
+                let original = cmd
+                    .metadata
+                    .pointer("/callback_query/message/text")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or_default();
+                let status = agenda_tap::run(data).await;
+                tracing::info!("[ChatChannel] agenda tap {data}: {status}");
+                if let Some(id) = tapped {
+                    let edited = RichMessage::info(agenda_tap::tapped_text(original, &status));
+                    let _ = manager
+                        .update_on_channel(cmd.channel_id, &SentMessageId(id.to_string()), &edited)
+                        .await;
+                }
+                continue;
+            }
 
             // A tap on a permission / question button that no longer answers anything
             // (answered elsewhere, expired, Phantom restarted): keep the message's text,

@@ -1,3 +1,4 @@
+pub mod agenda_tap;
 pub mod backends;
 pub mod chat_preamble;
 pub mod command_dispatcher;
