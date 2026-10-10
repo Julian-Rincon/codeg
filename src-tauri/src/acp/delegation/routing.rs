@@ -30,6 +30,13 @@ const LOG_CAP: usize = 300;
 /// A free model is only routed to once it has this much measured history:
 /// the catalog lists several free models that are deprecated or broken.
 const FREE_MIN_TOOL_CALLS: u64 = 20;
+/// …or once the router itself has finished this many tasks on it.
+const LEARNED_MIN_TASKS: u32 = 3;
+/// With at least `LEARNED_MIN_TASKS` tasks, a good rate below this blacklists
+/// the (agent, family).
+const BLACKLIST_BELOW_RATE: f64 = 0.35;
+/// Chance that an easy `auto` task goes to an unmeasured trial model.
+const TRIAL_PROBABILITY: f64 = 0.05;
 
 /// Routing-relevant arguments of one `delegate_to_agent` call.
 #[derive(Debug, Clone, Default)]
@@ -69,12 +76,13 @@ pub struct RoutePlan {
 /// Pure routing decision over already-loaded data.
 pub fn plan_with(
     args: &RoutingArgs,
-    candidates: &[CandidateModel],
+    pool: &RoutingPool,
     stats: &RouterStats,
-    hints: &[ScorecardHint],
     profile: Profile,
     rng: &mut dyn FnMut() -> f64,
 ) -> Result<RoutePlan, String> {
+    let candidates = pool.candidates.as_slice();
+    let hints = pool.hints.as_slice();
     let difficulty = args.difficulty.unwrap_or(Difficulty::Normal);
     if !args.auto {
         let agent_type = args
@@ -106,10 +114,41 @@ pub fn plan_with(
     }
 
     let kind = args.task_kind.unwrap_or(TaskKind::Implement);
-    // An explicit model narrows `auto` to that model (on whichever agent has it).
+    let effort = args.effort.unwrap_or_else(|| router::effort_for(kind, difficulty));
+    // Trial: an easy task occasionally goes to an unmeasured model so new
+    // models can earn their way into the candidates. Draws from `rng` only
+    // when a trial is possible.
+    if args.model.is_none()
+        && matches!(difficulty, Difficulty::Trivial | Difficulty::Normal)
+        && !pool.trials.is_empty()
+        && rng() < TRIAL_PROBABILITY
+    {
+        let idx = ((rng() * pool.trials.len() as f64) as usize).min(pool.trials.len() - 1);
+        let t = &pool.trials[idx];
+        let info = RouteInfo {
+            agent_type: t.agent_type.as_wire().to_string(),
+            model: t.model.clone(),
+            family: t.family.clone(),
+            effort: effort.as_str().to_string(),
+            profile: profile.as_str().to_string(),
+            task_kind: kind.as_str().to_string(),
+            difficulty: difficulty.as_str().to_string(),
+            reason: format!("trial: unmeasured model {}/{}", t.agent_type.as_wire(), t.model),
+            auto: true,
+        };
+        return Ok(RoutePlan {
+            agent_type: t.agent_type,
+            model: Some(t.model.clone()),
+            effort: Some(effort.as_str().to_string()),
+            info: Some(info),
+        });
+    }
+    // An explicit model narrows `auto` to that model (on whichever agent has
+    // it), trial models included so an unmeasured one can still be requested.
     let narrowed: Vec<CandidateModel> = match args.model.as_deref() {
         Some(wanted) => candidates
             .iter()
+            .chain(pool.trials.iter())
             .filter(|c| {
                 c.model == wanted
                     || c.model.rsplit('/').next() == Some(wanted)
@@ -171,12 +210,34 @@ pub fn escalate_value(info: &RouteInfo) -> Value {
     }
 }
 
-/// Candidates + scorecard hints from scorecard entries. One candidate per
+/// Everything `plan_with` may route to.
+#[derive(Debug, Clone, Default)]
+pub struct RoutingPool {
+    pub candidates: Vec<CandidateModel>,
+    pub hints: Vec<ScorecardHint>,
+    /// Available models not yet eligible (free, unmeasured) nor blacklisted:
+    /// occasionally tried on easy tasks so new models can earn their way in.
+    pub trials: Vec<CandidateModel>,
+}
+
+/// Finished tasks and overall good rate of one (agent, family) in the stats,
+/// summed over every task kind.
+fn learned_record(stats: &RouterStats, agent: &str, family: &str) -> (u32, f64, f64) {
+    let suffix = format!("|{agent}|{family}");
+    stats
+        .cells
+        .iter()
+        .filter(|(k, _)| k.ends_with(&suffix))
+        .fold((0, 0.0, 0.0), |(n, good, bad), (_, c)| {
+            (n.saturating_add(c.n), good + c.good, bad + c.bad)
+        })
+}
+
+/// Candidates, trials + scorecard hints from scorecard entries. One entry per
 /// (agent, family): Claude Code aliases (`opus`, `sonnet`, …) win over pinned
-/// ids, and a free model needs measured history before it is offered.
-pub fn candidates_from_scorecard(
-    entries: &[ModelScorecardEntry],
-) -> (Vec<CandidateModel>, Vec<ScorecardHint>) {
+/// ids. A free model is a candidate once it has measured tool calls or enough
+/// finished router tasks; a family that keeps failing is blacklisted.
+pub fn candidates_from_scorecard(entries: &[ModelScorecardEntry], stats: &RouterStats) -> RoutingPool {
     // Measured tool calls per (agent, family), across every id spelling.
     let mut measured: HashMap<(String, String), u64> = HashMap::new();
     // (agent, family, category) -> (calls, errors)
@@ -204,6 +265,7 @@ pub fn candidates_from_scorecard(
     }
 
     let mut chosen: BTreeMap<(String, String), &ModelScorecardEntry> = BTreeMap::new();
+    let mut trial_chosen: BTreeMap<(String, String), &ModelScorecardEntry> = BTreeMap::new();
     for e in entries {
         if e.available != Some(true) || e.limited {
             continue;
@@ -219,11 +281,14 @@ pub fn candidates_from_scorecard(
         }
         let family = router::family_of(&e.model);
         let key = (e.agent_type.clone(), family.clone());
-        if router::is_free(&e.model)
-            && measured.get(&key).copied().unwrap_or(0) < FREE_MIN_TOOL_CALLS
-        {
+        let (n, good, bad) = learned_record(stats, &e.agent_type, &family);
+        if n >= LEARNED_MIN_TASKS && good / (good + bad).max(f64::EPSILON) < BLACKLIST_BELOW_RATE {
             continue;
         }
+        let eligible = !router::is_free(&e.model)
+            || measured.get(&key).copied().unwrap_or(0) >= FREE_MIN_TOOL_CALLS
+            || n >= LEARNED_MIN_TASKS;
+        let target = if eligible { &mut chosen } else { &mut trial_chosen };
         let better = |cur: &ModelScorecardEntry| {
             // Prefer the bare family alias (`opus`), then the newest version
             // (`claude-opus-5-5` over `claude-opus-5` over `claude-opus-4-8`).
@@ -231,24 +296,27 @@ pub fn candidates_from_scorecard(
             (alias(&e.model), version_key(&e.model))
                 > (alias(&cur.model), version_key(&cur.model))
         };
-        match chosen.get(&key) {
+        match target.get(&key) {
             Some(cur) if !better(cur) => {}
             _ => {
-                chosen.insert(key, e);
+                target.insert(key, e);
             }
         }
     }
-    let candidates = chosen
-        .into_iter()
-        .filter_map(|((agent, family), e)| {
-            Some(CandidateModel {
-                agent_type: AgentType::from_wire(&agent)?,
-                model: e.model.clone(),
-                free: router::is_free(&e.model),
-                family,
+    let to_models = |map: BTreeMap<(String, String), &ModelScorecardEntry>| -> Vec<CandidateModel> {
+        map.into_iter()
+            .filter_map(|((agent, family), e)| {
+                Some(CandidateModel {
+                    agent_type: AgentType::from_wire(&agent)?,
+                    model: e.model.clone(),
+                    free: router::is_free(&e.model),
+                    family,
+                })
             })
-        })
-        .collect();
+            .collect()
+    };
+    let candidates = to_models(chosen);
+    let trials = to_models(trial_chosen);
     let hints = cats
         .into_iter()
         .filter_map(|((agent, family, cat), (calls, errors))| {
@@ -261,7 +329,11 @@ pub fn candidates_from_scorecard(
             })
         })
         .collect();
-    (candidates, hints)
+    RoutingPool {
+        candidates,
+        hints,
+        trials,
+    }
 }
 
 /// Error codes that come from the child model's own turn. Infrastructure
@@ -323,7 +395,7 @@ impl DelegationRouting for NoRouting {
         if args.auto {
             return Err("agent_type \"auto\" is not available here".to_string());
         }
-        plan_with(args, &[], &RouterStats::default(), &[], Profile::Calidad, &mut || 1.0)
+        plan_with(args, &RoutingPool::default(), &RouterStats::default(), Profile::Calidad, &mut || 1.0)
     }
     async fn remember(&self, _task_id: &str, _info: &RouteInfo, _parent: i32) {}
     async fn route_of(&self, _task_id: &str) -> Option<RouteInfo> {
@@ -473,7 +545,7 @@ impl DelegationRouting for DbRouting {
     async fn plan(&self, args: &RoutingArgs) -> Result<RoutePlan, String> {
         let profile = self.profile().await;
         if !args.auto {
-            return plan_with(args, &[], &RouterStats::default(), &[], profile, &mut || 1.0);
+            return plan_with(args, &RoutingPool::default(), &RouterStats::default(), profile, &mut || 1.0);
         }
         let disabled = self.disabled_agents().await;
         let entries: Vec<ModelScorecardEntry> = self
@@ -482,10 +554,10 @@ impl DelegationRouting for DbRouting {
             .into_iter()
             .filter(|e| !disabled.contains(&e.agent_type))
             .collect();
-        let (candidates, hints) = candidates_from_scorecard(&entries);
         let stats: RouterStats = self.load(STATS_KEY).await;
+        let pool = candidates_from_scorecard(&entries, &stats);
         let mut rng = || rand::random::<f64>();
-        plan_with(args, &candidates, &stats, &hints, profile, &mut rng)
+        plan_with(args, &pool, &stats, profile, &mut rng)
     }
 
     async fn remember(&self, task_id: &str, info: &RouteInfo, parent_conversation_id: i32) {
@@ -617,7 +689,7 @@ mod tests {
         a.agent_type = Some(AgentType::OpenCode);
         a.task_kind = Some(TaskKind::Explore);
         a.difficulty = Some(Difficulty::Trivial);
-        let plan = plan_with(&a, &[], &RouterStats::default(), &[], Profile::Calidad, &mut || 1.0)
+        let plan = plan_with(&a, &RoutingPool::default(), &RouterStats::default(), Profile::Calidad, &mut || 1.0)
             .unwrap();
         assert_eq!(plan.agent_type, AgentType::OpenCode);
         assert_eq!(plan.model, None);
@@ -632,7 +704,7 @@ mod tests {
         let mut a = args(false);
         a.agent_type = Some(AgentType::ClaudeCode);
         a.model = Some("opus".into());
-        let plan = plan_with(&a, &[], &RouterStats::default(), &[], Profile::Calidad, &mut || 1.0)
+        let plan = plan_with(&a, &RoutingPool::default(), &RouterStats::default(), Profile::Calidad, &mut || 1.0)
             .unwrap();
         assert_eq!(plan.model.as_deref(), Some("opus"));
         assert_eq!(plan.effort, None);
@@ -649,7 +721,7 @@ mod tests {
             entry("open_code", "space-bunny-free", false, 619),
             entry("open_code", "opencode/exo-free", true, 0),
         ];
-        let (candidates, _) = candidates_from_scorecard(&entries);
+        let candidates = candidates_from_scorecard(&entries, &RouterStats::default()).candidates;
         let ids: Vec<String> = candidates
             .iter()
             .map(|c| format!("{}/{}", c.agent_type.as_wire(), c.model))
@@ -663,7 +735,7 @@ mod tests {
         let mut a = args(true);
         a.task_kind = Some(TaskKind::Plan);
         a.difficulty = Some(Difficulty::Hard);
-        let plan = plan_with(&a, &candidates, &RouterStats::default(), &[], Profile::Calidad, &mut || 1.0)
+        let plan = plan_with(&a, &RoutingPool { candidates: candidates.clone(), ..Default::default() }, &RouterStats::default(), Profile::Calidad, &mut || 1.0)
             .unwrap();
         assert_eq!(plan.agent_type, AgentType::ClaudeCode);
         assert_eq!(plan.model.as_deref(), Some("opus"));
@@ -676,7 +748,7 @@ mod tests {
         let mut limited = entry("claude_code", "opus", true, 0);
         limited.limited = true;
         let entries = vec![limited, entry("hermes", "gpt-4o", true, 500)];
-        let (candidates, _) = candidates_from_scorecard(&entries);
+        let candidates = candidates_from_scorecard(&entries, &RouterStats::default()).candidates;
         assert!(candidates.is_empty());
     }
 
@@ -684,7 +756,7 @@ mod tests {
     fn auto_with_no_candidates_is_an_error() {
         let mut a = args(true);
         a.task_kind = Some(TaskKind::Shell);
-        assert!(plan_with(&a, &[], &RouterStats::default(), &[], Profile::Calidad, &mut || 1.0).is_err());
+        assert!(plan_with(&a, &RoutingPool::default(), &RouterStats::default(), Profile::Calidad, &mut || 1.0).is_err());
     }
 
     #[test]
@@ -766,15 +838,15 @@ mod tests {
         }];
         let mut a = args(true);
         a.model = Some("no-such-model".into());
-        assert!(plan_with(&a, &candidates, &RouterStats::default(), &[], Profile::Calidad, &mut || 1.0).is_err());
+        assert!(plan_with(&a, &RoutingPool { candidates: candidates.clone(), ..Default::default() }, &RouterStats::default(), Profile::Calidad, &mut || 1.0).is_err());
         a.model = Some("claude-sonnet-5".into()); // same family
-        assert!(plan_with(&a, &candidates, &RouterStats::default(), &[], Profile::Calidad, &mut || 1.0).is_ok());
+        assert!(plan_with(&a, &RoutingPool { candidates: candidates.clone(), ..Default::default() }, &RouterStats::default(), Profile::Calidad, &mut || 1.0).is_ok());
     }
 
     #[test]
     fn grok_is_not_a_candidate() {
         let entries = vec![entry("grok", "grok-4", true, 0)];
-        assert!(candidates_from_scorecard(&entries).0.is_empty());
+        assert!(candidates_from_scorecard(&entries, &RouterStats::default()).candidates.is_empty());
     }
 
     #[test]
@@ -785,10 +857,84 @@ mod tests {
             entry("claude_code", "claude-opus-4-8", true, 0),
             entry("claude_code", "claude-opus-4-5-20251101", true, 0),
         ];
-        let (candidates, _) = candidates_from_scorecard(&entries);
+        let candidates = candidates_from_scorecard(&entries, &RouterStats::default()).candidates;
         assert_eq!(candidates.len(), 1);
         assert_eq!(candidates[0].model, "claude-opus-5-5");
         assert_eq!(version_key("claude-opus-4-5-20251101"), vec![4, 5]);
+    }
+
+    fn free_entries() -> Vec<ModelScorecardEntry> {
+        vec![
+            entry("claude_code", "sonnet", true, 0),
+            entry("open_code", "opencode/mimo-v2.6-flash-free", true, 0),
+            entry("open_code", "opencode/exo-free", true, 0),
+        ]
+    }
+
+    fn finished(stats: &mut RouterStats, kind: TaskKind, family: &str, good: bool) {
+        let terminal = if good { Signal::Completed } else { Signal::Failed };
+        let rating = if good { Signal::RatedGood } else { Signal::RatedBad };
+        stats.record(kind, AgentType::OpenCode, family, terminal);
+        stats.record(kind, AgentType::OpenCode, family, rating);
+    }
+
+    #[test]
+    fn free_model_becomes_eligible_after_three_learned_tasks() {
+        let mimo = "free:mimo-v2.6-flash-free";
+        let mut stats = RouterStats::default();
+        finished(&mut stats, TaskKind::Explore, mimo, true);
+        finished(&mut stats, TaskKind::Shell, mimo, true);
+        let pool = candidates_from_scorecard(&free_entries(), &stats);
+        assert!(!pool.candidates.iter().any(|c| c.family == mimo));
+        assert!(pool.trials.iter().any(|c| c.family == mimo));
+        finished(&mut stats, TaskKind::Docs, mimo, true);
+        let pool = candidates_from_scorecard(&free_entries(), &stats);
+        assert!(pool.candidates.iter().any(|c| c.family == mimo));
+        assert!(!pool.trials.iter().any(|c| c.family == mimo));
+    }
+
+    #[test]
+    fn a_family_that_keeps_failing_is_blacklisted() {
+        let exo = "free:exo-free";
+        let mut stats = RouterStats::default();
+        for kind in [TaskKind::Explore, TaskKind::Shell, TaskKind::Docs] {
+            finished(&mut stats, kind, exo, false);
+        }
+        let pool = candidates_from_scorecard(&free_entries(), &stats);
+        assert!(!pool.candidates.iter().any(|c| c.family == exo));
+        assert!(!pool.trials.iter().any(|c| c.family == exo));
+    }
+
+    #[test]
+    fn trials_only_on_easy_tasks_and_only_when_the_draw_says_so() {
+        let pool = candidates_from_scorecard(&free_entries(), &RouterStats::default());
+        assert_eq!(pool.trials.len(), 2); // mimo + exo, both unmeasured
+        let mut a = args(true);
+        a.task_kind = Some(TaskKind::Shell);
+        a.difficulty = Some(Difficulty::Normal);
+        // Draw 0.01 < 0.05 → trial; second draw 0.99 → last trial.
+        let mut draws = vec![0.01, 0.99].into_iter();
+        let plan = plan_with(&a, &pool, &RouterStats::default(), Profile::Calidad, &mut || draws.next().unwrap()).unwrap();
+        let info = plan.info.unwrap();
+        assert!(info.reason.starts_with("trial: unmeasured model open_code/"), "{}", info.reason);
+        assert_eq!(plan.effort.as_deref(), Some("medium"));
+        // Draw 0.5 → no trial; the normal route runs.
+        let plan = plan_with(&a, &pool, &RouterStats::default(), Profile::Calidad, &mut || 0.5).unwrap();
+        assert!(!plan.info.unwrap().reason.starts_with("trial"));
+        // Hard never trials, whatever the draw.
+        a.difficulty = Some(Difficulty::Hard);
+        let plan = plan_with(&a, &pool, &RouterStats::default(), Profile::Calidad, &mut || 0.01).unwrap();
+        assert!(!plan.info.unwrap().reason.starts_with("trial"));
+    }
+
+    #[test]
+    fn an_unmeasured_model_can_still_be_requested_explicitly() {
+        let pool = candidates_from_scorecard(&free_entries(), &RouterStats::default());
+        let mut a = args(true);
+        a.task_kind = Some(TaskKind::Explore);
+        a.model = Some("opencode/mimo-v2.6-flash-free".into());
+        let plan = plan_with(&a, &pool, &RouterStats::default(), Profile::Calidad, &mut || 0.5).unwrap();
+        assert_eq!(plan.model.as_deref(), Some("opencode/mimo-v2.6-flash-free"));
     }
 }
 
