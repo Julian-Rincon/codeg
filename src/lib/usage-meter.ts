@@ -6,8 +6,8 @@
  * Mirrors the backend's documented contract:
  * - `usage_meter` `{}` → the plan quota + today's tokens (Claude cached 60 s
  *   server-side). Read-only.
- * - `quota_resume_list` `{}`, `quota_resume_schedule` `{connection_id,
- *   conversation_id, agent_type}`, `quota_resume_cancel` `{id}`.
+ * - `quota_resume_list` `{}`, `quota_resume_schedule` `{connectionId,
+ *   conversationId, agentType}`, `quota_resume_cancel` `{id}`.
  * - `router_profile_set` `{profile}` — the delegation router's weighting
  *   preset, reported on the `usage_meter` read as `router_profile`.
  *
@@ -139,10 +139,12 @@ export async function fetchQuotaResumes(): Promise<QuotaResume[] | null> {
 export async function scheduleQuotaResume(
   input: ScheduleQuotaResumeInput
 ): Promise<ScheduledQuotaResume> {
+  // camelCase on the wire: the web handler deserializes with
+  // `rename_all = "camelCase"` and Tauri maps command args from camelCase.
   return getTransport().call<ScheduledQuotaResume>("quota_resume_schedule", {
-    connection_id: input.connection_id,
-    conversation_id: input.conversation_id,
-    agent_type: input.agent_type,
+    connectionId: input.connection_id,
+    conversationId: input.conversation_id,
+    agentType: input.agent_type,
   })
 }
 

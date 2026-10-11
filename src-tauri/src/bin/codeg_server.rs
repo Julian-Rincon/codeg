@@ -616,6 +616,8 @@ async fn async_main() -> ExitCode {
     codeg_lib::commands::quota_resume::spawn_resume_loop(
         state.db.conn.clone(),
         state.connection_manager.clone_ref(),
+        state.emitter.clone(),
+        state.data_dir.clone(),
     );
 
     // Config-sync uploader (mirrors lib.rs setup): sleeps a minute, then

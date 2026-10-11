@@ -373,6 +373,10 @@ pub(crate) trait ResumeEffects: Send + Sync {
     async fn is_live(&self, connection_id: &str) -> bool;
     /// Hand [`RESUME_PROMPT`] to the connection. `Err` means the send failed.
     async fn send_resume(&self, connection_id: &str) -> Result<(), String>;
+    /// The stored connection is gone (Phantom restarted, the tab was closed):
+    /// open the conversation again on its own agent session and hand it
+    /// [`RESUME_PROMPT`]. Returns the new connection id.
+    async fn reopen(&self, conversation_id: i32) -> Result<String, String>;
     /// Tell the user over Telegram.
     async fn notify(&self, text: &str);
 }
@@ -381,11 +385,24 @@ pub(crate) trait ResumeEffects: Send + Sync {
 /// notify` CLI, which owns the bot token and must not be reimplemented here.
 pub(crate) struct ConnectionManagerEffects {
     manager: ConnectionManager,
+    db: crate::db::AppDatabase,
+    emitter: crate::web::event_bridge::EventEmitter,
+    data_dir: std::path::PathBuf,
 }
 
 impl ConnectionManagerEffects {
-    pub(crate) fn new(manager: ConnectionManager) -> Self {
-        Self { manager }
+    pub(crate) fn new(
+        manager: ConnectionManager,
+        db: crate::db::AppDatabase,
+        emitter: crate::web::event_bridge::EventEmitter,
+        data_dir: std::path::PathBuf,
+    ) -> Self {
+        Self {
+            manager,
+            db,
+            emitter,
+            data_dir,
+        }
     }
 }
 
@@ -412,6 +429,70 @@ impl ResumeEffects for ConnectionManagerEffects {
             )
             .await
             .map_err(|e| e.to_string())
+    }
+
+    /// Same path as resuming a conversation from Telegram (`/resume`): spawn
+    /// the conversation's agent on its own `external_id` session, in its
+    /// folder, with its model, then send the prompt linked to that row.
+    async fn reopen(&self, conversation_id: i32) -> Result<String, String> {
+        use crate::db::service::{conversation_service, folder_service};
+
+        let conv = conversation_service::get_by_id(&self.db.conn, conversation_id)
+            .await
+            .map_err(|e| e.to_string())?;
+        let folder = folder_service::get_folder_by_id(&self.db.conn, conv.folder_id)
+            .await
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("folder {} not found", conv.folder_id))?;
+        let runtime_env = crate::commands::acp::build_session_runtime_env(
+            &self.db,
+            conv.agent_type,
+            conv.external_id.as_deref(),
+            &self.data_dir,
+        )
+        .await
+        .map_err(|e| e.to_string())?;
+        let mut preferred_config_values = std::collections::BTreeMap::new();
+        if let Some(model) = conv.model.as_ref().filter(|m| !m.trim().is_empty()) {
+            preferred_config_values.insert(
+                crate::acp::connection::MODEL_CATEGORY_CONFIG_KEY.to_string(),
+                model.clone(),
+            );
+        }
+
+        let connection_id = self
+            .manager
+            .spawn_agent(
+                conv.agent_type,
+                Some(folder.path.clone()),
+                conv.external_id.clone(),
+                runtime_env,
+                format!("phantom-quota-resume:{conversation_id}"),
+                self.emitter.clone(),
+                None,
+                preferred_config_values,
+            )
+            .await
+            .map_err(|e| e.to_string())?;
+
+        if let Err(e) = self
+            .manager
+            .send_prompt_linked(
+                &self.db,
+                &connection_id,
+                vec![PromptInputBlock::Text {
+                    text: RESUME_PROMPT.to_string(),
+                }],
+                Some(folder.id),
+                Some(conversation_id),
+                None,
+            )
+            .await
+        {
+            let _ = self.manager.cancel(&self.db.conn, &connection_id).await;
+            return Err(e.to_string());
+        }
+        Ok(connection_id)
     }
 
     async fn notify(&self, text: &str) {
@@ -541,7 +622,29 @@ pub(crate) async fn process_due(
         };
 
         let outcome = if !effects.is_live(&connection_id).await {
-            ResumeOutcome::ConnectionGone
+            // Not a dead end: the conversation still exists, only its
+            // connection does not. Reopen it; only if that fails is it gone.
+            match effects.reopen(conversation_id).await {
+                Ok(new_connection) => {
+                    tracing::info!(
+                        id = %id,
+                        conversation_id,
+                        connection_id = %new_connection,
+                        "[quota_resume] reopened the conversation and resumed it"
+                    );
+                    entries[idx].connection_id = new_connection;
+                    ResumeOutcome::Sent
+                }
+                Err(err) => {
+                    tracing::warn!(
+                        id = %id,
+                        conversation_id,
+                        error = %err,
+                        "[quota_resume] the connection is gone and could not be reopened"
+                    );
+                    ResumeOutcome::ConnectionGone
+                }
+            }
         } else {
             match effects.send_resume(&connection_id).await {
                 Ok(()) => ResumeOutcome::Sent,
@@ -572,8 +675,18 @@ pub(crate) async fn process_due(
 
 /// The background task. One per process, started at startup by both runtimes;
 /// [`spawn_resume_loop`] is the idempotent entry point.
-pub async fn run_resume_loop(conn: DatabaseConnection, manager: ConnectionManager) {
-    let effects = ConnectionManagerEffects::new(manager);
+pub async fn run_resume_loop(
+    conn: DatabaseConnection,
+    manager: ConnectionManager,
+    emitter: crate::web::event_bridge::EventEmitter,
+    data_dir: std::path::PathBuf,
+) {
+    let effects = ConnectionManagerEffects::new(
+        manager,
+        crate::db::AppDatabase { conn: conn.clone() },
+        emitter,
+        data_dir,
+    );
     let mut ticker = tokio::time::interval(TICK);
     ticker.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
     loop {
@@ -588,12 +701,17 @@ pub async fn run_resume_loop(conn: DatabaseConnection, manager: ConnectionManage
 ///
 /// Idempotent through a `OnceLock` rather than a caller's care: both runtimes
 /// call it from their setup path, and a second loop would double every resume.
-pub fn spawn_resume_loop(conn: DatabaseConnection, manager: ConnectionManager) {
+pub fn spawn_resume_loop(
+    conn: DatabaseConnection,
+    manager: ConnectionManager,
+    emitter: crate::web::event_bridge::EventEmitter,
+    data_dir: std::path::PathBuf,
+) {
     static STARTED: OnceLock<()> = OnceLock::new();
     if STARTED.set(()).is_err() {
         return;
     }
-    tokio::spawn(run_resume_loop(conn, manager));
+    tokio::spawn(run_resume_loop(conn, manager, emitter, data_dir));
 }
 
 // ─── Desktop commands ───────────────────────────────────────────────────
@@ -1004,6 +1122,9 @@ mod tests {
         fail: bool,
         sent: Mutex<Vec<String>>,
         notices: Mutex<Vec<String>>,
+        /// Connection id a reopen yields; `None` = the reopen fails.
+        reopen_to: Option<String>,
+        reopened: Mutex<Vec<i32>>,
     }
 
     impl FakeEffects {
@@ -1013,7 +1134,18 @@ mod tests {
                 fail,
                 sent: Mutex::new(Vec::new()),
                 notices: Mutex::new(Vec::new()),
+                reopen_to: None,
+                reopened: Mutex::new(Vec::new()),
             }
+        }
+
+        fn reopening_to(mut self, connection_id: &str) -> Self {
+            self.reopen_to = Some(connection_id.to_string());
+            self
+        }
+
+        fn reopened(&self) -> Vec<i32> {
+            self.reopened.lock().expect("fake mutex").clone()
         }
 
         fn sent(&self) -> Vec<String> {
@@ -1040,6 +1172,16 @@ mod tests {
                 .expect("fake mutex")
                 .push(connection_id.to_string());
             Ok(())
+        }
+
+        async fn reopen(&self, conversation_id: i32) -> Result<String, String> {
+            self.reopened
+                .lock()
+                .expect("fake mutex")
+                .push(conversation_id);
+            self.reopen_to
+                .clone()
+                .ok_or_else(|| "agent could not be started".to_string())
         }
 
         async fn notify(&self, text: &str) {
@@ -1103,11 +1245,57 @@ mod tests {
             .expect("tick");
 
         assert!(effects.sent().is_empty(), "nothing to send to");
+        assert_eq!(effects.reopened(), vec![7], "it tried to reopen first");
         assert_eq!(effects.notices().len(), 1);
         assert!(effects.notices()[0].contains("ya no está abierta"));
 
         let rows = list_core(&db.conn).await.expect("list");
         assert_eq!(rows[0].status, ResumeStatus::ConnectionGone);
+    }
+
+    #[tokio::test]
+    async fn a_closed_connection_is_reopened_and_resumed() {
+        // Phantom restarted (or the tab was closed) while waiting: the stored
+        // connection id is dead, but the conversation is not. "Continue by
+        // itself" has to reopen it rather than just report it.
+        let db = crate::db::test_helpers::fresh_in_memory_db().await;
+        save_entries(
+            &db.conn,
+            &[entry("due", 7, ResumeStatus::Pending, "2026-10-10T10:00:00Z")],
+        )
+        .await
+        .expect("save");
+
+        let effects = FakeEffects::new(&[], false).reopening_to("conn-new");
+        process_due(&db.conn, &effects, ts("2026-10-10T10:00:00Z"))
+            .await
+            .expect("tick");
+
+        assert_eq!(effects.reopened(), vec![7]);
+        assert_eq!(effects.notices().len(), 1);
+        assert!(effects.notices()[0].contains("Reanudé la conversación #7"));
+        let stored = load_entries(&db.conn).await;
+        assert_eq!(stored[0].status, ResumeStatus::Done);
+        assert_eq!(stored[0].connection_id, "conn-new");
+    }
+
+    #[tokio::test]
+    async fn a_live_connection_is_not_reopened() {
+        let db = crate::db::test_helpers::fresh_in_memory_db().await;
+        save_entries(
+            &db.conn,
+            &[entry("due", 7, ResumeStatus::Pending, "2026-10-10T10:00:00Z")],
+        )
+        .await
+        .expect("save");
+
+        let effects = FakeEffects::new(&["conn-1"], false).reopening_to("conn-new");
+        process_due(&db.conn, &effects, ts("2026-10-10T10:00:00Z"))
+            .await
+            .expect("tick");
+
+        assert!(effects.reopened().is_empty());
+        assert_eq!(effects.sent(), vec!["conn-1"]);
     }
 
     #[tokio::test]

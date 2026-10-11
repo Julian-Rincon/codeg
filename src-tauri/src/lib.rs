@@ -1349,6 +1349,8 @@ mod tauri_app {
                 crate::commands::quota_resume::spawn_resume_loop(
                     app.state::<db::AppDatabase>().conn.clone(),
                     app.state::<ConnectionManager>().clone_ref(),
+                    crate::web::event_bridge::EventEmitter::Tauri(app.handle().clone()),
+                    effective_data_dir.clone(),
                 );
 
                 // OS `codeg://` URLs. Register the listener after the DB is
