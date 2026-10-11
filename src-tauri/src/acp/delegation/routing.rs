@@ -397,6 +397,33 @@ fn version_key(model: &str) -> Vec<u32> {
         .collect()
 }
 
+/// The plan used when `auto` routing itself fails (no scorecard, no
+/// candidates): Claude Code on its own default model, or OpenCode when Claude
+/// Code is disabled. A delegation must never fail just because routing did.
+pub fn fallback_plan(args: &RoutingArgs, profile: Profile, disabled: &[String], why: &str) -> RoutePlan {
+    let claude = AgentType::ClaudeCode.as_wire().into_owned();
+    let agent = if disabled.contains(&claude) { AgentType::OpenCode } else { AgentType::ClaudeCode };
+    let kind = args.task_kind.unwrap_or(TaskKind::Implement);
+    let difficulty = args.difficulty.unwrap_or(Difficulty::Normal);
+    let effort = args.effort.unwrap_or_else(|| router::effort_for(kind, difficulty));
+    RoutePlan {
+        agent_type: agent,
+        model: None,
+        effort: Some(effort.as_str().to_string()),
+        info: Some(RouteInfo {
+            agent_type: agent.as_wire().to_string(),
+            model: "default".to_string(),
+            family: "default".to_string(),
+            effort: effort.as_str().to_string(),
+            profile: profile.as_str().to_string(),
+            task_kind: kind.as_str().to_string(),
+            difficulty: difficulty.as_str().to_string(),
+            reason: format!("fallback: router unavailable ({why})"),
+            auto: true,
+        }),
+    }
+}
+
 /// Broker-facing routing service.
 #[async_trait]
 pub trait DelegationRouting: Send + Sync {
@@ -578,6 +605,43 @@ impl DelegationRouting for DbRouting {
             return plan_with(args, &RoutingPool::default(), &RouterStats::default(), profile, &mut || 1.0);
         }
         let disabled = self.disabled_agents().await;
+        match self.plan_auto(args, profile, &disabled).await {
+            Ok(plan) => Ok(plan),
+            // An explicit model the router cannot place is the lead's mistake:
+            // say so. Anything else must never fail the delegation.
+            Err(e) if args.model.is_some() => Err(e),
+            Err(e) => {
+                tracing::warn!("[Router] auto routing failed ({e}); using the fallback agent");
+                Ok(fallback_plan(args, profile, &disabled, &e))
+            }
+        }
+    }
+
+    async fn remember(&self, task_id: &str, info: &RouteInfo, parent_conversation_id: i32) {
+        self.remember_impl(task_id, info, parent_conversation_id).await
+    }
+
+    async fn route_of(&self, task_id: &str) -> Option<RouteInfo> {
+        self.route_of_impl(task_id).await
+    }
+
+    async fn record(
+        &self,
+        task_id: &str,
+        signal: Signal,
+        caller: Option<i32>,
+    ) -> Result<RouteInfo, String> {
+        self.record_impl(task_id, signal, caller).await
+    }
+}
+
+impl DbRouting {
+    async fn plan_auto(
+        &self,
+        args: &RoutingArgs,
+        profile: Profile,
+        disabled: &[String],
+    ) -> Result<RoutePlan, String> {
         let entries: Vec<ModelScorecardEntry> = self
             .scorecard()
             .await?
@@ -598,7 +662,7 @@ impl DelegationRouting for DbRouting {
         Ok(plan)
     }
 
-    async fn remember(&self, task_id: &str, info: &RouteInfo, parent_conversation_id: i32) {
+    async fn remember_impl(&self, task_id: &str, info: &RouteInfo, parent_conversation_id: i32) {
         self.cache_route(task_id, info).await;
         let _io = self.io.lock().await;
         let mut log: Vec<LogEntry> = self.load(LOG_KEY).await;
@@ -616,7 +680,7 @@ impl DelegationRouting for DbRouting {
         self.save(LOG_KEY, &log).await;
     }
 
-    async fn route_of(&self, task_id: &str) -> Option<RouteInfo> {
+    async fn route_of_impl(&self, task_id: &str) -> Option<RouteInfo> {
         {
             let cache = self.cache.lock().await;
             if let Some(info) = cache.routes.get(task_id) {
@@ -645,7 +709,7 @@ impl DelegationRouting for DbRouting {
         found
     }
 
-    async fn record(
+    async fn record_impl(
         &self,
         task_id: &str,
         signal: Signal,
@@ -1034,6 +1098,23 @@ mod tests {
         assert!(note.is_some());
         let plan = plan_with(&a, &pool, &stats, p, &mut || 0.5).unwrap();
         assert_eq!(plan.agent_type, AgentType::OpenCode, "{:?}", plan.info);
+    }
+
+    #[test]
+    fn routing_failure_falls_back_instead_of_failing_the_delegation() {
+        let mut a = args(true);
+        a.task_kind = Some(TaskKind::Explore);
+        a.difficulty = Some(Difficulty::Trivial);
+        let plan = fallback_plan(&a, Profile::Calidad, &[], "scorecard unavailable");
+        assert_eq!(plan.agent_type, AgentType::ClaudeCode);
+        assert_eq!(plan.model, None);
+        assert_eq!(plan.effort.as_deref(), Some("low"));
+        let info = plan.info.unwrap();
+        assert!(info.reason.starts_with("fallback:"), "{}", info.reason);
+        assert_eq!(info.family, "default"); // never learned against a model
+        // Claude Code disabled → OpenCode.
+        let plan = fallback_plan(&a, Profile::Calidad, &["claude_code".to_string()], "x");
+        assert_eq!(plan.agent_type, AgentType::OpenCode);
     }
 }
 

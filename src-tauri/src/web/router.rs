@@ -1655,6 +1655,10 @@ pub fn build_router(
         )
         .route("/usage_meter", post(handlers::usage_meter::usage_meter))
         .route(
+            "/router_profile_set",
+            post(handlers::usage_meter::router_profile_set),
+        )
+        .route(
             "/quota_resume_schedule",
             post(handlers::quota_resume::quota_resume_schedule),
         )

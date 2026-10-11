@@ -1,47 +1,54 @@
-import { describe, expect, it } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
 
-import { formatTokens, usageLevel } from "./usage-meter"
+import {
+  asRouterProfile,
+  ROUTER_PROFILES,
+  setRouterProfile,
+} from "@/lib/usage-meter"
 
-describe("usageLevel", () => {
-  it("is green below 70%", () => {
-    expect(usageLevel(0)).toBe("ok")
-    expect(usageLevel(69.9)).toBe("ok")
+const mocks = vi.hoisted(() => ({ transportCall: vi.fn() }))
+
+vi.mock("@/lib/transport", () => ({
+  getTransport: () => ({ call: mocks.transportCall }),
+}))
+
+beforeEach(() => {
+  mocks.transportCall.mockReset()
+})
+
+describe("asRouterProfile", () => {
+  it("passes through the two known profiles", () => {
+    expect(asRouterProfile("calidad")).toBe("calidad")
+    expect(asRouterProfile("equilibrado")).toBe("equilibrado")
   })
 
-  it("is amber from 70% up to (but not including) 90%", () => {
-    expect(usageLevel(70)).toBe("warn")
-    expect(usageLevel(89.9)).toBe("warn")
+  it("falls back to calidad for absent or unknown values", () => {
+    // Matches the backend default, so a bad stored value can never leave the
+    // switch showing a profile the router would not use.
+    expect(asRouterProfile(undefined)).toBe("calidad")
+    expect(asRouterProfile(null)).toBe("calidad")
+    expect(asRouterProfile("")).toBe("calidad")
+    expect(asRouterProfile("Quality")).toBe("calidad")
+    expect(asRouterProfile("rapido")).toBe("calidad")
   })
 
-  it("is red at 90% and above", () => {
-    expect(usageLevel(90)).toBe("high")
-    expect(usageLevel(100)).toBe("high")
-  })
-
-  it("treats an unreadable number as green", () => {
-    expect(usageLevel(Number.NaN)).toBe("ok")
+  it("lists exactly the two profiles the switch renders", () => {
+    expect([...ROUTER_PROFILES]).toEqual(["calidad", "equilibrado"])
   })
 })
 
-describe("formatTokens", () => {
-  it("prints plain numbers under a thousand", () => {
-    expect(formatTokens(0)).toBe("0")
-    expect(formatTokens(999)).toBe("999")
+describe("setRouterProfile", () => {
+  it("calls router_profile_set with the profile and returns the stored one", async () => {
+    mocks.transportCall.mockResolvedValue({ profile: "equilibrado" })
+    const result = await setRouterProfile("equilibrado")
+    expect(mocks.transportCall).toHaveBeenCalledWith("router_profile_set", {
+      profile: "equilibrado",
+    })
+    expect(result).toEqual({ profile: "equilibrado" })
   })
 
-  it("abbreviates thousands with a k", () => {
-    expect(formatTokens(1000)).toBe("1k")
-    expect(formatTokens(1200)).toBe("1.2k")
-    expect(formatTokens(12_300)).toBe("12.3k")
-  })
-
-  it("abbreviates millions with an M", () => {
-    expect(formatTokens(1_000_000)).toBe("1M")
-    expect(formatTokens(3_400_000)).toBe("3.4M")
-  })
-
-  it("clamps invalid input to zero", () => {
-    expect(formatTokens(-5)).toBe("0")
-    expect(formatTokens(Number.NaN)).toBe("0")
+  it("rejects when the backend refuses the value", async () => {
+    mocks.transportCall.mockRejectedValue(new Error("invalid_input"))
+    await expect(setRouterProfile("calidad")).rejects.toThrow("invalid_input")
   })
 })

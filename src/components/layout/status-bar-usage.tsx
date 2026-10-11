@@ -3,12 +3,13 @@
 /**
  * Token-usage segment of the status bar: the Claude plan quota at a glance
  * ("Claude 77% · wk 62%", tinted by severity), and — in the popover — the two
- * quota windows with their local reset times plus today's tokens per
- * agent/model.
+ * quota windows with their local reset times, today's tokens per agent/model,
+ * and the delegation router's profile switch.
  *
- * Read-only and best-effort: the fetch returns `null` on any failure (old
- * server, no OAuth credentials), and the whole segment hides rather than
- * showing a broken indicator. Refreshes every two minutes.
+ * Read-only apart from the profile switch, and best-effort: the fetch returns
+ * `null` on any failure (old server, no OAuth credentials), and the whole
+ * segment hides rather than showing a broken indicator. Refreshes every two
+ * minutes.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react"
@@ -22,9 +23,13 @@ import {
 import { getAgentLabel } from "@/lib/custom-agents"
 import { formatLimitResetTime } from "@/lib/model-scorecard"
 import {
+  asRouterProfile,
   fetchUsageMeter,
   formatTokens,
+  setRouterProfile,
   usageLevel,
+  ROUTER_PROFILES,
+  type RouterProfile,
   type UsageLevel,
   type UsageMeterResponse,
   type UsageMeterWindow,
@@ -33,6 +38,10 @@ import { cn } from "@/lib/utils"
 
 /** Background refresh cadence — the meter is a plan quota, not a live stream. */
 const POLL_MS = 2 * 60 * 1000
+
+/** At or above this quota percent the router drops to `equilibrado` on its own
+ *  (`routing::QUOTA_HIGH_PCT`), which the popover states rather than hides. */
+const QUOTA_AUTO_SWITCH_PCT = 90
 
 const LEVEL_TEXT: Record<UsageLevel, string> = {
   ok: "text-emerald-500",
@@ -61,6 +70,30 @@ export function StatusBarUsage() {
     setMeter(next)
   }, [])
 
+  /** Apply the profile locally first, then persist and refetch. A rejected
+   *  write restores the previous value, so the switch never shows a profile
+   *  the router did not accept. */
+  const changeProfile = useCallback(
+    async (next: RouterProfile) => {
+      const previous = asRouterProfile(meter?.router_profile)
+      if (next === previous) return
+      setMeter((current) =>
+        current ? { ...current, router_profile: next } : current
+      )
+      try {
+        await setRouterProfile(next)
+      } catch {
+        setMeter((current) =>
+          current ? { ...current, router_profile: previous } : current
+        )
+        return
+      }
+      // The stored value is authoritative; refetch rather than assume.
+      await refresh()
+    },
+    [meter?.router_profile, refresh]
+  )
+
   useEffect(() => {
     aliveRef.current = true
     // Initial read; the state write lands after the await below (and the
@@ -80,6 +113,13 @@ export function StatusBarUsage() {
   const week = claude?.seven_day ?? null
   const weekTokens = meter?.week_tokens ?? 0
   const weekPercent = week ? Math.round(week.percent) : null
+  const profile = asRouterProfile(meter?.router_profile)
+  // The router downgrades itself past 90% of either window; say so rather than
+  // letting a `calidad` switch look like it is still in force.
+  const quotaForcesEquilibrado =
+    profile === "calidad" &&
+    ((fiveHour?.percent ?? 0) >= QUOTA_AUTO_SWITCH_PCT ||
+      (week?.percent ?? 0) >= QUOTA_AUTO_SWITCH_PCT)
 
   if (!meter || (!claude && today.length === 0)) return null
 
@@ -131,6 +171,12 @@ export function StatusBarUsage() {
           </div>
         )}
 
+        <RouterProfileSwitch
+          profile={profile}
+          autoSwitch={quotaForcesEquilibrado}
+          onChange={changeProfile}
+        />
+
         {meter.claude_error && (
           <p className="text-2xs break-words text-destructive">
             {t("claudeError", { message: meter.claude_error })}
@@ -168,6 +214,63 @@ export function StatusBarUsage() {
         )}
       </PopoverContent>
     </Popover>
+  )
+}
+
+/**
+ * The two-way router profile switch. A plain pair of radio-style buttons: the
+ * whole popover is read-only elsewhere, and a dropdown would cost a second
+ * popover inside a popover.
+ */
+function RouterProfileSwitch({
+  profile,
+  autoSwitch,
+  onChange,
+}: {
+  profile: RouterProfile
+  autoSwitch: boolean
+  onChange: (profile: RouterProfile) => void | Promise<void>
+}) {
+  const t = useTranslations("Folder.statusBar.usage")
+  return (
+    <div className="space-y-1.5">
+      <div className="text-2xs font-medium text-muted-foreground">
+        {t("router")}
+      </div>
+      <div
+        role="radiogroup"
+        aria-label={t("router")}
+        className="flex rounded-md bg-muted p-0.5"
+      >
+        {ROUTER_PROFILES.map((option) => (
+          <button
+            key={option}
+            type="button"
+            role="radio"
+            aria-checked={profile === option}
+            onClick={() => void onChange(option)}
+            className={cn(
+              "flex-1 rounded px-1.5 py-0.5 text-2xs transition-colors",
+              profile === option
+                ? "bg-background font-medium text-foreground shadow-sm"
+                : "text-muted-foreground hover:text-foreground"
+            )}
+          >
+            {t(option === "calidad" ? "profileCalidad" : "profileEquilibrado")}
+          </button>
+        ))}
+      </div>
+      <p className="text-3xs text-muted-foreground">
+        {t(
+          profile === "calidad"
+            ? "profileCalidadHint"
+            : "profileEquilibradoHint"
+        )}
+      </p>
+      {autoSwitch && (
+        <p className="text-3xs text-muted-foreground">{t("quotaAutoSwitch")}</p>
+      )}
+    </div>
   )
 }
 

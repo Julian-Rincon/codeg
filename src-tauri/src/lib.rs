@@ -2130,6 +2130,7 @@ mod tauri_app {
                 token_usage_commands::token_usage_sync,
                 model_scorecard_commands::model_scorecard,
                 usage_meter_commands::usage_meter,
+                usage_meter_commands::router_profile_set,
                 quota_resume_commands::quota_resume_schedule,
                 quota_resume_commands::quota_resume_list,
                 quota_resume_commands::quota_resume_cancel,

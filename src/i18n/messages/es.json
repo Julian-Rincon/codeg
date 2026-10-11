@@ -2259,7 +2259,13 @@
         "claudeError": "No se pudo leer el uso de Claude: {message}",
         "today": "Hoy",
         "weekTokens": "Esta semana: {tokens}",
-        "empty": "Aún no hay tokens registrados"
+        "empty": "Aún no hay tokens registrados",
+        "router": "Router",
+        "profileCalidad": "Calidad",
+        "profileEquilibrado": "Equilibrado",
+        "profileCalidadHint": "Mejor modelo para cada tarea",
+        "profileEquilibradoHint": "Prefiere modelos gratis de OpenCode cuando la calidad es parecida",
+        "quotaAutoSwitch": "Con el 90 % o más de la cuota de Claude, el router usa Equilibrado automáticamente."
       }
     },
     "auxPanel": {

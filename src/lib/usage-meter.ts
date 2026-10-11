@@ -8,6 +8,8 @@
  *   server-side). Read-only.
  * - `quota_resume_list` `{}`, `quota_resume_schedule` `{connection_id,
  *   conversation_id, agent_type}`, `quota_resume_cancel` `{id}`.
+ * - `router_profile_set` `{profile}` — the delegation router's weighting
+ *   preset, reported on the `usage_meter` read as `router_profile`.
  *
  * The calls go through the transport exactly like `lib/model-scorecard.ts`'s
  * `fetchModelScorecard`. Every field the backend may omit is typed
@@ -38,6 +40,23 @@ export interface UsageMeterClaude {
   fetched_at: string | null
 }
 
+/** The delegation router's weighting preset: quality-first, or cost-aware. */
+export type RouterProfile = "calidad" | "equilibrado"
+
+/** The two profiles, in the order the switch renders them. */
+export const ROUTER_PROFILES: readonly RouterProfile[] = [
+  "calidad",
+  "equilibrado",
+]
+
+/** Narrow an untrusted string (wire value, server without the key) to a profile.
+ *  Anything else reads as `calidad`, matching the backend default. */
+export function asRouterProfile(
+  value: string | null | undefined
+): RouterProfile {
+  return ROUTER_PROFILES.find((p) => p === value) ?? "calidad"
+}
+
 /** One agent/model's recorded turn tokens for the current day. */
 export interface UsageMeterTodayEntry {
   agent_type: AgentType
@@ -56,6 +75,9 @@ export interface UsageMeterResponse {
   today: UsageMeterTodayEntry[]
   /** The rolling week's total token count. */
   week_tokens: number
+  /** The delegation router's profile. Optional: a server that predates the
+   *  field leaves it undefined and the switch reads as the default. */
+  router_profile?: string
 }
 
 /** A scheduled automatic resume of a quota-limited conversation. */
@@ -127,6 +149,20 @@ export async function scheduleQuotaResume(
 /** Cancel a scheduled resume. Rejects on failure, like the schedule above. */
 export async function cancelQuotaResume(id: string | number): Promise<void> {
   await getTransport().call<{ ok: boolean }>("quota_resume_cancel", { id })
+}
+
+/**
+ * Switch the delegation router's profile. REJECTS on failure (the backend
+ * validates the value and answers with the profile it actually stored), so the
+ * caller can roll its optimistic update back instead of showing a profile the
+ * router never applied.
+ */
+export async function setRouterProfile(
+  profile: RouterProfile
+): Promise<{ profile: RouterProfile }> {
+  return getTransport().call<{ profile: RouterProfile }>("router_profile_set", {
+    profile,
+  })
 }
 
 // ── Pure helpers ─────────────────────────────────────────────────────────

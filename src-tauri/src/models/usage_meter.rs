@@ -28,6 +28,17 @@ pub struct UsageMeter {
     pub today: Vec<TodayUsageEntry>,
     /// Total input + output tokens over the last 7 days, all agents.
     pub week_tokens: u64,
+    /// Configured delegation-router profile (`calidad` / `equilibrado`), read
+    /// from `phantom.router.profile`. Never absent: an unset or unreadable key
+    /// reads as the router's own default.
+    pub router_profile: String,
+}
+
+/// Answer of `router_profile_set`: the profile now stored, echoed back so the
+/// frontend can trust what was written rather than assuming it.
+#[derive(Debug, Clone, Serialize)]
+pub struct RouterProfileSet {
+    pub profile: String,
 }
 
 #[derive(Debug, Clone, Serialize)]

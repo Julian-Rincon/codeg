@@ -29,6 +29,10 @@
 //! a `Vec` with the window boundaries passed in
 //! ([`aggregate_usage`]), so the date logic is testable without a clock or a
 //! database.
+//!
+//! It also carries the delegation router's profile ([`router_profile`]) and
+//! the write that changes it ([`router_profile_set_core`]) — the status bar
+//! shows it next to the quota it is meant to protect.
 
 use std::path::PathBuf;
 use std::sync::{Mutex, OnceLock};
@@ -38,10 +42,15 @@ use chrono::{DateTime, Local, TimeZone, Utc};
 use sea_orm::DatabaseConnection;
 use serde::Deserialize;
 
+use crate::acp::delegation::router::Profile;
+use crate::acp::delegation::routing::PROFILE_KEY;
 use crate::app_error::AppCommandError;
 use crate::commands::token_usage::MAX_SCANNED_FACTS;
+use crate::db::service::app_metadata_service;
 use crate::db::service::token_usage_service::{self as usage_service, FactQuery, UsageFactRow};
-use crate::models::usage_meter::{ClaudeUsage, ClaudeUsageWindow, TodayUsageEntry, UsageMeter};
+use crate::models::usage_meter::{
+    ClaudeUsage, ClaudeUsageWindow, RouterProfileSet, TodayUsageEntry, UsageMeter,
+};
 
 /// How long a successful Claude quota read is reused before the next caller
 /// goes to the network. Long enough that a burst of callers (status bar,
@@ -98,6 +107,60 @@ pub async fn usage_meter_core(conn: &DatabaseConnection) -> Result<UsageMeter, A
         claude_error,
         today,
         week_tokens,
+        router_profile: router_profile(conn).await,
+    })
+}
+
+// ─── Router profile ──────────────────────────────────────────────────────
+
+/// The delegation router's configured profile, as its own
+/// `Profile::default()` when the key is absent, unreadable or unparseable.
+///
+/// Same resolution as `DbRouting::profile`, so the switch in the status bar
+/// shows exactly what the router will do — including the default the router
+/// falls back to on a bad value.
+pub async fn router_profile(conn: &DatabaseConnection) -> String {
+    let stored = match app_metadata_service::get_value(conn, PROFILE_KEY).await {
+        Ok(Some(raw)) => raw,
+        _ => String::new(),
+    };
+    Profile::parse(stored.trim().trim_matches('"'))
+        .unwrap_or_default()
+        .as_str()
+        .to_string()
+}
+
+/// Validate and persist `profile`.
+///
+/// Validation is the router's own [`Profile::parse`], not a second copy of the
+/// list: a value that reaches `app_metadata` unreadable would leave the router
+/// silently on its default while the UI showed something else.
+pub async fn router_profile_set_core(
+    conn: &DatabaseConnection,
+    profile: &str,
+) -> Result<RouterProfileSet, AppCommandError> {
+    let parsed = parse_router_profile(profile)?;
+    app_metadata_service::upsert_value(conn, PROFILE_KEY, parsed.as_str())
+        .await
+        .map_err(AppCommandError::from)?;
+    Ok(RouterProfileSet {
+        profile: parsed.as_str().to_string(),
+    })
+}
+
+/// Pure half of [`router_profile_set_core`], split out so the validation is
+/// unit-testable without a database.
+fn parse_router_profile(profile: &str) -> Result<Profile, AppCommandError> {
+    Profile::parse(profile).ok_or_else(|| {
+        AppCommandError::invalid_input(format!(
+            "unknown router profile {:?}: expected one of {}",
+            profile,
+            Profile::ALL
+                .iter()
+                .map(|p| p.as_str())
+                .collect::<Vec<_>>()
+                .join(", ")
+        ))
     })
 }
 
@@ -407,6 +470,15 @@ pub async fn usage_meter(
     usage_meter_core(&db.conn).await
 }
 
+#[cfg(feature = "tauri-runtime")]
+#[cfg_attr(feature = "tauri-runtime", tauri::command)]
+pub async fn router_profile_set(
+    profile: String,
+    db: tauri::State<'_, crate::db::AppDatabase>,
+) -> Result<RouterProfileSet, AppCommandError> {
+    router_profile_set_core(&db.conn, &profile).await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -505,6 +577,41 @@ mod tests {
         let err = parse_claude_usage(&body, "pro", ts("2026-10-10T09:00:00Z"))
             .expect_err("utilization is not a string");
         assert!(!err.contains(secret));
+    }
+
+    // ─── Router profile validation ───────────────────────────────────────
+
+    #[test]
+    fn both_profiles_are_accepted() {
+        assert_eq!(parse_router_profile("calidad").unwrap(), Profile::Calidad);
+        assert_eq!(
+            parse_router_profile("equilibrado").unwrap(),
+            Profile::Equilibrado
+        );
+        // `Profile::parse` trims and lowercases, so the command is forgiving
+        // about casing and padding but not about the value itself.
+        assert_eq!(parse_router_profile(" Equilibrado ").unwrap(), Profile::Equilibrado);
+    }
+
+    #[test]
+    fn an_unknown_profile_is_rejected_and_lists_the_valid_ones() {
+        for bad in ["", "  ", "rapido", "quality", "calidad barato", "calidad\tx"] {
+            let err = parse_router_profile(bad).expect_err("must reject");
+            assert!(
+                matches!(err.code, crate::app_error::AppErrorCode::InvalidInput),
+                "{:?}",
+                err.code
+            );
+            assert!(err.message.contains("calidad"), "{}", err.message);
+            assert!(err.message.contains("equilibrado"), "{}", err.message);
+        }
+    }
+
+    #[test]
+    fn a_rejected_profile_is_not_silently_replaced_by_the_default() {
+        // The failure mode this guards: storing an unreadable value would
+        // leave the router on `calidad` while the UI showed something else.
+        assert!(parse_router_profile("turbo").is_err());
     }
 
     // ─── Token aggregation ───────────────────────────────────────────────

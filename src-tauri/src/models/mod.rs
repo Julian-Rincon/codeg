@@ -58,7 +58,9 @@ pub use token_usage::{
     TokenUsageReport, TokenUsageStreak, TokenUsageSyncProgress, TokenUsageSyncResult,
     TokenUsageSyncStatus, TokenUsageTotals,
 };
-pub use usage_meter::{ClaudeUsage, ClaudeUsageWindow, TodayUsageEntry, UsageMeter};
+pub use usage_meter::{
+    ClaudeUsage, ClaudeUsageWindow, RouterProfileSet, TodayUsageEntry, UsageMeter,
+};
 pub use work_task::{
     FollowUpIntent, WorkTaskChangedFile, WorkTaskConfig, WorkTaskDraft, WorkTaskEventInfo,
     WorkTaskFolderSettings, WorkTaskInfo, WorkTaskMergeOp, WorkTaskMergeState, WorkTaskPreflight,
