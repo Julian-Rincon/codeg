@@ -69,6 +69,7 @@ import { WelcomeHero, WelcomeTip } from "@/components/chat/welcome-hero"
 import { QuickActions } from "@/components/chat/quick-actions"
 import type { ComposerInjectContent } from "@/components/chat/message-input"
 import { TileScrollContainer } from "@/components/conversations/tile-scroll-container"
+import { stableTabViewOrder } from "@/lib/tab-view-order"
 import { GroupSplitHandle } from "@/components/conversations/group-split-handle"
 import { OverlayHostHiddenProvider } from "@/components/ui/overlay-host-hidden"
 import { ScrollArea } from "@/components/ui/scroll-area"
@@ -81,6 +82,7 @@ import { useIsMobile } from "@/hooks/use-mobile"
 import { usePlatform } from "@/hooks/use-platform"
 import { useZoomLevel } from "@/hooks/use-appearance"
 import { isDesktop } from "@/lib/platform"
+import { ChromeReserve } from "@/components/layout/chrome-reserve"
 import { leftChromeReserve, rightChromeReserve } from "@/lib/window-chrome"
 import {
   acpFork,
@@ -191,6 +193,17 @@ interface ConversationTabViewProps {
    *  reparent (the tab moved to another group — remount, keep the connection)
    *  apart from a real teardown (pane switch / route change — disconnect). */
   groupId: string
+  /** Whether this view is actually on screen: the active tab, or every member
+   *  of a tiled group. A mounted-but-hidden tab keeps its runtime session
+   *  alive, but it must NOT auto-fetch its own detail. Restoring a workspace
+   *  with N open tabs used to issue N concurrent `get_folder_conversation`
+   *  calls — each one a tail window of up to `TAIL_TURNS_DEFAULT` (120) turns,
+   *  so tens of MB across a large tab set — before the user had looked at a
+   *  single one of them. A hidden tab now fetches on the first frame it
+   *  becomes visible, so the workspace opens fetching only the tabs on screen
+   *  (one per split group, or every member of a tiled one) instead of all N.
+   *  Only that first load waits: see the fetch gate in the view. */
+  isVisible: boolean
 }
 
 function buildOptimisticUserTurnFromDraft(
@@ -257,6 +270,7 @@ const ConversationTabView = memo(function ConversationTabView({
   showActiveFlow,
   reloadSignal,
   groupId,
+  isVisible,
 }: ConversationTabViewProps) {
   const t = useTranslations("Folder.conversation")
   // Composer-namespace copy for the queue row's click-to-insert outcomes
@@ -496,12 +510,40 @@ const ConversationTabView = memo(function ConversationTabView({
     setAgentConnectError(null)
   }, [agentType, conversationId])
 
+  // Gate the auto-fetch on VISIBILITY, not on mount. Every open tab stays
+  // mounted (that is what keeps a background session's stream and scroll state
+  // alive), so an ungated hook here would fire one detail fetch per open tab
+  // the moment the workspace restores — the N-concurrent-requests /
+  // tens-of-MB first paint described on `isVisible`. A hidden tab's effect
+  // re-runs when `isVisible` flips true (tab switch, group selection, tiling),
+  // which is also the moment its detail is first needed; until then the panel
+  // renders an empty transcript behind `invisible`, costing nothing. The
+  // render that first shows it already reports `detailLoading` (the hook
+  // counts a fetch it is about to start as loading) — that is what keeps
+  // `awaitingHistoricalSessionId` below closed on that render. `isActive` is in
+  // the gate as well, so that holds without leaning on the tab store always
+  // keeping the active tab its group's selected one.
+  //
+  // Only the FIRST load waits. Once this view has held a detail it fetches the
+  // way every view did before the gate, on screen or not. A hidden view can
+  // lose its session (closing the sub-agent viewer drops the session it shares
+  // with an open tab), and if the tab holds a live connection, the next
+  // streamed batch recreates that session with live data and no detail, which
+  // `fetchDetail` then never fills in: the tab came back without its history.
+  // Refetching straight away, as before, normally starts ahead of that batch.
+  // Latched on a held detail rather than on having been shown, so a view
+  // remounted while hidden onto a session that is already loaded (a move to
+  // another group) keeps it loaded too.
+  const [heldDetail, setHeldDetail] = useState(false)
   const {
     detail,
     loading: detailLoading,
     error: detailError,
     acpLoadError,
-  } = useConversationDetail(effectiveConversationId)
+  } = useConversationDetail(effectiveConversationId, {
+    enabled: isVisible || isActive || heldDetail,
+  })
+  if (detail != null && !heldDetail) setHeldDetail(true)
 
   // Subscribe to only the fields this panel actually reads from its runtime
   // session — NOT the whole session object. The live-message sink rewrites the
@@ -561,6 +603,12 @@ const ConversationTabView = memo(function ConversationTabView({
   // the backend falls back to session/new, orphaning the historical
   // context. cline doesn't support session resume, so it connects
   // immediately regardless.
+  //
+  // `detailLoading` must already be true on the render a tab turns active,
+  // since the auto-connect effect reads this gate from that very render: a
+  // restored tab that was hidden has a runtime session but no detail, and its
+  // fetch starts only in that render's effects. `useConversationDetail`
+  // reports the fetch it is about to start as loading for exactly this.
   const awaitingHistoricalSessionId =
     hasPersistedConversation && selectedAgent !== "cline" && detailLoading
   // Install status of the currently selected agent. An agent can be enabled and
@@ -735,10 +783,12 @@ const ConversationTabView = memo(function ConversationTabView({
     () => effectiveConfigOptions ?? [],
     [effectiveConfigOptions]
   )
-  const connectionCommands = useMemo(
-    () => (connIsForOtherAgent ? [] : (conn.availableCommands ?? [])),
-    [connIsForOtherAgent, conn.availableCommands]
-  )
+// `null` until this tab's agent has advertised (no connection, one still
+  // coming up, or one still bound to another agent), never `[]`, which is an
+  // answer: the agent offers no commands. The composers read the two alike;
+  // the transcript tells them apart, badging from what this agent last
+  // advertised in this folder while the list is unknown.
+  const connectionCommands = connIsForOtherAgent ? null : conn.availableCommands
   // Model quota failover: the currently selected model (bare id, matching the
   // scorecard's own `model` field — see `findModelScore`'s doc), the live
   // limit trigger for this connection, and the offer/accept/dismiss
@@ -2162,6 +2212,7 @@ const ConversationTabView = memo(function ConversationTabView({
         conversationId={effectiveConversationId}
         imageRoot={workingDirForConnection ?? null}
         agentType={selectedAgent}
+        availableCommands={connectionCommands}
         connStatus={connStatus}
         isActive={isActive}
         sendSignal={sendSignal}
@@ -2295,6 +2346,7 @@ const ConversationTabView = memo(function ConversationTabView({
 
   return (
     <ConversationShell
+      resizableWidth
       getSentHistory={getSentHistory}
       topBanner={
         <>
@@ -2421,7 +2473,7 @@ const ConversationTabView = memo(function ConversationTabView({
         >
           <div className="flex min-h-full flex-col">
             <div className="flex-1" />
-            <div className="mx-auto flex w-full max-w-3xl shrink-0 flex-col gap-6 px-4 py-4">
+            <div className="mx-auto flex w-full chat-content-w shrink-0 flex-col gap-6 px-4 py-4">
               <WelcomeHero />
               <QuickActions
                 onSelect={handleQuickAction}
@@ -2511,7 +2563,7 @@ const ConversationTabView = memo(function ConversationTabView({
               />
             </div>
             <div className="flex-1" />
-            <div className="mx-auto w-full max-w-3xl shrink-0 px-4 pb-6">
+            <div className="mx-auto w-full chat-content-w shrink-0 px-4 pb-6">
               <WelcomeTip />
             </div>
           </div>
@@ -2592,34 +2644,33 @@ const GROUP_EDGE_EPSILON = 0.1
  * exactly what the unsplit strip row does: left for LeftEdgeChrome while the
  * sidebar is collapsed (the conversation column then owns the window's left
  * edge), right for RightEdgeChrome while the column owns the right edge (aux
- * panel closed + conversation mode). Mobile shows the full-width
- * FolderTitleBar instead of corner overlays — no reserve. Self-subscribed so
- * sidebar/aux/zoom toggles re-render these slivers, not the whole panel.
+ * panel closed + conversation mode, or the column maximized over the file
+ * column). Like that row, the reserve is mounted while its column holds the
+ * corner — the right one only then; a mode switch or a maximize toggle snaps
+ * the layout — and sized by the side panel over the corner, so a sidebar/aux
+ * toggle slides it (ChromeReserve). Mobile shows the full-width FolderTitleBar
+ * instead of corner overlays — no reserve. Self-subscribed so sidebar/aux/zoom
+ * toggles re-render these slivers, not the whole panel.
  */
 function SplitStripCornerReserve({ side }: { side: "left" | "right" }) {
   const isMobile = useIsMobile()
   const { isOpen: sidebarOpen } = useSidebarContext()
   const { isOpen: auxOpen } = useAuxPanelContext()
-  const { mode } = useWorkspaceView()
+  const { mode, conversationMaximized } = useWorkspaceView()
   const { isMac, isWindows, isLinux } = usePlatform()
   const { zoomLevel } = useZoomLevel()
   if (isMobile) return null
+  const holdsRight = mode === "conversation" || conversationMaximized
+  if (side === "right" && !holdsRight) return null
   const width =
     side === "left"
       ? sidebarOpen
         ? 0
         : leftChromeReserve(isMac && isDesktop(), zoomLevel)
-      : !auxOpen && mode === "conversation"
-        ? rightChromeReserve(isDesktop() && (isWindows || isLinux), zoomLevel)
-        : 0
-  if (width <= 0) return null
-  return (
-    <div
-      data-tauri-drag-region
-      className="h-full shrink-0 ws-strip-line"
-      style={{ width }}
-    />
-  )
+      : auxOpen
+        ? 0
+        : rightChromeReserve(isDesktop() && (isWindows || isLinux), zoomLevel)
+  return <ChromeReserve width={width} />
 }
 
 export function ConversationDetailPanel() {
@@ -2979,6 +3030,7 @@ export function ConversationDetailPanel() {
         showActiveFlow={(isSplit || canTileG) && active}
         reloadSignal={reloadByTabId[tab.id] ?? 0}
         groupId={groupId}
+        isVisible={visible}
       />
     )
     return (
@@ -2991,6 +3043,7 @@ export function ConversationDetailPanel() {
             tileTabRefs.current.delete(tab.id)
           }
         }}
+        style={canTileG ? { order: indexInGroup } : undefined}
         className={cn(
           canTileG
             ? cn(
@@ -3064,11 +3117,13 @@ export function ConversationDetailPanel() {
       >
         {/* While split, each group owns its own strip (the workspace layout's
             title-bar row is gone entirely), and the TOP-edge strips add the
-            corner reserves that row normally carries. */}
+            corner reserves that row normally carries. The top-right one also
+            takes over the unsplit strip's maximize/restore button — the
+            column has one, so only one strip may carry it. */}
         {isSplit && (
           <div className="flex h-10 shrink-0 items-stretch bg-muted ws-transparent-bg">
             {touchesLeft && <SplitStripCornerReserve side="left" />}
-            <TabBar groupId={groupId} />
+            <TabBar groupId={groupId} maximizeControl={touchesRight} />
             {touchesRight && <SplitStripCornerReserve side="right" />}
           </div>
         )}
@@ -3104,8 +3159,12 @@ export function ConversationDetailPanel() {
                 canTileG && "flex min-w-full flex-row"
               )}
             >
-              {groupTabs.map((tab, indexInGroup) =>
-                renderTabWrapper(tab, indexInGroup, groupId, canTileG)
+              {/* Strip order reaches the screen only through CSS `order`:
+                  a reorder that moved these nodes would reset each moved
+                  transcript's scroll offset and blank it (see
+                  stableTabViewOrder). */}
+              {stableTabViewOrder(groupTabs).map(({ tab, visualIndex }) =>
+                renderTabWrapper(tab, visualIndex, groupId, canTileG)
               )}
             </div>
           </TileScrollContainer>

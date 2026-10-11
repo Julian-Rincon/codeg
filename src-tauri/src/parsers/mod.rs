@@ -50,6 +50,34 @@ pub struct ExternalSource {
     /// files in shared base dirs (e.g. `~/.gemini/oauth_creds.json`). `None`
     /// means the whole root is already transcript-scoped.
     pub include_top: Option<&'static [&'static str]>,
+    /// The append-only JSONL indexes among this source's files. Restore
+    /// merges one into the live copy instead of skipping or replacing it —
+    /// see [`AppendOnlyIndex`].
+    pub indexes: &'static [AppendOnlyIndex],
+}
+
+/// A file the agent CLI only ever appends to, one JSON object per line, the
+/// newest usable line for a key winning (codex's `session_index.jsonl`,
+/// kimi's).
+///
+/// The live copy usually exists when a backup is restored — every session the
+/// CLI created since is in it — so neither conflict policy fits a whole-file
+/// restore: skipping drops the restored sessions' lines, replacing drops every
+/// line written since the backup. Restore appends the backup's lines for the
+/// keys the live copy lacks instead (`commands::backup::external`).
+#[derive(Clone, Copy, Debug)]
+pub struct AppendOnlyIndex {
+    /// Path relative to the source's [`ExternalSource::restore_base`],
+    /// `/`-separated.
+    pub path: &'static str,
+    /// The string field naming the record a line describes.
+    pub key: &'static str,
+    /// The string field a line exists to set.
+    pub value: &'static str,
+    /// Whether a value is one the index's reader acts on — the reader's own
+    /// test, so the merge and the reader agree on every line. A line the
+    /// reader skips (an empty name, say) never counts as a key's newest line.
+    pub usable: fn(&str) -> bool,
 }
 
 impl ExternalSource {
@@ -78,6 +106,7 @@ pub fn external_transcript_sources() -> Vec<ExternalSource> {
             is_file: false,
             sqlite: false,
             include_top: None,
+            indexes: &[],
         },
         ExternalSource {
             agent: "codex",
@@ -85,6 +114,30 @@ pub fn external_transcript_sources() -> Vec<ExternalSource> {
             is_file: false,
             sqlite: false,
             include_top: None,
+            indexes: &[],
+        },
+        ExternalSource {
+            // Every thread name — a `/rename`, or the title codex-acp
+            // generates — lives only in `~/.codex/session_index.jsonl`, never
+            // in a rollout (`parsers::codex::load_thread_name_index`), so
+            // without it a restored session reads as its first prompt.
+            //
+            // A SEPARATE source rather than re-rooting the one above at
+            // `~/.codex`: `agent` is the restore key, and every archive made
+            // so far holds its rollouts relative to `sessions/`. Under an
+            // allowlist at the new root those would map to nothing and be
+            // dropped on restore without a word.
+            agent: "codex-session-index",
+            root: codex::resolve_codex_home_dir().join("session_index.jsonl"),
+            is_file: true,
+            sqlite: false,
+            include_top: None,
+            indexes: &[AppendOnlyIndex {
+                path: "session_index.jsonl",
+                key: "id",
+                value: "thread_name",
+                usable: codex::is_usable_thread_name,
+            }],
         },
         ExternalSource {
             // Gemini's base dir mixes transcripts with credentials/config; only
@@ -94,6 +147,7 @@ pub fn external_transcript_sources() -> Vec<ExternalSource> {
             is_file: false,
             sqlite: false,
             include_top: Some(&["tmp", "history", "projects.json"]),
+            indexes: &[],
         },
         ExternalSource {
             // cline 3.x keeps transcripts in `sessions/` and indexes them in
@@ -111,6 +165,7 @@ pub fn external_transcript_sources() -> Vec<ExternalSource> {
             is_file: false,
             sqlite: true,
             include_top: Some(&["sessions", "db", "state", "tasks"]),
+            indexes: &[],
         },
         ExternalSource {
             agent: "opencode",
@@ -118,6 +173,7 @@ pub fn external_transcript_sources() -> Vec<ExternalSource> {
             is_file: true,
             sqlite: true,
             include_top: None,
+            indexes: &[],
         },
         ExternalSource {
             // Hermes self-manages its session store at `~/.hermes/state.db`.
@@ -130,6 +186,7 @@ pub fn external_transcript_sources() -> Vec<ExternalSource> {
             is_file: true,
             sqlite: true,
             include_top: None,
+            indexes: &[],
         },
         ExternalSource {
             // CodeBuddy stores its JSONL transcripts under
@@ -140,6 +197,7 @@ pub fn external_transcript_sources() -> Vec<ExternalSource> {
             is_file: false,
             sqlite: false,
             include_top: None,
+            indexes: &[],
         },
         ExternalSource {
             // Kimi Code keeps a directory-per-session transcript store under
@@ -152,6 +210,12 @@ pub fn external_transcript_sources() -> Vec<ExternalSource> {
             is_file: false,
             sqlite: false,
             include_top: Some(&["sessions", "session_index.jsonl"]),
+            indexes: &[AppendOnlyIndex {
+                path: "session_index.jsonl",
+                key: "sessionId",
+                value: "workDir",
+                usable: kimi_code::is_usable_work_dir,
+            }],
         },
         ExternalSource {
             // Grok keeps a directory-per-session transcript store under
@@ -164,6 +228,7 @@ pub fn external_transcript_sources() -> Vec<ExternalSource> {
             is_file: false,
             sqlite: false,
             include_top: None,
+            indexes: &[],
         },
         ExternalSource {
             // Cursor keeps a SQLite blob store per chat under
@@ -177,6 +242,7 @@ pub fn external_transcript_sources() -> Vec<ExternalSource> {
             is_file: false,
             sqlite: true,
             include_top: Some(&["chats", "acp-sessions"]),
+            indexes: &[],
         },
         ExternalSource {
             // pi writes one JSONL per session under `~/.pi/agent/sessions/`
@@ -189,6 +255,7 @@ pub fn external_transcript_sources() -> Vec<ExternalSource> {
             is_file: false,
             sqlite: false,
             include_top: None,
+            indexes: &[],
         },
         ExternalSource {
             // DeepSeek Harness (deepseek-acp) keeps a directory-per-session
@@ -201,6 +268,7 @@ pub fn external_transcript_sources() -> Vec<ExternalSource> {
             is_file: false,
             sqlite: false,
             include_top: None,
+            indexes: &[],
         },
         ExternalSource {
             // Since deepseek-acp 0.6.0 a prompt can carry images, and the log
@@ -228,6 +296,7 @@ pub fn external_transcript_sources() -> Vec<ExternalSource> {
             is_file: false,
             sqlite: false,
             include_top: Some(&["objects"]),
+            indexes: &[],
         },
         ExternalSource {
             // Qoder keeps one JSONL per session under
@@ -240,6 +309,7 @@ pub fn external_transcript_sources() -> Vec<ExternalSource> {
             is_file: false,
             sqlite: false,
             include_top: None,
+            indexes: &[],
         },
         ExternalSource {
             // Antigravity keeps one SQLite trajectory + `.meta` sidecar per
@@ -253,6 +323,7 @@ pub fn external_transcript_sources() -> Vec<ExternalSource> {
             is_file: false,
             sqlite: true,
             include_top: None,
+            indexes: &[],
         },
     ];
     if let Some(home) = dirs::home_dir() {
@@ -262,6 +333,7 @@ pub fn external_transcript_sources() -> Vec<ExternalSource> {
             is_file: false,
             sqlite: false,
             include_top: None,
+            indexes: &[],
         });
     }
     sources
@@ -723,6 +795,57 @@ pub fn user_turn_block_from_wire(item: &serde_json::Value) -> Option<ContentBloc
     crate::acp::types::prompt_block_from_wire(item).map(|b| user_turn_block(&b))
 }
 
+/// The record an agent wrote for a turn that FAILED, as the message closing
+/// its round: a `System` message holding the agent's account of why as one
+/// [`ContentBlock::TurnError`] — `None` when it gives no account.
+///
+/// A `System` turn, never an assistant one: the error is not the model's
+/// reply, so rendering it as one put it in the model's mouth (the reason the
+/// parsers used to drop these records), and every reply count —
+/// `syncTurnMetadata`'s alignment of live replies with parsed ones, the
+/// window's history baseline — counts assistant turns only, so a failure the
+/// live view and the transcript disagree about can never shift those.
+pub(crate) fn turn_error_message(
+    id: String,
+    message: &str,
+    timestamp: DateTime<Utc>,
+) -> Option<crate::models::UnifiedMessage> {
+    let message = message.trim();
+    if message.is_empty() {
+        return None;
+    }
+    Some(crate::models::UnifiedMessage {
+        id,
+        role: crate::models::MessageRole::System,
+        content: vec![ContentBlock::TurnError {
+            message: message.to_string(),
+        }],
+        timestamp,
+        usage: None,
+        duration_ms: None,
+        model: None,
+        completed_at: Some(timestamp),
+        agent_message_id: None,
+    })
+}
+
+/// How many of `turns` are somebody's message: all but a failed turn's line
+/// ([`turn_error_message`]), which reports a failure rather than saying
+/// anything — the list summaries never counted its record either.
+pub(crate) fn message_turn_count(turns: &[MessageTurn]) -> u32 {
+    turns
+        .iter()
+        .filter(|turn| {
+            !(matches!(turn.role, TurnRole::System)
+                && !turn.blocks.is_empty()
+                && turn
+                    .blocks
+                    .iter()
+                    .all(|block| matches!(block, ContentBlock::TurnError { .. })))
+        })
+        .count() as u32
+}
+
 /// Fill in `duration_ms` for assistant turns whose agent reports no timing of
 /// its own, by *tiling* the conversation timeline: a reply took as long as the
 /// span between the end of the previous activity and its own completion.
@@ -858,6 +981,42 @@ fn is_claude_one_million_context_id(model: &str) -> bool {
     claude_one_million_id_regex().is_match(model)
 }
 
+/// `claude-<family>-<major>[-<minor>]`, then a snapshot date, a gateway
+/// suffix or nothing. The minor may be dotted (`claude-opus-4.7`), as gateways
+/// that rename Anthropic's ids write it. It is at most two digits, so a
+/// snapshot date such as `-20251001` is never read as one.
+fn claude_family_version_regex() -> &'static Regex {
+    static RE: OnceLock<Regex> = OnceLock::new();
+    RE.get_or_init(|| {
+        Regex::new(r"^claude-(opus|sonnet|haiku|fable|mythos)-(\d{1,2})(?:[-.](\d{1,2}))?(?:$|\D)")
+            .expect("valid claude family regex")
+    })
+}
+
+/// Whether `model` (lowercased, provider prefix stripped) is a Claude model
+/// whose DEFAULT window is 1M, with no opt-in. This follows the `native_1m`
+/// flag of the model catalog baked into Claude Code (CLI 2.1.293): every Fable
+/// and Mythos, Opus from 4.7, Sonnet from 5, and Haiku from 5.5. Opus 4.6 and
+/// Sonnet 4.5 / 4.6 reach 1M only through the beta lane, which an id spells as
+/// `-1m` ([`is_claude_one_million_context_id`]).
+fn is_claude_native_one_million_model(model: &str) -> bool {
+    let Some(captures) = claude_family_version_regex().captures(model) else {
+        return false;
+    };
+    let major: u32 = captures[2].parse().unwrap_or(0);
+    let minor: u32 = captures
+        .get(3)
+        .and_then(|m| m.as_str().parse().ok())
+        .unwrap_or(0);
+    match &captures[1] {
+        "fable" | "mythos" => true,
+        "opus" => (major, minor) >= (4, 7),
+        "sonnet" => major >= 5,
+        "haiku" => (major, minor) >= (5, 5),
+        _ => false,
+    }
+}
+
 fn parse_model_capacity_suffix(model: &str) -> Option<u64> {
     let captures = model_capacity_suffix_regex().captures(model.trim())?;
     let value = captures.get(1)?.as_str().parse::<f64>().ok()?;
@@ -898,13 +1057,17 @@ pub fn infer_context_window_max_tokens(model: Option<&str>) -> Option<u64> {
         .trim()
         .to_ascii_lowercase();
 
-    // Anthropic's default lane is 200K; the 1M lane is opt-in and shows up in
-    // the model id itself. Agents other than Claude Code record the id the way
-    // their backend named it, so the marker survives here — unlike Claude
-    // Code's own transcripts, where it is stripped (see
+    // The current Claude models are natively 1M (Opus from 4.7, Sonnet from 5,
+    // Haiku from 5.5, every Fable and Mythos). For the older ones the default
+    // lane is 200K, and the opt-in 1M lane shows up in the model id itself.
+    // Agents other than Claude Code record the id the way their backend named
+    // it, so the marker survives here — unlike Claude Code's own transcripts,
+    // where it is stripped (see
     // `claude::claude_context_window_max_tokens_for_model`).
     if normalized.starts_with("claude") {
-        if is_claude_one_million_context_id(&normalized) {
+        if is_claude_one_million_context_id(&normalized)
+            || is_claude_native_one_million_model(&normalized)
+        {
             return Some(1_000_000);
         }
         return Some(200_000);
@@ -2250,6 +2413,47 @@ mod tests {
             infer_context_window_max_tokens(Some("claude-opus-4-6-10m-preview")),
             Some(200_000)
         );
+        // Natively 1M models need no marker: Claude Code's baked catalog
+        // (CLI 2.1.293) flags Opus from 4.7, Sonnet from 5, Haiku from 5.5 and
+        // every Fable and Mythos as `native_1m`.
+        for model in [
+            "claude-haiku-5-5",
+            "claude-sonnet-5",
+            "claude-sonnet-5-5",
+            "claude-sonnet-5-20260101",
+            "claude-opus-4-7",
+            "claude-opus-4-8",
+            "claude-opus-5",
+            "claude-opus-5-5",
+            "claude-fable-5",
+            "claude-fable-5-1",
+            "claude-mythos-5-1",
+            "anthropic/claude-opus-4.7",
+            "claude-opus-4-7@20260101",
+        ] {
+            assert_eq!(
+                infer_context_window_max_tokens(Some(model)),
+                Some(1_000_000),
+                "{model}"
+            );
+        }
+        // The older models stay on the 200K default lane, snapshot dates
+        // included (`-20251001` is not a minor version).
+        for model in [
+            "claude-haiku-4-5",
+            "claude-haiku-4-5-20251001",
+            "claude-sonnet-4-5",
+            "claude-opus-4-6",
+            "claude-opus-4-20250514",
+            "claude-3-7-sonnet-20250219",
+            "claude-mythos-preview",
+        ] {
+            assert_eq!(
+                infer_context_window_max_tokens(Some(model)),
+                Some(200_000),
+                "{model}"
+            );
+        }
         // Grok context windows per x.ai docs: grok-4.5 = 500K, grok-4.3 /
         // grok-4.20 = 1M, the coding/build models = 256K (grok-code-fast-1
         // despite "fast"), the general -fast variants = 2M, and any unknown

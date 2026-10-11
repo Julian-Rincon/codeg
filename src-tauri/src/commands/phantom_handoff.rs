@@ -195,6 +195,14 @@ fn render_turn(turn: &MessageTurn) -> String {
                 lines.push("[imagen]".to_string());
             }
             ContentBlock::Thinking { .. } => {}
+            // A failed turn, in the agent's own words. Same treatment
+            // `session_info` gives it: the text is what the reader needs.
+            ContentBlock::TurnError { message } => {
+                let t = message.trim();
+                if !t.is_empty() {
+                    lines.push(t.to_string());
+                }
+            }
         }
     }
     if lines.is_empty() {

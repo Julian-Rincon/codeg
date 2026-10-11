@@ -26,6 +26,7 @@ import {
   toFolderRelativePath,
 } from "@/lib/file-path-display"
 import { cn } from "@/lib/utils"
+import { useChatAnimationsEnabled } from "@/hooks/use-appearance"
 
 /** One navigable user message. Present for every user turn, even when it made
  *  no file edits (`hasChanges === false`) so the list is a complete index. */
@@ -77,15 +78,17 @@ export const ConversationMessageNav = memo(function ConversationMessageNav({
   const { openSessionFileDiff } = useWorkspaceActions()
   const { activeFolder: folder } = useActiveFolder()
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({})
+  // Settings → Appearance → "Chat animations" off jumps instead of gliding.
+  const chatAnimations = useChatAnimationsEnabled()
 
   const jump = useCallback(
     (threadIndex: number) => {
       scrollApiRef.current?.scrollToIndex(threadIndex, {
         align: "start",
-        smooth: true,
+        smooth: chatAnimations,
       })
     },
-    [scrollApiRef]
+    [scrollApiRef, chatAnimations]
   )
 
   const handleFileClick = useCallback(

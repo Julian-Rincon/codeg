@@ -14,7 +14,7 @@ interface DropdownRadioItemContentProps {
    *  leaf renders arrives the same way, and the callers all hold a translator
    *  already. */
   recommendedLabel?: string | null
-  /** Localized short category chips ("Edit", "Fast", …) for the categories this
+/** Localized short category chips ("Edit", "Fast", …) for the categories this
    *  model measurably wins at (`ModelScorecardEntry.strengths`), or absent when
    *  there's no scorecard data for this row. Rendered the same way as
    *  `recommendedLabel` — a claim about the model, not about selection state. */
@@ -32,6 +32,10 @@ interface DropdownRadioItemContentProps {
    *  ("14s/turn · 56 tok/s · 3% errors · 262k ctx") or a localized "not enough
    *  data yet" note. Absent when there's nothing to show at all. */
   scorecardLine?: string | null
+  /** What goes after the label when it names a command that takes an argument
+   *  (`[reconnect]`), shown in the label's line. It gives way first when the
+   *  line is short, so a long hint never squeezes the label away. */
+  hint?: string | null
 }
 
 export function DropdownRadioItemContent({
@@ -42,6 +46,7 @@ export function DropdownRadioItemContent({
   unavailableLabel,
   limitedLabel,
   scorecardLine,
+  hint,
 }: DropdownRadioItemContentProps) {
   const normalizedDescription = description?.trim()
   const badge = recommendedLabel?.trim()
@@ -49,13 +54,24 @@ export function DropdownRadioItemContent({
   const limited = limitedLabel?.trim()
   const strengthBadges = (scorecardBadges ?? []).filter((b) => b.trim())
   const line = scorecardLine?.trim()
+  const normalizedHint = hint?.trim()
 
   return (
-    <div className="w-full min-w-0 pr-2" title={label}>
+    <div
+      className="w-full min-w-0 pr-2"
+      title={normalizedHint ? `${label} ${normalizedHint}` : label}
+    >
       {/* The badges are `shrink-0` (Badge's own base class) so a long model
-          name truncates instead of squeezing them away. */}
+          name truncates instead of squeezing them away. Wraps, because a
+          scorecard row can carry a recommended chip plus several strength
+          chips at once. */}
       <div className="flex min-w-0 flex-wrap items-center gap-1.5">
         <p className="min-w-0 truncate">{label}</p>
+        {normalizedHint ? (
+          <span className="min-w-0 shrink-[3] truncate font-mono text-xs text-muted-foreground">
+            {normalizedHint}
+          </span>
+        ) : null}
         {badge ? (
           <Badge variant="outline" className="px-1 text-3xs font-normal">
             {badge}

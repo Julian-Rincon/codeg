@@ -1630,6 +1630,26 @@ async fn record_prompt(agent_type: AgentType, session_id: &str, blocks: &[Conten
     let _ = tokio::time::timeout(std::time::Duration::from_millis(2000), ack).await;
 }
 
+/// Record a message delivered into a custom agent's running turn (a native
+/// steer), and wait (briefly) for it to land. No-op for agents with their own
+/// store.
+///
+/// The adapter keeps a steer to itself — no `user_message_chunk` echoes it — so
+/// codeg's transcript, which IS a custom agent's history, would otherwise never
+/// hold it: the reply to the steer would glue onto the reply before it, and the
+/// message would vanish once the conversation is reopened. Recorded as the
+/// prompt it is, marked so the reader knows the turn did not start there.
+async fn record_steer(agent_type: AgentType, session_id: &str, blocks: &[ContentBlock]) {
+    let Some(dir) = transcript_dir_for(agent_type) else {
+        return;
+    };
+    let Ok(payload) = serde_json::to_value(blocks) else {
+        return;
+    };
+    let ack = crate::acp_transcript::record_steer(dir, session_id, payload);
+    let _ = tokio::time::timeout(std::time::Duration::from_millis(2000), ack).await;
+}
+
 /// Record a turn's completion for a custom agent, and wait (briefly) for it to
 /// land. No-op for agents with their own store.
 ///
@@ -2347,6 +2367,11 @@ pub async fn spawn_agent_connection(
     if agent_type == AgentType::Hermes {
         crate::commands::acp::reconcile_hermes_runtime_env(&runtime_env);
     }
+
+    // Link the `json-render` skill in (generative UI on) or take ours back
+    // (off) before the agent starts and reads its skill directory.
+    // Best-effort; never blocks launch.
+    crate::commands::generative_ui::sync_skill_before_launch(agent_type).await;
 
     // Resolve the launch cwd from the same `working_dir` (via the same helper)
     // that run_connection uses for the session/new request, so the process
@@ -4559,6 +4584,11 @@ async fn apply_and_emit_session_config_options(
             // session birth, and on a catalog broadcast). `None` when empty
             // keeps the switch path on the flat-fallback branch.
             state.write().await.grok_model_specs = (!specs.is_empty()).then(|| specs.clone());
+            // Grok's picker comes from its handshake, not a config-option list:
+            // its values are what the agent picked on its own, read before the
+            // replay below rewrites them (see
+            // `SessionState::agent_chosen_config_values`).
+            state.write().await.agent_chosen_config_values = current_config_option_values(&opts);
             let session_id = session.session_id().clone();
             apply_grok_preferred_options(
                 cx,
@@ -4574,6 +4604,10 @@ async fn apply_and_emit_session_config_options(
         // No x.ai/sessionConfig (unexpected): fall through to the standard path,
         // which for Grok emits an empty list (no selectors) — same as before.
     }
+    // What the agent picked on its own, read before the replay below rewrites
+    // any of it (see `SessionState::agent_chosen_config_values`).
+    state.write().await.agent_chosen_config_values =
+        current_config_option_values(&map_session_config_options(&initial_config_options));
     let updated = apply_preferred_session_options(
         cx,
         session,
@@ -4937,6 +4971,16 @@ fn build_client_capabilities(
     // empty file, and in patch mode it shows a live Write no diff at all until
     // approval. codex's approval request carries no diff (the started tool
     // call already does). Patch blocks are read by `diff_block_payload`.
+    //
+    // claude-agent-acp 0.89.0 and codex-acp 2.2.0 add "sessionIndex": an
+    // indexed `session/list` with archive and rename, and a pushed list
+    // subscription. It stays out. It serves a list from inside a running
+    // adapter, while codeg reads its list offline from the agents' own
+    // transcripts; undeclared, both adapters keep it inert (see the claude
+    // entry in `registry.rs`, (lll)). The same releases' "customInstructions",
+    // and codex's "codexHooks", are capabilities the AGENT announces; a client
+    // uses them without declaring anything, and codeg uses neither (claude
+    // (mmm), codex (ff)).
     if matches!(agent_type, AgentType::ClaudeCode | AgentType::Codex) {
         let capabilities: &[&str] = if agent_type == AgentType::Codex {
             &["sessionFailure", "asyncTasks", "recommendedValue", "diffPatch"]
@@ -6399,11 +6443,16 @@ async fn run_connection(
             // connection will receive.
             let codex_user_input_shape =
                 codex_user_input_shape(agent_type, init_resp.agent_info.as_ref());
+            let steering_policy =
+                steering_policy_agent(agent_type, init_resp.agent_info.as_ref());
             tracing::info!(
-                "[ACP][{}] steering: advertised={}, agent_version={:?}, native={}",
+                "[ACP][{}] steering: advertised={}, agent={:?}, agent_version={:?}, policy={}{}, native={}",
                 agent_type,
                 steering_advertised,
+                init_resp.agent_info.as_ref().map(|i| i.name.as_str()),
                 init_resp.agent_info.as_ref().map(|i| i.version.as_str()),
+                steering_policy,
+                if steering_policy == agent_type { "" } else { " (by agent name)" },
                 native_steering_available
             );
 
@@ -10109,12 +10158,17 @@ async fn handle_fork_or_exit(
     //     map, so the first `session/prompt` hits the `if (!session) throw new
     //     Error("Session not found")` guard at the top of `prompt()`. It also
     //     returns no modes and no config options at all.
-    //   * codex-acp 1.8.0's `SessionFork` calls `threadUnsubscribe` on the
-    //     freshly forked thread to release its writer lock. A prompt on it then
-    //     runs to completion inside codex — the rollout file grows — but the
-    //     core streams no `turn/*` notifications to an unsubscribed thread, so
-    //     `runTurn` awaits a completion event that never arrives: the turn hangs
-    //     forever and not one token reaches the transcript.
+    //   * codex-acp 1.8.0–2.1.x's `SessionFork` calls `threadUnsubscribe` on
+    //     the freshly forked thread to release its writer lock. A prompt on it
+    //     then runs to completion inside codex — the rollout file grows — but
+    //     the core streams no `turn/*` notifications to an unsubscribed thread,
+    //     so `runTurn` awaits a completion event that never arrives: the turn
+    //     hangs forever and not one token reaches the transcript. 2.2.0 keeps
+    //     the fork subscribed, so a prompt on it works at once and the resume
+    //     below is redundant there, but not harmful: measured live, fork →
+    //     resume → close the parent → prompt the fork works on 2.1.1 and 2.2.1
+    //     alike. It stays for the older adapters a PATH or a custom version
+    //     can still resolve.
     //
     // `session/resume` repairs both: claude's `getOrCreateSession` creates the
     // session under the SAME id (`createSession` uses `resume` as the id), and
@@ -10154,7 +10208,8 @@ async fn handle_fork_or_exit(
     // of its own. Left open on the agent, it is not free:
     //
     //   * codex holds a thread's writer lock for as long as an app-server has
-    //     the thread loaded, and `session/fork` unsubscribes only the CHILD.
+    //     the thread loaded, and `session/fork` never lets the PARENT go (up to
+    //     2.1.x it unsubscribes only the child; 2.2.0 not even that).
     //     An open parent stays loaded for the life of this connection, and
     //     opening the sibling row fails with `session_busy`. Closing is
     //     `thread/unsubscribe`, which is also what codex's own TUI does to the
@@ -10386,12 +10441,13 @@ fn classify_session_load_failure(
     //    with the same session open (its lock can outlive the closed tab until
     //    that process unloads the thread);
     //  * codeg itself, for about a minute after a fork: `session/fork`
-    //    releases only the CHILD's lock (`threadUnsubscribe({threadId:
-    //    response.thread.id})`, unchanged since codex-acp 1.8.0), so the
-    //    sibling row codeg creates to keep the pre-fork history hits the lock
-    //    until the forking connection lets the parent go. It closes the parent
-    //    right after the step that resumes the child (`close_forked_parent`),
-    //    and the app-server unloads it `thread_unload_delay_secs` later (60 by
+    //    never releases the PARENT's lock (codex-acp 1.8.0–2.1.x unsubscribe
+    //    only the child, `threadUnsubscribe({threadId: response.thread.id})`,
+    //    and 2.2.0 keeps the child subscribed too), so the sibling row codeg
+    //    creates to keep the pre-fork history hits the lock until the forking
+    //    connection lets the parent go. It closes the parent right after the
+    //    step that resumes the child (`close_forked_parent`), and the
+    //    app-server unloads it `thread_unload_delay_secs` later (60 by
     //    default).
     // codex-acp ≤2.0.x passes codex's raw "thread <id> already has an active
     // writer" through as a -32603 `data.details`; 2.1.0 (#564) answers -32600
@@ -10436,7 +10492,58 @@ fn classify_session_load_error(e: &agent_client_protocol::Error) -> Option<&'sta
     if reason == Some("thread_active_writer") {
         return Some("session_busy");
     }
+    // codex-acp 2.2: the app-server died under the open (see
+    // [`codex_app_server_lost`]). Never the `session/new` fallback, whether or
+    // not the adapter will restart it. Up to 2.1.x a dead app-server took the
+    // connection with it, so that `session/new` failed as well; from 2.2.0 the
+    // adapter restarts the app-server for the next request, and the
+    // `session/new` SUCCEEDS — rebinding the row to a fresh empty session and
+    // orphaning the history the row exists for. Measured live on 2.2.1 with
+    // the app-server killed during each open: resume and load both answer
+    // 1001, and a `session/new` right after them opens. A session whose open
+    // crashes the app-server every time (a rollout too large to load, say)
+    // would take that path on every reopen. The banner keeps the history, and
+    // its Reload opens a new connection, which is also the adapter's own
+    // remedy once it refuses ("Restart the agent").
+    if codex_app_server_lost(e).is_some() {
+        return Some("session_unavailable");
+    }
     classify_session_load_failure(e.code, &e.to_string())
+}
+
+/// codex-acp 2.2's word that the Codex app-server behind the adapter died:
+/// JSON-RPC code 1001 with `data: {exitCode, signal, restartable,
+/// retryAfterMs?}` (`app-server-recovery/AppServerExit.ts`). `Some` carries
+/// `restartable`; `None` is any other error.
+///
+/// From 2.2.0 the adapter supervises the app-server for every client, not only
+/// for the session-index ones: a crash no longer ends the connection, and the
+/// next request starts a new app-server and reopens the session on it. A turn
+/// running at the crash settles at once (`end_turn` with a `connection`
+/// `sessionFailure`, its open tool calls failed, its permission requests
+/// withdrawn by `$/cancel_request`), which codeg's existing consumers already
+/// render. What reaches a REQUEST is this error, two ways:
+///  - `restartable: true` — "The Codex app-server was killed by SIGKILL, which
+///    usually means it ran out of memory. The agent starts it again on the
+///    next request." Only that request failed.
+///  - `restartable: false` — the session cannot come back on this connection:
+///    it never reached disk and the restart lost it ("Session <id> had no
+///    messages yet and was lost when the Codex app-server restarted. Start a
+///    new session.", #604), the crash-loop guard stopped restarting ("crashed
+///    5 times in the last 5 min … Restart the agent, or try again in 5 min."),
+///    or the thread is refused because opening it crashed the app-server twice
+///    (`retryAfterMs` says for how long).
+///
+/// Every message above was captured live over stdio (2.2.1, the app-server
+/// SIGKILLed), bar the refused thread, which is read from the source.
+fn codex_app_server_lost(e: &agent_client_protocol::Error) -> Option<bool> {
+    if !matches!(
+        e.code,
+        agent_client_protocol::schema::v1::ErrorCode::Other(1001)
+    ) {
+        return None;
+    }
+    e.data.as_ref()?.get("restartable")?.as_bool()
 }
 
 /// Wire-message markers for "the session behind this request no longer exists"
@@ -10474,12 +10581,19 @@ const SESSION_GONE_MARKERS: &[&str] =
 /// #659). Tearing the agent down for those is pure self-harm — the user waits
 /// out a full respawn for a turn that merely failed.
 ///
-/// Only three families stay terminal:
+/// Only four families stay terminal:
 ///  - `ResourceNotFound` — the agent has no record of the session id codeg
 ///    just prompted on, so the handle this connection holds is void.
 ///  - [`SESSION_GONE_MARKERS`] — the agent answered to say its session or
 ///    process is gone. Keeping the connection would leave an entry whose every
 ///    future prompt fails the same way.
+///  - [`codex_app_server_lost`] with `restartable: false` — codex-acp 2.2's
+///    word that this session cannot come back on this connection (lost before
+///    it reached disk, the crash-loop guard, a refused thread). Every later
+///    prompt fails the same way, and the remedies the adapter names ("Start a
+///    new session", "Restart the agent") both take a new connection. A
+///    restartable loss stays turn-scoped: the next prompt restarts the
+///    app-server and goes through.
 ///  - [`lost_the_connection`] — the ACP runtime's own word that no answer can
 ///    arrive at all: the transport, not the turn, is what died.
 ///
@@ -10493,6 +10607,9 @@ fn prompt_rejection_is_terminal(e: &agent_client_protocol::Error) -> bool {
         return false;
     }
     if matches!(e.code, agent_client_protocol::schema::v1::ErrorCode::ResourceNotFound) {
+        return true;
+    }
+    if codex_app_server_lost(e) == Some(false) {
         return true;
     }
     if lost_the_connection(e) {
@@ -11041,6 +11158,16 @@ async fn run_conversation_loop(
     // loop ends while `read_update` holds `session`. A fork restarts this loop
     // with the new session, so it cannot go stale in here.
     let agent_turn_session_id = session.session_id().0.to_string();
+    // Whether a prompt has run on this session in this loop — from then on the
+    // idle loop records a custom agent's frames as the turn loop does (see the
+    // `record_transcript_update` below). Before it, nothing the idle loop reads
+    // is conversation: a banner the agent greets a new session with, which no
+    // client renders and which would list a session the user never spoke in,
+    // or a straggler of a `session/load` replay whose history the hydration
+    // drain has already decided to keep or skip. Work the agent does on its
+    // own needs a turn to have started it, and background work cannot outlive
+    // the agent process this loop's connection owns.
+    let mut prompted = false;
     loop {
         // Wait for either a user command or a session update (e.g. available_commands_update)
         let cmd = loop {
@@ -11104,6 +11231,18 @@ async fn run_conversation_loop(
                                         drift.extend(
                                             take_asserted_config_drift(&st, &update.config_options).await,
                                         );
+                                    }
+                                    // A custom agent's history is this
+                                    // transcript and nothing else, and what
+                                    // arrives here is part of it: a turn the
+                                    // agent runs on its own (a background job's
+                                    // follow-up, with no `session/prompt` around
+                                    // it), the late completion of a call an
+                                    // earlier turn started, or the last frames
+                                    // of a turn whose response won the turn
+                                    // loop's select. No-op for every other agent.
+                                    if prompted {
+                                        record_transcript_update(agent_type, &notif.session_id.0, &notif.update);
                                     }
                                     emit_conversation_update(&st, &h, agent_type, notif.update, cwd_opt, &mut raw_output_cache, &mut cb_state).await;
                                     Ok(())
@@ -11281,6 +11420,7 @@ async fn run_conversation_loop(
                 // instantly — and awaited, so the replay gate can never see
                 // this conversation as transcript-less (see `record_prompt`).
                 record_prompt(agent_type, &sid.0, &prompt_blocks).await;
+                prompted = true;
                 let turn_started_at_ms = crate::acp_transcript::now_epoch_ms();
                 let prompt_request = PromptRequest::new(sid.clone(), prompt_blocks);
                 // Snapshot the stderr write position BEFORE the request is
@@ -11983,14 +12123,18 @@ async fn run_conversation_loop(
                                     }
                                     let outcome = send_steer_request(&cx, &sid, &blocks).await;
                                     // A steered message still lands in the
-                                    // agent's OWN transcript as a user record,
-                                    // which `group_into_turns` reads as the
-                                    // start of a turn. Fingerprint it so the
-                                    // background watcher classifies that turn
-                                    // as wire-rendered foreground: the owning
-                                    // prompt stays in flight across the steered
-                                    // work (claude-agent-acp #958), so all of
-                                    // it already streams into the live turn —
+                                    // agent's OWN transcript: as a user record
+                                    // when it runs as a turn of its own, and as
+                                    // a `queued_command` attachment when the
+                                    // CLI folds it into the running turn
+                                    // (`parsers::claude::queued_human_prompt`).
+                                    // Fingerprint it so the background watcher
+                                    // classifies that turn, or the rest of the
+                                    // turn it was folded into, as wire-rendered
+                                    // foreground: the owning prompt stays in
+                                    // flight across the steered work
+                                    // (claude-agent-acp #958), so all of it
+                                    // already streams into the live turn —
                                     // surfacing it as overlay activity too
                                     // renders it twice and reorders the
                                     // transcript as the upserts land.
@@ -12006,6 +12150,19 @@ async fn run_conversation_loop(
                                     // can surface at all.
                                     if matches!(outcome, Ok(SteerOutcome::Injected)) {
                                         prompt_ledger.record_prompt_blocks(&blocks);
+                                        // A custom agent's history is codeg's
+                                        // own transcript, and only codeg knows
+                                        // the steer happened (see
+                                        // `record_steer`). Recorded in the
+                                        // encoding it went out in, and before
+                                        // the reply, so every frame this loop
+                                        // takes in from here on lands after it.
+                                        record_steer(
+                                            agent_type,
+                                            &sid.0,
+                                            &map_prompt_blocks(blocks.clone()),
+                                        )
+                                        .await;
                                     }
                                     let _ = reply.send(outcome);
                                 }
@@ -14789,7 +14946,7 @@ fn steering_version_ok(agent_info: Option<&agent_client_protocol::schema::v1::Im
 
 /// Synthesize `SessionState.native_steering_available` from an `initialize`
 /// response: extension advertised (top-level `_meta`) AND registry policy says
-/// this agent type honors `promptRequired` AND the running binary's
+/// this agent honors `promptRequired` AND the running binary's
 /// `agent_info.version` proves it. Pure so the full gate matrix is unit-tested;
 /// `run_connection` calls it once and everything downstream reads the stored
 /// bool.
@@ -14799,8 +14956,35 @@ fn synthesize_native_steering(
     agent_info: Option<&agent_client_protocol::schema::v1::Implementation>,
 ) -> bool {
     init_advertises_steering(meta)
-        && registry::steering_prompt_required_min_version(agent_type)
-            .is_some_and(|min| steering_version_ok(agent_info, min))
+        && registry::steering_prompt_required_min_version(steering_policy_agent(
+            agent_type, agent_info,
+        ))
+        .is_some_and(|min| steering_version_ok(agent_info, min))
+}
+
+/// Whose steering policy a connection follows. A custom agent whose running
+/// adapter reports itself as claude-agent-acp (a second Claude Code account
+/// registered as a custom npx agent, say) speaks exactly the protocol the
+/// built-in Claude Code policy was written for, so it follows that policy; the
+/// advertisement and the version floor still gate it as they gate the built-in
+/// agent. The name must match exactly — a fork or a look-alike has no policy
+/// and keeps the pull channel — and a built-in type is never remapped.
+///
+/// Only the steering channel changes for such an agent: its history is still
+/// the transcript codeg records, which is why an injected steer is recorded
+/// there (see the `Steer` arm).
+fn steering_policy_agent(
+    agent_type: AgentType,
+    agent_info: Option<&agent_client_protocol::schema::v1::Implementation>,
+) -> AgentType {
+    match agent_type {
+        AgentType::Custom(_)
+            if agent_info.is_some_and(|info| info.name == registry::CLAUDE_AGENT_ACP_PACKAGE) =>
+        {
+            AgentType::ClaudeCode
+        }
+        other => other,
+    }
 }
 
 /// codex-acp 1.12.0 swapped the question and the short tab header between a
@@ -18097,14 +18281,18 @@ async fn emit_conversation_update(
             // whose own transcript carries the name (Codex's session index,
             // Claude's `ai-title`) — a custom ACP agent's is gone, because
             // `parsers/acp_native.rs` records no `session_info_update` and can
-            // only ever title a session by its first prompt.
+            // only ever title a session by its first prompt. Claude Code's is
+            // not written here at all: it is held for the transcript watcher,
+            // which writes the transcript's own titles instead whenever it can
+            // read the transcript (`session_title::accept_wire_title`).
             if let Some(title) = crate::acp::session_title::native_title_from_session_info(
                 info.title.value().map(|s| s.as_str()),
             ) {
                 // Shared with the transcript watcher's title path so the
                 // skip-cache and the unbound-row drop have exactly one
                 // spelling — see `session_title::publish_native_title`.
-                crate::acp::session_title::publish_native_title(state, emitter, title).await;
+                crate::acp::session_title::accept_wire_title(state, emitter, agent_type, title)
+                    .await;
             }
             let neutral_goal_channel = state.read().await.neutral_goal_channel;
             if let Some(goal) =
@@ -19430,6 +19618,15 @@ mod tests {
     /// Drive one `session_info_update` carrying `title` through
     /// `emit_conversation_update`.
     async fn drive_session_info_title(state: &Arc<RwLock<SessionState>>, title: &str) {
+        drive_session_info_title_from(state, AgentType::CodeBuddy, title).await;
+    }
+
+    /// [`drive_session_info_title`] for `agent_type`.
+    async fn drive_session_info_title_from(
+        state: &Arc<RwLock<SessionState>>,
+        agent_type: AgentType,
+        title: &str,
+    ) {
         let update: SessionUpdate = serde_json::from_value(serde_json::json!({
             "sessionUpdate": "session_info_update",
             "title": title,
@@ -19440,7 +19637,7 @@ mod tests {
         emit_conversation_update(
             state,
             &EventEmitter::Noop,
-            AgentType::CodeBuddy,
+            agent_type,
             update,
             None,
             &mut cache,
@@ -19533,6 +19730,32 @@ mod tests {
             vec!["Fix the login flow".to_string()],
             "the same title must be accepted once the row exists"
         );
+    }
+
+    /// Claude Code's live title is not written from the wire: when the CLI
+    /// cannot generate a title, claude-agent-acp publishes the session's
+    /// newest `last-prompt` record instead (measured on 0.89.1, registry
+    /// (qqq)), which the history parser never produces, so writing it would
+    /// flip the row on every detail fetch. It is held, normalized, for the
+    /// transcript watcher (`session_title::release_held_wire_title`).
+    #[tokio::test]
+    async fn a_claude_session_info_title_is_held_for_the_transcript_watcher() {
+        let state = title_test_state(Some(7));
+
+        drive_session_info_title_from(
+            &state,
+            AgentType::ClaudeCode,
+            "  Fix the login flow please look at [auth.ts](file:///tmp/auth.ts) first ",
+        )
+        .await;
+
+        assert!(emitted_native_titles(&state).await.is_empty());
+        let s = state.read().await;
+        assert_eq!(
+            s.held_wire_title.as_deref(),
+            Some("Fix the login flow please look at [auth.ts](file:///tmp/auth.ts) first")
+        );
+        assert!(s.last_native_title.is_none());
     }
 
     /// Goal-only / metadata-only `session_info_update`s (the common case for
@@ -20180,6 +20403,65 @@ mod tests {
         ));
     }
 
+    /// #892: a custom entry running claude-agent-acp (a second Claude account,
+    /// say) follows the Claude Code policy, picked by the name its running
+    /// adapter reports; the advertisement and the version floor gate it as
+    /// they gate the built-in agent.
+    #[test]
+    fn a_custom_agent_running_claude_agent_acp_steers_natively() {
+        use agent_client_protocol::schema::v1::Implementation;
+        let advertised = meta_map(serde_json::json!({"steering": {"supported": true}}));
+        let claude = Implementation::new(registry::CLAUDE_AGENT_ACP_PACKAGE, "0.85.1");
+        let claude_stale = Implementation::new(registry::CLAUDE_AGENT_ACP_PACKAGE, "0.64.1");
+        let custom = AgentType::Custom("claude-code-2");
+
+        assert!(synthesize_native_steering(
+            custom,
+            Some(&advertised),
+            Some(&claude)
+        ));
+        assert_eq!(
+            steering_policy_agent(custom, Some(&claude)),
+            AgentType::ClaudeCode
+        );
+        // The floor still holds, and so do the advertisement and the proof.
+        assert!(!synthesize_native_steering(
+            custom,
+            Some(&advertised),
+            Some(&claude_stale)
+        ));
+        assert!(!synthesize_native_steering(custom, None, Some(&claude)));
+        assert!(!synthesize_native_steering(custom, Some(&advertised), None));
+        // Only the exact name: another adapter, or a look-alike without the
+        // scope, keeps the pull channel.
+        for name in [
+            "acme-acp",
+            "claude-agent-acp",
+            "@agentclientprotocol/claude-agent-acp-fork",
+        ] {
+            let other = Implementation::new(name, "0.85.1");
+            assert!(
+                !synthesize_native_steering(custom, Some(&advertised), Some(&other)),
+                "{name}"
+            );
+            assert_eq!(
+                steering_policy_agent(custom, Some(&other)),
+                custom,
+                "{name}"
+            );
+        }
+        // A built-in type is never remapped by what its adapter reports.
+        assert!(!synthesize_native_steering(
+            AgentType::Codex,
+            Some(&advertised),
+            Some(&claude)
+        ));
+        assert_eq!(
+            steering_policy_agent(AgentType::Codex, Some(&claude)),
+            AgentType::Codex
+        );
+    }
+
     #[test]
     fn build_steer_params_shape_carries_the_prompt_required_opt_in() {
         let params = build_steer_params(
@@ -20592,7 +20874,7 @@ mod tests {
     /// After a codex fork, the sibling row codeg creates to keep the pre-fork
     /// history points at the PARENT thread — whose writer the forking process
     /// holds until codex unloads the thread, about a minute after codeg closes
-    /// it, because `session/fork` only unsubscribes the child. Opening it in
+    /// it, because `session/fork` never unsubscribes the parent. Opening it in
     /// that window must stop with a banner, never fall through to
     /// `session/new`: that rebinds the row to a fresh empty session and
     /// destroys the only pointer to the history the row exists for.
@@ -20708,6 +20990,70 @@ mod tests {
             "data": { "details": "boom" }
         }));
         assert_eq!(classify_session_load_error(&unclassified), None);
+    }
+
+    /// codex-acp 2.2 answers an open the app-server died under with code 1001
+    /// (bodies captured live off 2.2.1, the app-server SIGKILLed). Neither form
+    /// may fall through to `session/new`, which 2.2 now lets succeed on the
+    /// restarted app-server: that would rebind the row to an empty session.
+    #[test]
+    fn classify_load_error_keeps_a_codex_app_server_loss_off_session_new() {
+        let error = |body: serde_json::Value| -> agent_client_protocol::Error {
+            serde_json::from_value(body).expect("an ACP error body")
+        };
+
+        let restarting = error(serde_json::json!({
+            "code": 1001,
+            "message": "The Codex app-server was killed by SIGKILL, which usually means it \
+                ran out of memory. The agent starts it again on the next request.",
+            "data": { "exitCode": null, "signal": "SIGKILL", "restartable": true }
+        }));
+        assert_eq!(codex_app_server_lost(&restarting), Some(true));
+        assert_eq!(
+            classify_session_load_error(&restarting),
+            Some("session_unavailable")
+        );
+
+        let given_up = error(serde_json::json!({
+            "code": 1001,
+            "message": "The Codex app-server crashed 5 times in the last 5 min (last: it was \
+                killed by SIGKILL, which usually means it ran out of memory), so the agent \
+                stopped restarting it. Restart the agent, or try again in 5 min.",
+            "data": {
+                "exitCode": null,
+                "signal": "SIGKILL",
+                "restartable": false,
+                "retryAfterMs": 282346
+            }
+        }));
+        assert_eq!(codex_app_server_lost(&given_up), Some(false));
+        assert_eq!(
+            classify_session_load_error(&given_up),
+            Some("session_unavailable")
+        );
+        // codex's own history is codex's store, so no local recovery: the
+        // banner is the only path that keeps it.
+        assert!(!recovers_load_failure_locally(
+            AgentType::Codex,
+            Some("session_unavailable")
+        ));
+
+        // The shape is the code AND a boolean `restartable`; either alone is
+        // someone else's error and keeps the old ladder.
+        let other_1001 = error(serde_json::json!({
+            "code": 1001,
+            "message": "something else",
+            "data": { "details": "boom" }
+        }));
+        assert_eq!(codex_app_server_lost(&other_1001), None);
+        assert_eq!(classify_session_load_error(&other_1001), None);
+        let not_1001 = error(serde_json::json!({
+            "code": -32603,
+            "message": "Internal error",
+            "data": { "restartable": true }
+        }));
+        assert_eq!(codex_app_server_lost(&not_1001), None);
+        assert_eq!(classify_session_load_error(&not_1001), None);
     }
 
     #[test]
@@ -25010,6 +25356,34 @@ mod tests {
         assert!(prompt_rejection_is_terminal(&dropped), "{dropped}");
     }
 
+    /// codex-acp 2.2 rejects a prompt with 1001 when the app-server died. A
+    /// restartable loss costs that turn only (the next prompt restarts the
+    /// app-server and goes through, measured live); an unrestartable one means
+    /// every later prompt on this connection fails the same way, so it ends the
+    /// connection, as the adapter's own remedy needs. The #604 body is verbatim
+    /// off 2.2.1: a session that never reached disk, lost in a restart.
+    #[test]
+    fn an_unrestartable_codex_app_server_loss_ends_the_connection() {
+        let error = |body: serde_json::Value| -> agent_client_protocol::Error {
+            serde_json::from_value(body).expect("an ACP error body")
+        };
+        let lost_empty_session = error(serde_json::json!({
+            "code": 1001,
+            "message": "Session 01a123c6-aee8-7a81-9007-44230bc64566 had no messages yet and \
+                was lost when the Codex app-server restarted. Start a new session.",
+            "data": { "exitCode": null, "signal": null, "restartable": false }
+        }));
+        assert!(prompt_rejection_is_terminal(&lost_empty_session));
+
+        let restarting = error(serde_json::json!({
+            "code": 1001,
+            "message": "The connection to the Codex app-server was lost. The agent starts \
+                it again on the next request.",
+            "data": { "exitCode": null, "signal": null, "restartable": true }
+        }));
+        assert!(!prompt_rejection_is_terminal(&restarting));
+    }
+
     /// Plays an agent over the raw pipe: waits for codeg's first frame (the
     /// prompt), then dies with it unanswered — its output ends mid-prompt, the
     /// way it does when the process exits. Fires `exited` once the pipe is gone.
@@ -28424,6 +28798,48 @@ mod tests {
         }
     }
 
+    /// A Grep sent with `file_path` (CLI 2.1.292 runs it as `path`) reaches the
+    /// search card as `path`. Under the AIR contract the update that carries
+    /// the input names no tool of its own, so the tool name has to come from
+    /// the opening frame through the `_meta` ledger.
+    #[tokio::test]
+    async fn claude_grep_file_path_reaches_the_card_as_path() {
+        let mut cache = ToolCallOutputCache::default();
+        let mut cb = CodeBuddyLiveState::default();
+        pi_emit(
+            AgentType::ClaudeCode,
+            &mut cache,
+            &mut cb,
+            serde_json::json!({
+                "sessionUpdate": "tool_call",
+                "toolCallId": "toolu_g",
+                "title": "grep",
+                "kind": "search",
+                "status": "pending",
+                "_meta": {"claudeCode": {"toolName": "Grep"}},
+            }),
+        )
+        .await;
+        let (_, raw_input, _, _) = pi_emit(
+            AgentType::ClaudeCode,
+            &mut cache,
+            &mut cb,
+            serde_json::json!({
+                "sessionUpdate": "tool_call_update",
+                "toolCallId": "toolu_g",
+                "title": "grep \"needle\" /w/a.txt",
+                "rawInput": {"pattern": "needle", "file_path": "/w/a.txt", "output_mode": "content"},
+            }),
+        )
+        .await;
+        let input: serde_json::Value =
+            serde_json::from_str(raw_input.as_deref().expect("raw_input")).unwrap();
+        assert_eq!(
+            input,
+            serde_json::json!({"pattern": "needle", "path": "/w/a.txt", "output_mode": "content"})
+        );
+    }
+
     /// The renames are keyed on the claude tool's NAME: Grep's own `path`
     /// argument is not a Write's `file_path`, and another agent's `_meta` that
     /// happens to use the same key is not claude's.
@@ -31047,7 +31463,7 @@ mod tests {
         assert_eq!(ordered, vec!["a_thing", "z_thing"]);
     }
 
-    #[test]
+#[test]
     fn model_category_alias_targets_the_advertised_model_option() {
         let options: Vec<SessionConfigOption> = serde_json::from_value(serde_json::json!([
             {
@@ -31105,6 +31521,144 @@ mod tests {
         let dropped = resolve_model_category_alias(&[], &preferred).expect("alias present");
         assert!(!dropped.contains_key(MODEL_CATEGORY_CONFIG_KEY));
         assert_eq!(dropped.len(), 1);
+    }
+
+    /// Establishment keeps what the agent picked on its own, read BEFORE the
+    /// saved preferences replay over it. The options probe reports that for
+    /// each option it applied (`report_agent_chosen_values` in the manager), so
+    /// the delegation panel's "Default" names the agent's model rather than the
+    /// user's. Shaped like a live opencode 2.0.24: switching the model re-lists
+    /// `effort` for it.
+    #[tokio::test]
+    async fn establishment_keeps_the_agents_own_picks_from_before_the_preference_replay() {
+        use agent_client_protocol::schema::v1::SetSessionConfigOptionResponse;
+
+        fn options(model: &str, effort: &str, efforts: &[&str]) -> Vec<SessionConfigOption> {
+            let efforts: Vec<serde_json::Value> = efforts
+                .iter()
+                .map(|value| serde_json::json!({"value": value, "name": value}))
+                .collect();
+            serde_json::from_value(serde_json::json!([
+                {
+                    "type": "select",
+                    "id": "model",
+                    "name": "Model",
+                    "category": "model",
+                    "currentValue": model,
+                    "options": [
+                        {"value": "opencode/exo-free", "name": "Exo"},
+                        {"value": "opencode/step-5-preview-free", "name": "Step 5"}
+                    ]
+                },
+                {
+                    "type": "select",
+                    "id": "effort",
+                    "name": "Effort",
+                    "category": "thought_level",
+                    "currentValue": effort,
+                    "options": efforts
+                },
+            ]))
+            .expect("parses")
+        }
+
+        let (client_end, agent_end) = agent_client_protocol::Channel::duplex();
+        let agent = tokio::spawn(async move {
+            let _ = Agent
+                .builder()
+                .on_receive_request(
+                    async |_req: NewSessionRequest,
+                           responder: Responder<NewSessionResponse>,
+                           _cx: ConnectionTo<Client>| {
+                        let opened = options("opencode/exo-free", "high", &["high", "default"]);
+                        responder.respond(
+                            NewSessionResponse::new(SessionId::new("s1")).config_options(opened),
+                        )
+                    },
+                    on_receive_request!(),
+                )
+                .on_receive_request(
+                    async |_req: SetSessionConfigOptionRequest,
+                           responder: Responder<SetSessionConfigOptionResponse>,
+                           _cx: ConnectionTo<Client>| {
+                        // Only the model is replayed: the answer re-lists effort.
+                        let switched = options(
+                            "opencode/step-5-preview-free",
+                            "default",
+                            &["low", "medium", "high", "default"],
+                        );
+                        responder.respond(SetSessionConfigOptionResponse::new(switched))
+                    },
+                    on_receive_request!(),
+                )
+                .connect_with(agent_end, async |_cx: ConnectionTo<Client>| {
+                    std::future::pending::<Result<(), agent_client_protocol::Error>>().await
+                })
+                .await;
+        });
+
+        let state = Arc::new(RwLock::new(SessionState::new(
+            "conn-probe".to_string(),
+            AgentType::OpenCode,
+            None,
+            "delegation-probe".to_string(),
+            None,
+        )));
+        let establishment_state = Arc::clone(&state);
+        Client
+            .builder()
+            .connect_with(client_end, async move |cx: ConnectionTo<Agent>| {
+                let raw = cx
+                    .send_request_to(
+                        Agent,
+                        UntypedMessage::new("session/new", NewSessionRequest::new("/tmp"))?,
+                    )
+                    .block_task()
+                    .await?;
+                let response: NewSessionResponse = serde_json::from_value(raw)
+                    .map_err(agent_client_protocol::Error::into_internal_error)?;
+                let initial = response.config_options.clone().unwrap_or_default();
+                let mut session = AgentSession::attach(&cx, response)?;
+                let preferred = BTreeMap::from([(
+                    "model".to_string(),
+                    "opencode/step-5-preview-free".to_string(),
+                )]);
+                apply_and_emit_session_config_options(
+                    &cx,
+                    &mut session,
+                    &establishment_state,
+                    &EventEmitter::Noop,
+                    AgentType::OpenCode,
+                    None,
+                    None,
+                    None,
+                    &preferred,
+                    initial,
+                )
+                .await;
+                Ok(())
+            })
+            .await
+            .expect("the establishment runs");
+        agent.abort();
+
+        let state = state.read().await;
+        assert_eq!(
+            state.agent_chosen_config_values,
+            BTreeMap::from([
+                ("model".to_string(), "opencode/exo-free".to_string()),
+                ("effort".to_string(), "high".to_string()),
+            ]),
+            "the agent's own picks, from before the replay"
+        );
+        // …while the session itself runs the preference, effort re-listed for it.
+        let current =
+            current_config_option_values(state.config_options.as_deref().unwrap_or_default());
+        assert_eq!(
+            current.get("model").map(String::as_str),
+            Some("opencode/step-5-preview-free")
+        );
+        assert_eq!(current.get("effort").map(String::as_str), Some("default"));
     }
 
     /// The claude shape: a model select plus the effort option that hangs off it.
@@ -33536,6 +34090,495 @@ mod tests {
             "a prompt's late turn_completed ends nothing"
         );
         assert!(grok_turn_completed_ends(Some("f"), &done(None)));
+    }
+
+    // ── A custom agent's history and the idle loop (#903) ───────────────────
+    //
+    // A custom agent has no store of its own for codeg to parse later: its
+    // history IS the ACP transcript this connection writes as frames go by.
+    // Work the agent does between prompts — the follow-up to a background job,
+    // the late completion of a call an earlier turn started — reaches codeg on
+    // the IDLE loop with no `session/prompt` around it. Driven over the real
+    // runtime with the scripted-agent plumbing of the Grok loop tests above.
+
+    /// The custom agent these loop tests drive. Deliberately unregistered:
+    /// nothing on the recording path looks the id up.
+    const IDLE_PROBE_AGENT: &str = "idle-probe";
+
+    fn custom_update(update: serde_json::Value) -> GrokFrame {
+        (
+            "session/update",
+            serde_json::json!({"sessionId": "s1", "update": update}),
+        )
+    }
+
+    fn custom_text(text: &str) -> GrokFrame {
+        custom_update(serde_json::json!({
+            "sessionUpdate": "agent_message_chunk",
+            "content": {"type": "text", "text": text},
+        }))
+    }
+
+    /// One line per turn, for assertions that read like the conversation.
+    fn turn_shape(turns: &[crate::models::message::MessageTurn]) -> Vec<String> {
+        use crate::models::message::ContentBlock as Block;
+        turns
+            .iter()
+            .map(|turn| {
+                let blocks: Vec<String> = turn
+                    .blocks
+                    .iter()
+                    .map(|block| match block {
+                        Block::Text { text } => format!("text {text:?}"),
+                        Block::ToolUse {
+                            tool_use_id,
+                            tool_name,
+                            ..
+                        } => format!("call {} {tool_name}", tool_use_id.as_deref().unwrap_or("?")),
+                        Block::ToolResult {
+                            tool_use_id,
+                            output_preview,
+                            ..
+                        } => format!(
+                            "result {} {:?}",
+                            tool_use_id.as_deref().unwrap_or("?"),
+                            output_preview.as_deref().unwrap_or("")
+                        ),
+                        other => format!("{other:?}"),
+                    })
+                    .collect();
+                format!("{:?}: {}", turn.role, blocks.join(" | "))
+            })
+            .collect()
+    }
+
+    /// `run_conversation_loop` for a custom agent. Each prompt streams the next
+    /// turn of the script, then holds its response until the test releases it,
+    /// so every frame of a prompted turn is read INSIDE that turn. Frames handed
+    /// to [`CustomLoop::agent_sends`] go out at once, outside any prompt.
+    struct CustomLoop {
+        state: Arc<RwLock<SessionState>>,
+        cmd_tx: mpsc::Sender<ConnectionCommand>,
+        events: tokio::sync::broadcast::Receiver<Arc<crate::acp::types::EventEnvelope>>,
+        /// Every event the loop emitted so far, in order.
+        seen: Vec<AcpEvent>,
+        unprompted: tokio::sync::mpsc::UnboundedSender<Vec<GrokFrame>>,
+        respond: Arc<tokio::sync::Notify>,
+        /// What the agent answers the next `_session/steering` requests with,
+        /// in order; `injected` once these run out.
+        steer_outcomes: Arc<std::sync::Mutex<VecDeque<serde_json::Value>>>,
+        client: tokio::task::JoinHandle<()>,
+        agent: tokio::task::JoinHandle<()>,
+    }
+
+    impl CustomLoop {
+        async fn start(turns: Vec<Vec<GrokFrame>>) -> Self {
+            use agent_client_protocol::schema::v1::PromptResponse;
+
+            let agent_type = AgentType::custom(IDLE_PROBE_AGENT).expect("a valid custom id");
+            let turns = Arc::new(std::sync::Mutex::new(VecDeque::from(turns)));
+            let respond = Arc::new(tokio::sync::Notify::new());
+            let agent_respond = Arc::clone(&respond);
+            let steer_outcomes = Arc::new(std::sync::Mutex::new(VecDeque::new()));
+            let agent_steer_outcomes = Arc::clone(&steer_outcomes);
+            let (unprompted, mut unprompted_rx) =
+                tokio::sync::mpsc::unbounded_channel::<Vec<GrokFrame>>();
+            let (client_end, agent_end) = agent_client_protocol::Channel::duplex();
+
+            let agent = tokio::spawn(async move {
+                let _ = Agent
+                    .builder()
+                    .on_receive_request(
+                        async |_req: NewSessionRequest,
+                               responder: Responder<NewSessionResponse>,
+                               _cx: ConnectionTo<Client>| {
+                            responder.respond(NewSessionResponse::new(SessionId::new("s1")))
+                        },
+                        on_receive_request!(),
+                    )
+                    .on_receive_request(
+                        async move |_req: PromptRequest,
+                                    responder: Responder<PromptResponse>,
+                                    cx: ConnectionTo<Client>| {
+                            let frames = turns.lock().unwrap().pop_front().unwrap_or_default();
+                            send_grok_frames(&cx, &frames)?;
+                            let respond = Arc::clone(&agent_respond);
+                            // Off the handler, so a held response doesn't hold
+                            // up the agent's other incoming messages.
+                            tokio::spawn(async move {
+                                respond.notified().await;
+                                responder.respond(PromptResponse::new(StopReason::EndTurn))
+                            });
+                            Ok(())
+                        },
+                        on_receive_request!(),
+                    )
+                    .on_receive_request(
+                        async move |_req: TestSteeringRequest,
+                                    responder: Responder<serde_json::Value>,
+                                    _cx: ConnectionTo<Client>| {
+                            let outcome = agent_steer_outcomes
+                                .lock()
+                                .unwrap()
+                                .pop_front()
+                                .unwrap_or_else(|| serde_json::json!({"outcome": "injected"}));
+                            responder.respond(outcome)
+                        },
+                        on_receive_request!(),
+                    )
+                    .connect_with(agent_end, async move |cx: ConnectionTo<Client>| {
+                        while let Some(frames) = unprompted_rx.recv().await {
+                            send_grok_frames(&cx, &frames)?;
+                        }
+                        std::future::pending::<Result<(), agent_client_protocol::Error>>().await
+                    })
+                    .await;
+            });
+
+            let state = Arc::new(RwLock::new(SessionState::new(
+                "conn-custom".to_string(),
+                agent_type,
+                None,
+                "win".to_string(),
+                None,
+            )));
+            let events = state.read().await.event_stream().subscribe();
+            let (cmd_tx, mut cmd_rx) = mpsc::channel(16);
+            let loop_state = Arc::clone(&state);
+            let client = tokio::spawn(async move {
+                let _ = Client
+                    .builder()
+                    .connect_with(client_end, async move |cx: ConnectionTo<Agent>| {
+                        let raw = cx
+                            .send_request_to(
+                                Agent,
+                                UntypedMessage::new("session/new", NewSessionRequest::new("/tmp"))?,
+                            )
+                            .block_task()
+                            .await?;
+                        let response: NewSessionResponse = serde_json::from_value(raw)
+                            .map_err(agent_client_protocol::Error::into_internal_error)?;
+                        let mut session = AgentSession::attach(&cx, response)?;
+                        let perms = PendingPermissions::default();
+                        let ledger = background_watch::PromptLedger::shared();
+                        let stderr_tail = Arc::new(StderrTail::new());
+                        run_conversation_loop(
+                            &mut session,
+                            "conn-custom",
+                            &EventEmitter::Noop,
+                            &loop_state,
+                            agent_type,
+                            &perms,
+                            &mut cmd_rx,
+                            Arc::new(TerminalRuntime::with_base_env(BTreeMap::new())),
+                            "/tmp",
+                            false,
+                            &ledger,
+                            None,
+                            &stderr_tail,
+                        )
+                        .await?;
+                        Ok(())
+                    })
+                    .await;
+            });
+
+            Self {
+                state,
+                cmd_tx,
+                events,
+                seen: Vec::new(),
+                unprompted,
+                respond,
+                steer_outcomes,
+                client,
+                agent,
+            }
+        }
+
+        /// Have the agent send `frames` now, outside any prompt.
+        fn agent_sends(&self, frames: Vec<GrokFrame>) {
+            self.unprompted.send(frames).expect("the agent is running");
+        }
+
+        /// Run one prompted turn to its end: admit the prompt the way
+        /// `send_prompt_inner` does, wait until `last_text` has been read
+        /// inside the turn, then release the response and wait for the end.
+        async fn run_turn(&mut self, prompt: &str, last_text: &str) {
+            self.open_turn(prompt, last_text).await;
+            self.close_turn().await;
+        }
+
+        /// The first half of [`Self::run_turn`]: the turn stays open.
+        async fn open_turn(&mut self, prompt: &str, last_text: &str) {
+            self.state.write().await.turn_in_flight = true;
+            self.cmd_tx
+                .send(ConnectionCommand::Prompt {
+                    blocks: vec![PromptInputBlock::Text {
+                        text: prompt.into(),
+                    }],
+                    user_message: None,
+                })
+                .await
+                .expect("the loop is running");
+            self.until_text(last_text).await;
+        }
+
+        /// The second half of [`Self::run_turn`].
+        async fn close_turn(&mut self) {
+            self.respond.notify_one();
+            self.until("the turn end", |e| {
+                matches!(e, AcpEvent::TurnComplete { .. })
+            })
+            .await;
+        }
+
+        async fn until_text(&mut self, text: &str) -> usize {
+            self.until(
+                "the reply",
+                |e| matches!(e, AcpEvent::ContentDelta { text: delta, .. } if delta == text),
+            )
+            .await
+        }
+
+        /// Steer the running turn the way `submit_feedback_native` does.
+        async fn steer(&self, text: &str) -> Result<SteerOutcome, AcpError> {
+            let (reply, outcome) = oneshot::channel();
+            self.cmd_tx
+                .send(ConnectionCommand::Steer {
+                    blocks: vec![PromptInputBlock::Text { text: text.into() }],
+                    reply,
+                })
+                .await
+                .expect("the loop is running");
+            outcome.await.expect("the loop answers")
+        }
+
+        /// Record events until one matches, and return its index in `seen`.
+        async fn until(&mut self, what: &str, matches: impl Fn(&AcpEvent) -> bool) -> usize {
+            let deadline = std::time::Duration::from_secs(10);
+            loop {
+                let envelope = tokio::time::timeout(deadline, self.events.recv())
+                    .await
+                    .unwrap_or_else(|_| {
+                        panic!("timed out waiting for {what}; saw {:#?}", self.seen)
+                    })
+                    .expect("event stream");
+                self.seen.push(envelope.payload.clone());
+                if matches(&envelope.payload) {
+                    return self.seen.len() - 1;
+                }
+            }
+        }
+
+        /// Wait until a [`grok_barrier`] the agent sent has been through the
+        /// loop — and with it every frame sent before it.
+        async fn until_barrier(&mut self) -> usize {
+            self.until("the agent's barrier", |e| {
+                matches!(e, AcpEvent::AvailableCommands { .. })
+            })
+            .await
+        }
+
+        async fn shutdown(self) {
+            let _ = self.cmd_tx.send(ConnectionCommand::Disconnect).await;
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(5), self.client).await;
+            self.agent.abort();
+        }
+    }
+
+    /// Issue #903: a turn the agent runs on its own between two prompts — here
+    /// a background job's follow-up — together with the completion of the call
+    /// that started the job. Both reach codeg on the idle loop, and both have to
+    /// be in the history the conversation is rebuilt from once the next turn
+    /// ends (or the conversation is reopened).
+    #[tokio::test]
+    async fn a_turn_a_custom_agent_runs_on_its_own_stays_in_its_history() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let home_str = home.path().to_string_lossy().into_owned();
+        // The recorder resolves its root from the process-global `CODEG_HOME`;
+        // temp_env serializes this against every other test that pins it.
+        let turns = temp_env::async_with_vars([("CODEG_HOME", Some(home_str.as_str()))], async {
+            let mut lp = CustomLoop::start(vec![
+                vec![
+                    custom_update(serde_json::json!({
+                        "sessionUpdate": "tool_call",
+                        "toolCallId": "job-1",
+                        "title": "Bash",
+                        "kind": "execute",
+                        "status": "in_progress",
+                        "rawInput": {"command": "sleep 30 && echo done"},
+                    })),
+                    custom_text("Started the job."),
+                ],
+                vec![custom_text("You're welcome.")],
+            ])
+            .await;
+
+            // Opening a session does not start a conversation: a greeting sent
+            // before the first prompt stays out of the history, as it stays
+            // out of the live view.
+            lp.agent_sends(vec![custom_text("Welcome!"), grok_barrier()]);
+            lp.until_barrier().await;
+
+            lp.run_turn("start the job", "Started the job.").await;
+
+            // The job outlives its turn: the agent reports the call done and
+            // carries on by itself, with no `session/prompt` around any of it.
+            lp.agent_sends(vec![
+                custom_update(serde_json::json!({
+                    "sessionUpdate": "tool_call_update",
+                    "toolCallId": "job-1",
+                    "status": "completed",
+                    "content": [{"type": "content", "content": {"type": "text", "text": "done"}}],
+                })),
+                custom_text("The job finished."),
+                grok_barrier(),
+            ]);
+            lp.until_barrier().await;
+
+            // The end of the next turn is when the conversation is rebuilt from
+            // history.
+            lp.run_turn("thanks", "You're welcome.").await;
+            lp.shutdown().await;
+            recorded_custom_turns().await
+        })
+        .await;
+
+        assert_eq!(
+            turn_shape(&turns),
+            vec![
+                r#"User: text "start the job""#,
+                r#"Assistant: call job-1 Bash | text "Started the job." | result job-1 "done""#,
+                r#"Assistant: text "The job finished.""#,
+                r#"User: text "thanks""#,
+                r#"Assistant: text "You're welcome.""#,
+            ]
+        );
+    }
+
+    /// Wait until everything the probe session recorded is on disk, then
+    /// rebuild its history the way a reopened conversation does.
+    ///
+    /// Everything goes through the one writer thread, which takes its queue in
+    /// order and writes a turn end before the next job, so a turn end queued
+    /// after the session's records lands only once they have. Waiting for that
+    /// one with room for a stalled CI runner — the loop's own wait on its turn
+    /// end gives up after 2s — is what lets the read see the whole file.
+    async fn recorded_custom_turns() -> Vec<crate::models::message::MessageTurn> {
+        use crate::parsers::AgentParser as _;
+
+        let root = crate::paths::codeg_acp_transcripts_root();
+        let barrier = crate::acp_transcript::record_entry_in(
+            &root,
+            IDLE_PROBE_AGENT,
+            "writer-barrier",
+            crate::acp_transcript::EntryKind::TurnEnd,
+            serde_json::json!({"stopReason": "end_turn"}),
+        );
+        tokio::time::timeout(std::time::Duration::from_secs(30), barrier)
+            .await
+            .expect("the transcript writer kept up")
+            .expect("the barrier record landed");
+
+        crate::parsers::acp_native::AcpNativeParser::new_in(
+            AgentType::custom(IDLE_PROBE_AGENT).expect("a valid custom id"),
+            root,
+        )
+        .get_conversation("s1")
+        .expect("the session has a transcript")
+        .turns
+    }
+
+    /// #892: a custom agent running claude-agent-acp steers natively now, and
+    /// the adapter keeps a steer to itself — no user chunk echoes it. codeg's
+    /// transcript is the whole of such an agent's history, so the loop records
+    /// the steer there: once reopened, the conversation shows it as the user
+    /// turn the live view drew, between the two parts of the reply, and the
+    /// card the first part opened carries the update that came after the
+    /// steer. A steer the agent did not take in is not recorded.
+    #[tokio::test]
+    async fn a_steer_a_custom_agent_takes_in_stays_in_its_history() {
+        let home = tempfile::tempdir().expect("tempdir");
+        let home_str = home.path().to_string_lossy().into_owned();
+        let (turns, transcript) =
+            temp_env::async_with_vars([("CODEG_HOME", Some(home_str.as_str()))], async {
+                let mut lp = CustomLoop::start(vec![vec![
+                    custom_update(serde_json::json!({
+                        "sessionUpdate": "tool_call",
+                        "toolCallId": "job-1",
+                        "title": "Bash",
+                        "kind": "execute",
+                        "status": "in_progress",
+                        "rawInput": {"command": "pnpm build"},
+                    })),
+                    custom_text("Building the page."),
+                ]])
+                .await;
+                lp.steer_outcomes.lock().unwrap().extend([
+                    serde_json::json!({"outcome": "promptRequired"}),
+                    serde_json::json!({"outcome": "startedNewTurn"}),
+                    serde_json::json!({"outcome": "bogus"}),
+                ]);
+
+                lp.open_turn("build the page", "Building the page.").await;
+                assert!(matches!(
+                    lp.steer("not taken in").await,
+                    Ok(SteerOutcome::PromptRequired)
+                ));
+                assert!(matches!(
+                    lp.steer("detached").await,
+                    Ok(SteerOutcome::StartedNewTurn)
+                ));
+                assert!(lp.steer("garbled").await.is_err());
+                assert!(matches!(
+                    lp.steer("make it blue").await,
+                    Ok(SteerOutcome::Injected)
+                ));
+                lp.agent_sends(vec![
+                    custom_update(serde_json::json!({
+                        "sessionUpdate": "tool_call_update",
+                        "toolCallId": "job-1",
+                        "status": "completed",
+                        "content": [{"type": "content", "content": {"type": "text", "text": "built"}}],
+                    })),
+                    custom_text("Blue it is."),
+                ]);
+                lp.until_text("Blue it is.").await;
+                lp.close_turn().await;
+                lp.shutdown().await;
+
+                let turns = recorded_custom_turns().await;
+                let transcript = std::fs::read_to_string(
+                    crate::paths::codeg_acp_transcripts_root()
+                        .join(IDLE_PROBE_AGENT)
+                        .join("s1.jsonl"),
+                )
+                .expect("the transcript file");
+                (turns, transcript)
+            })
+            .await;
+
+        assert_eq!(
+            turn_shape(&turns),
+            vec![
+                r#"User: text "build the page""#,
+                r#"Assistant: call job-1 Bash | text "Building the page." | result job-1 "built""#,
+                r#"User: text "make it blue""#,
+                r#"Assistant: text "Blue it is.""#,
+            ]
+        );
+        let steers: Vec<serde_json::Value> = transcript
+            .lines()
+            .filter_map(|line| serde_json::from_str::<serde_json::Value>(line).ok())
+            .filter(|entry| entry.get("s") == Some(&serde_json::Value::Bool(true)))
+            .collect();
+        assert_eq!(steers.len(), 1, "{transcript}");
+        assert_eq!(steers[0]["k"], "prompt");
+        assert_eq!(
+            steers[0]["p"],
+            serde_json::json!([{"type": "text", "text": "make it blue"}])
+        );
     }
 }
 

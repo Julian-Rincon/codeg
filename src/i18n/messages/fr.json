@@ -177,6 +177,19 @@
       "sectionDescription": "Les cartes de raccourci « Développement / Bureautique » affichées au-dessus du champ de saisie sur la page de nouvelle conversation.",
       "showQuickActions": "Afficher sur la page de nouvelle conversation"
     },
+    "chatAnimations": {
+      "sectionTitle": "Animations du chat",
+      "sectionDescription": "Animations de pliage/dépliage, d'appels d'outils et d'état de travail dans la zone de conversation, ainsi que le défilement fluide. Désactivez-les pour des mises à jour instantanées. Les indicateurs de chargement continuent de tourner.",
+      "enable": "Activer les animations du chat"
+    },
+    "chatWidth": {
+      "sectionTitle": "Largeur du chat",
+      "sectionDescription": "Largeur maximale de la colonne de conversation et de la zone de saisie. Vous pouvez aussi faire glisser les bords du chat pour l'ajuster.",
+      "label": "Largeur du contenu",
+      "default": "Par défaut ({width}px)",
+      "hint": "Mesurée avec un zoom de la fenêtre à 100% et mise à l'échelle avec lui. Les valeurs très grandes sont limitées pour tenir dans la fenêtre.",
+      "reset": "Réinitialiser"
+    },
     "workspaceBackground": {
       "sectionTitle": "Arrière-plan de l'espace de travail",
       "sectionDescription": "Affiche une image derrière tout l'espace de travail. La barre latérale et les panneaux deviennent translucides et dépolis pour laisser transparaître l'image, et un masque préserve la lisibilité du texte.",
@@ -2063,7 +2076,8 @@
         "assistant": "Assistant",
         "system": "Système",
         "toolResult": "Résultat",
-        "toolError": "Erreur"
+        "toolError": "Erreur",
+        "turnFailed": "Échec du tour"
       },
       "moreActions": "Plus d’actions"
     },
@@ -2105,6 +2119,8 @@
     "conversationCard": {
       "untitledConversation": "Conversation sans titre",
       "newConversation": "Nouvelle conversation",
+      "maximize": "Agrandir",
+      "restore": "Restaurer",
       "attachToCurrentSession": "Ajouter à la session",
       "rename": "Renommer",
       "status": "Statut",
@@ -2310,6 +2326,9 @@
       "closeAll": "Tout fermer",
       "hideTerminal": "Masquer le terminal ({shortcut})",
       "openFolderFirst": "Ouvrez d'abord un dossier",
+      "processExited": "Processus terminé",
+      "processExitedWithCode": "Processus terminé (code {code})",
+      "unavailable": "Session de terminal indisponible. Elle s'est peut-être terminée ou le serveur a redémarré.",
       "keybar": {
         "label": "Touches virtuelles du terminal",
         "show": "Afficher les touches virtuelles",
@@ -3468,6 +3487,7 @@
         "errorActionCommandCopied": "Copié",
         "emptyConversation": "Aucun message dans cette conversation.",
         "systemMessage": "Message système",
+        "turnFailed": "Échec du tour : {message}",
         "copyMessage": "Copier",
         "forkFromHere": "Bifurquer d'ici",
         "forkBusy": "Impossible de bifurquer pendant qu'un tour est en cours",
@@ -3508,7 +3528,8 @@
         "listen": "Écouter",
         "stopListening": "Arrêter",
         "listenUnavailable": "Service vocal indisponible",
-        "listenCodeBlock": "Bloc de code."
+        "listenCodeBlock": "Bloc de code.",
+        "resizeWidth": "Faites glisser pour ajuster la largeur du chat · double-clic pour réinitialiser"
       },
       "liveTurnStats": {
         "thinking": "Réflexion...",
@@ -3618,6 +3639,7 @@
         "nameLabel": "Nom :",
         "agentPromptLabel": "Instruction",
         "agentModelLabel": "Modèle",
+        "agentEffortLabel": "Effort",
         "agentRunning": "En cours...",
         "agentLiveTranscript": "Activité en direct",
         "agentProgressTools": "{count} appels d'outils",
@@ -4171,7 +4193,25 @@
     "loading": "Chargement...",
     "emptyDirectory": "Ce répertoire est vide",
     "errorLoadingDir": "Échec du chargement du répertoire",
-    "permissionDenied": "Permission refusée"
+    "permissionDenied": "Permission refusée",
+    "newFolder": {
+      "button": "Nouveau dossier",
+      "placeholder": "Nom du dossier",
+      "create": "Créer le dossier",
+      "location": "Dans {path}",
+      "errors": {
+        "empty": "Saisissez un nom pour le dossier.",
+        "reservedName": "« {name} » ne peut pas servir de nom de dossier.",
+        "separator": "Un nom de dossier ne peut contenir ni / ni \\.",
+        "controlCharacter": "Un nom de dossier ne peut contenir ni caractères de contrôle ni sauts de ligne.",
+        "reservedCharacter": "Un nom de dossier ne peut pas contenir {character}.",
+        "invalidParent": "Impossible de créer un dossier dans {path}.",
+        "parentNotFound": "{path} n’existe plus.",
+        "alreadyExists": "« {name} » existe déjà ici.",
+        "permissionDenied": "Vous n’avez pas l’autorisation de créer un dossier ici.",
+        "failed": "Impossible de créer le dossier : {reason}"
+      }
+    }
   },
   "ChatChannelSettings": {
     "loading": "Chargement...",
@@ -4553,6 +4593,7 @@
       "experts": "Experts",
       "science": "Science",
       "office": "Outils bureautiques",
+      "ui": "Interface",
       "custom": "Personnalisées"
     },
     "actions": {
@@ -4561,6 +4602,18 @@
     },
     "toasts": {
       "openFolderFailed": "Échec de l'ouverture du dossier"
+    }
+  },
+  "GenerativeUiSettings": {
+    "loading": "Chargement…",
+    "switchLabel": "Interface générative (json-render)",
+    "switchDescription": "Une fois activée, les agents lancés par Codeg reçoivent la compétence json-render, et les blocs de code spec de leurs réponses s'affichent sous forme de cartes interactives.",
+    "usage": "Tapez /json-render suivi de votre demande, par exemple /json-render présente dans un tableau les fichiers modifiés. Dans Codex, utilisez $json-render. Vous pouvez aussi simplement demander à l'agent de présenter le résultat en cartes ou en tableau.",
+    "effect": "Les cartes apparaissent, ou redeviennent des blocs de code, immédiatement. La compétence est disponible dans les conversations démarrées après l'activation ; la désactiver la retire aussitôt de tous les agents.",
+    "conflict": "Votre dossier central contient déjà une compétence personnelle nommée json-render. Renommez-la dans l'onglet Personnalisées pour utiliser la version intégrée.",
+    "toasts": {
+      "saveFailed": "Impossible d'enregistrer le réglage",
+      "unlinkFailed": "Désactivée, mais json-render n'a pas pu être retiré de ces emplacements. Une nouvelle tentative aura lieu au prochain lancement de chaque agent."
     }
   },
   "QuickMessagesSettings": {
@@ -4816,6 +4869,8 @@
     }
   },
   "RemoteWorkspace": {
+    "openLocalWorkspace": "Ouvrir l’espace de travail local",
+    "openLocalFailed": "Impossible d’ouvrir l’espace de travail local",
     "openRemoteWorkspace": "Ouvrir l’espace de travail distant",
     "manage": "Gérer l’espace de travail distant",
     "manageTitle": "Connexions à l’espace de travail distant",

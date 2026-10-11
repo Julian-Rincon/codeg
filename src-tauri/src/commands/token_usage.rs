@@ -110,17 +110,25 @@ const TOP_CONVERSATIONS: usize = 8;
 ///   the two (which every shared helper does, because for Claude they are
 ///   disjoint) inflated input and total by the cached amount. See
 ///   `parsers::qoder::qoder_turn_usage`.
-/// * `4` — added the twelve tool-quality counters (`tool_calls`/`tool_errors`
+/// * `5` — added the twelve tool-quality counters (`tool_calls`/`tool_errors`
 ///   and the five category pairs — see `tool_counters_from_blocks`). Every row
-///   written under `1`–`3` has them at their column default (`0`), which reads
+///   written under `1`–`4` has them at their column default (`0`), which reads
 ///   as "no tool calls recorded" rather than "recorded and empty" — wrong for
 ///   any conversation that actually used tools. Bumping the version is what
 ///   gets real counts into rows that already exist; a fresh row from a
 ///   conversation with genuinely no tool calls (a short chat) is unaffected
 ///   either way.
+/// * `4` — Codex cache writes split out of input. Codex's `input_tokens` is
+///   the whole prompt: besides the cache read it includes
+///   `cache_write_input_tokens`, which some providers and gateways report
+///   (codeg's own bound provider among them) and OpenAI's API leaves at 0.
+///   Only the read was split out, so every write counted as fresh input and
+///   the cache-write column stayed 0. Totals are unchanged; the columns are
+///   not.
+///   See `parsers::codex::codex_usage_counters`.
 ///
 /// Only the accounting stored in `token_usage_turn` counts: the four token
-/// counters, the duration, the timestamp, and (from schema `4`) the
+/// counters, the duration, the timestamp, and (from schema `5`) the
 /// tool-quality counters. A conversation's context WINDOW is not stored here
 /// (nor anywhere else — `SessionStats` is recomputed by the parser on every
 /// read), so changing how a window is inferred needs no bump; it reaches every
@@ -133,7 +141,7 @@ const TOP_CONVERSATIONS: usize = 8;
 /// counters predate it, since a custom/BYO model has always exposed them and
 /// the parser reads every session under `~/.qoder/projects`, not just the ones
 /// codeg launched.
-const FACT_SCHEMA_VERSION: &str = "4";
+const FACT_SCHEMA_VERSION: &str = "5";
 
 const FACT_SCHEMA_VERSION_KEY: &str = "token_usage_fact_schema_version";
 
