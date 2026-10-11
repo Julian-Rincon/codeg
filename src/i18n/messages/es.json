@@ -2229,6 +2229,21 @@
         "loadFailed": "No se pudo leer el estado: {message}",
         "openSettings": "Abrir ajustes completos",
         "refresh": "Actualizar"
+      },
+      "usage": {
+        "agent": "Claude",
+        "title": "Uso de tokens",
+        "ariaLabel": "Uso de tokens",
+        "compact": "{agent} {fiveHour}% · sem {week}%",
+        "compactTokens": "{tokens} hoy",
+        "fiveHour": "5 h",
+        "week": "Semana",
+        "resetsAt": "Se reinicia a las {time}",
+        "plan": "Plan {plan}",
+        "claudeError": "No se pudo leer el uso de Claude: {message}",
+        "today": "Hoy",
+        "weekTokens": "Esta semana: {tokens}",
+        "empty": "Aún no hay tokens registrados"
       }
     },
     "auxPanel": {
@@ -3946,7 +3961,11 @@
         "noSuccessorWithReset": "Todavía no hay un sucesor medido disponible ({resets}).",
         "error": "No se pudo preparar el relevo.",
         "retry": "Reintentar",
-        "dismiss": "Descartar"
+        "dismiss": "Descartar",
+        "waitAndContinue": "Esperar y continuar solo",
+        "resumeScheduled": "Continuaré a las {time}",
+        "cancel": "Cancelar",
+        "resumeError": "No se pudo programar la reanudación."
       },
       "backgroundTasks": {
         "settledFallback": "Tarea en segundo plano finalizada ({status})",

@@ -107,11 +107,12 @@ mod tauri_app {
         pet as pet_commands, phantom_handoff as phantom_handoff_commands,
         phantom_successor as phantom_successor_commands, project_boot,
         question as question_commands, quick_messages as quick_messages_commands,
+        quota_resume as quota_resume_commands,
         remote_proxy as remote_proxy_commands,
         remote_workspace as remote_workspace_commands, science as science_commands,
         session_info as session_info_commands,
         system_settings, terminal as terminal_commands,
-        token_usage as token_usage_commands,
+        token_usage as token_usage_commands, usage_meter as usage_meter_commands,
         forge as forge_commands, version_control, windows, work_task as work_task_commands,
         workspace_state as workspace_state_commands, workspace_windows,
     };
@@ -1315,6 +1316,14 @@ mod tauri_app {
                     tauri::async_runtime::spawn(crate::work_task::run_task_engine(engine));
                 }
 
+                // Quota-resume loop: resumes conversations whose agent quota
+                // came back while nobody was watching. Started once per process
+                // (the spawn is idempotent); mirrored in `bin/codeg_server.rs`.
+                crate::commands::quota_resume::spawn_resume_loop(
+                    app.state::<db::AppDatabase>().conn.clone(),
+                    app.state::<ConnectionManager>().clone_ref(),
+                );
+
                 // OS `codeg://` URLs. Register the listener after the DB is
                 // live so a warm-start click can look the conversation up.
                 // Cold-start URLs are also read here and baked into the main
@@ -2084,6 +2093,10 @@ mod tauri_app {
                 token_usage_commands::token_usage_status,
                 token_usage_commands::token_usage_sync,
                 model_scorecard_commands::model_scorecard,
+                usage_meter_commands::usage_meter,
+                quota_resume_commands::quota_resume_schedule,
+                quota_resume_commands::quota_resume_list,
+                quota_resume_commands::quota_resume_cancel,
                 phantom_successor_commands::phantom_successor,
                 phantom_handoff_commands::phantom_handoff,
                 work_task_commands::work_task_list,

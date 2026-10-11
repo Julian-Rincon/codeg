@@ -2229,6 +2229,21 @@
         "loadFailed": "تعذّرت قراءة الحالة: {message}",
         "openSettings": "فتح الإعدادات الكاملة",
         "refresh": "تحديث"
+      },
+      "usage": {
+        "agent": "Claude",
+        "title": "Token usage",
+        "ariaLabel": "Token usage",
+        "compact": "{agent} {fiveHour}% · wk {week}%",
+        "compactTokens": "{tokens} today",
+        "fiveHour": "5 h",
+        "week": "Week",
+        "resetsAt": "Resets at {time}",
+        "plan": "Plan {plan}",
+        "claudeError": "Couldn't read Claude usage: {message}",
+        "today": "Today",
+        "weekTokens": "This week: {tokens}",
+        "empty": "No tokens recorded yet"
       }
     },
     "auxPanel": {
@@ -3946,7 +3961,11 @@
         "noSuccessorWithReset": "لا يوجد بديل مُقاس متاح بعد ({resets}).",
         "error": "تعذّر تجهيز عملية التسليم.",
         "retry": "إعادة المحاولة",
-        "dismiss": "تجاهل"
+        "dismiss": "تجاهل",
+        "waitAndContinue": "Wait and continue alone",
+        "resumeScheduled": "I'll continue at {time}",
+        "cancel": "Cancel",
+        "resumeError": "Couldn't schedule the resume."
       },
       "backgroundTasks": {
         "settledFallback": "انتهت مهمة الخلفية ({status})",

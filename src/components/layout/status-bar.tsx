@@ -1,6 +1,7 @@
 "use client"
 
 import { StatusBarStats } from "@/components/layout/status-bar-stats"
+import { StatusBarUsage } from "@/components/layout/status-bar-usage"
 import { StatusBarTasks } from "@/components/layout/status-bar-tasks"
 import { StatusBarAlerts } from "@/components/layout/status-bar-alerts"
 import { StatusBarMcp } from "@/components/layout/status-bar-mcp"
@@ -26,6 +27,7 @@ export function StatusBar() {
         </div>
         <div className="flex items-center gap-3">
           <StatusBarUpdate />
+          <StatusBarUsage />
           <CommandDropdown />
           <StatusBarMcp />
           <StatusBarAlerts />
@@ -61,6 +63,7 @@ export function StatusBar() {
       </div>
       <div className="flex items-center gap-4">
         <StatusBarUpdate />
+        <StatusBarUsage />
         <StatusBarTasks />
         {/* Command launcher (moved from the aux "session details" tab), taking
             the slot the old static branch label (StatusBarSessionInfo) held. */}

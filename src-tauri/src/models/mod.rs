@@ -14,6 +14,7 @@ pub mod quick_message;
 pub mod remote_workspace_connection;
 pub mod system;
 pub mod token_usage;
+pub mod usage_meter;
 pub mod work_task;
 
 pub use agent::AgentType;
@@ -57,6 +58,7 @@ pub use token_usage::{
     TokenUsageReport, TokenUsageStreak, TokenUsageSyncProgress, TokenUsageSyncResult,
     TokenUsageSyncStatus, TokenUsageTotals,
 };
+pub use usage_meter::{ClaudeUsage, ClaudeUsageWindow, TodayUsageEntry, UsageMeter};
 pub use work_task::{
     FollowUpIntent, WorkTaskChangedFile, WorkTaskConfig, WorkTaskDraft, WorkTaskEventInfo,
     WorkTaskFolderSettings, WorkTaskInfo, WorkTaskMergeOp, WorkTaskMergeState, WorkTaskPreflight,

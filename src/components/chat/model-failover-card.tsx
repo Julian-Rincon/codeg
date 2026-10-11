@@ -19,6 +19,11 @@ import { AgentIcon } from "@/components/agent-icon"
 import { Button } from "@/components/ui/button"
 import { getAgentLabel } from "@/lib/custom-agents"
 import { formatLimitResetTime } from "@/lib/model-scorecard"
+import {
+  cancelQuotaResume,
+  scheduleQuotaResume,
+  type ScheduledQuotaResume,
+} from "@/lib/usage-meter"
 import { cn } from "@/lib/utils"
 import type {
   PhantomSuccessorCandidate,
@@ -44,6 +49,13 @@ export interface ModelFailoverCardProps {
   /** "Esperar" — closes the card for this hit; a later, distinct hit re-offers. */
   onDismiss: () => void
   onRetry: () => void
+  /** The persisted conversation to resume — half of the resume target. Omitted
+   *  by callers that don't offer the automatic resume (the button is then
+   *  disabled). */
+  conversationId?: number | null
+  /** The live connection backing this conversation — the other half of the
+   *  resume target (the backend re-sends the prompt on it). */
+  connectionId?: string | null
 }
 
 export function ModelFailoverCard({
@@ -56,10 +68,17 @@ export function ModelFailoverCard({
   onAccept,
   onDismiss,
   onRetry,
+  conversationId = null,
+  connectionId = null,
 }: ModelFailoverCardProps) {
   const t = useTranslations("Folder.chat.modelFailover")
   const locale = useLocale()
   const [runnerUpOpen, setRunnerUpOpen] = useState(false)
+  // "Esperar y continuar solo": the scheduled resume (null until one is
+  // booked), plus its in-flight and error states.
+  const [resume, setResume] = useState<ScheduledQuotaResume | null>(null)
+  const [scheduling, setScheduling] = useState(false)
+  const [resumeError, setResumeError] = useState(false)
 
   const resetHint =
     offer?.limited?.resets_hint?.trim() ||
@@ -72,6 +91,68 @@ export function ModelFailoverCard({
   const successor = offer?.successor ?? null
   const runnerUp = offer?.runner_up ?? null
   const locked = accepting
+  const canScheduleResume = conversationId != null && !!connectionId
+
+  const handleScheduleResume = async () => {
+    if (conversationId == null || !connectionId) return
+    setScheduling(true)
+    setResumeError(false)
+    try {
+      const result = await scheduleQuotaResume({
+        connection_id: connectionId,
+        conversation_id: conversationId,
+        agent_type: limitedAgentType,
+      })
+      setResume(result)
+    } catch {
+      setResumeError(true)
+    } finally {
+      setScheduling(false)
+    }
+  }
+
+  const handleCancelResume = async () => {
+    if (!resume) return
+    try {
+      await cancelQuotaResume(resume.id)
+    } catch {
+      // Best-effort from the card's point of view; the resume row resets
+      // either way and the scheduler reports its own failures.
+    }
+    setResume(null)
+  }
+
+  const resumeAction = resume ? (
+    <span className="flex items-center gap-2 text-2xs text-muted-foreground">
+      <span>
+        {t("resumeScheduled", {
+          time: formatLimitResetTime(resume.resume_at, locale) ?? "",
+        })}
+      </span>
+      <button
+        type="button"
+        onClick={() => void handleCancelResume()}
+        className="underline underline-offset-2 hover:text-foreground hover:no-underline"
+      >
+        {t("cancel")}
+      </button>
+    </span>
+  ) : (
+    <Button
+      variant="outline"
+      size="sm"
+      disabled={locked || scheduling || !canScheduleResume}
+      onClick={() => void handleScheduleResume()}
+    >
+      {scheduling && (
+        <Loader2
+          aria-hidden
+          className="size-3.5 animate-spin motion-reduce:animate-none"
+        />
+      )}
+      {t("waitAndContinue")}
+    </Button>
+  )
 
   return (
     <div
@@ -139,6 +220,7 @@ export function ModelFailoverCard({
             >
               {t("wait")}
             </Button>
+            {resumeAction}
             {runnerUp && !runnerUpOpen && (
               <button
                 type="button"
@@ -181,9 +263,12 @@ export function ModelFailoverCard({
               ? t("noSuccessorWithReset", { resets: resetHint })
               : t("noSuccessor")}
           </p>
-          <Button variant="outline" size="sm" onClick={onDismiss}>
-            {t("wait")}
-          </Button>
+          <div className="flex flex-wrap items-center gap-2">
+            <Button variant="outline" size="sm" onClick={onDismiss}>
+              {t("wait")}
+            </Button>
+            {resumeAction}
+          </div>
         </div>
       )}
 
@@ -198,6 +283,10 @@ export function ModelFailoverCard({
             {t("retry")}
           </button>
         </div>
+      )}
+
+      {resumeError && (
+        <p className="text-xs text-destructive">{t("resumeError")}</p>
       )}
     </div>
   )

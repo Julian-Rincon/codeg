@@ -2229,6 +2229,21 @@
         "loadFailed": "无法读取状态：{message}",
         "openSettings": "打开详细设置",
         "refresh": "刷新"
+      },
+      "usage": {
+        "agent": "Claude",
+        "title": "Token usage",
+        "ariaLabel": "Token usage",
+        "compact": "{agent} {fiveHour}% · wk {week}%",
+        "compactTokens": "{tokens} today",
+        "fiveHour": "5 h",
+        "week": "Week",
+        "resetsAt": "Resets at {time}",
+        "plan": "Plan {plan}",
+        "claudeError": "Couldn't read Claude usage: {message}",
+        "today": "Today",
+        "weekTokens": "This week: {tokens}",
+        "empty": "No tokens recorded yet"
       }
     },
     "auxPanel": {
@@ -3946,7 +3961,11 @@
         "noSuccessorWithReset": "暂无已测评的后继模型（{resets}）。",
         "error": "无法准备交接。",
         "retry": "重试",
-        "dismiss": "关闭"
+        "dismiss": "关闭",
+        "waitAndContinue": "Wait and continue alone",
+        "resumeScheduled": "I'll continue at {time}",
+        "cancel": "Cancel",
+        "resumeError": "Couldn't schedule the resume."
       },
       "backgroundTasks": {
         "settledFallback": "后台任务已结束（{status}）",

@@ -1632,6 +1632,19 @@ pub fn build_router(
             "/model_scorecard",
             post(handlers::model_scorecard::model_scorecard),
         )
+        .route("/usage_meter", post(handlers::usage_meter::usage_meter))
+        .route(
+            "/quota_resume_schedule",
+            post(handlers::quota_resume::quota_resume_schedule),
+        )
+        .route(
+            "/quota_resume_list",
+            post(handlers::quota_resume::quota_resume_list),
+        )
+        .route(
+            "/quota_resume_cancel",
+            post(handlers::quota_resume::quota_resume_cancel),
+        )
         .route(
             "/phantom_successor",
             post(handlers::phantom::phantom_successor),

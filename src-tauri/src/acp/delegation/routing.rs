@@ -191,6 +191,36 @@ pub fn plan_with(
     })
 }
 
+/// Claude quota (5 h, 7 day) in percent at or above which a `calidad` profile
+/// stops spending the paid models.
+const QUOTA_HIGH_PCT: f64 = 90.0;
+
+/// The profile to route with, given Claude's current quota and a note to show
+/// the lead when the quota forced a downgrade.
+///
+/// `calidad` always prefers the strongest paid model, which is exactly what
+/// fails when Claude's quota is spent; past [`QUOTA_HIGH_PCT`] in either window
+/// the router falls back to `equilibrado` weights, which prefer the free
+/// candidates. Returns the configured profile untouched when the quota is
+/// unknown or already below the threshold.
+pub fn effective_profile(
+    configured: Profile,
+    claude: Option<(f64, f64)>,
+) -> (Profile, Option<String>) {
+    let Some((five_hour, week)) = claude else {
+        return (configured, None);
+    };
+    if configured != Profile::Calidad || (five_hour < QUOTA_HIGH_PCT && week < QUOTA_HIGH_PCT) {
+        return (configured, None);
+    }
+    (
+        Profile::Equilibrado,
+        Some(format!(
+            "Claude quota high ({five_hour:.0}% 5h / {week:.0}% week): routing with equilibrado weights"
+        )),
+    )
+}
+
 /// `{"difficulty", "hint"}` telling the lead how to retry a failed/bad task.
 pub fn escalate_value(info: &RouteInfo) -> Value {
     let next = Difficulty::parse(&info.difficulty).and_then(router::escalate);
@@ -556,8 +586,16 @@ impl DelegationRouting for DbRouting {
             .collect();
         let stats: RouterStats = self.load(STATS_KEY).await;
         let pool = candidates_from_scorecard(&entries, &stats);
+        // Spend the paid models only while Claude's quota holds up.
+        let claude = crate::commands::usage_meter::claude_usage_cached().await;
+        let claude = claude.map(|u| (u.five_hour.percent, u.seven_day.percent));
+        let (profile, note) = effective_profile(profile, claude);
         let mut rng = || rand::random::<f64>();
-        plan_with(args, &pool, &stats, profile, &mut rng)
+        let mut plan = plan_with(args, &pool, &stats, profile, &mut rng)?;
+        if let (Some(note), Some(info)) = (note, plan.info.as_mut()) {
+            info.reason = format!("{} — {}", info.reason, note);
+        }
+        Ok(plan)
     }
 
     async fn remember(&self, task_id: &str, info: &RouteInfo, parent_conversation_id: i32) {
@@ -935,6 +973,67 @@ mod tests {
         a.model = Some("opencode/mimo-v2.6-flash-free".into());
         let plan = plan_with(&a, &pool, &RouterStats::default(), Profile::Calidad, &mut || 0.5).unwrap();
         assert_eq!(plan.model.as_deref(), Some("opencode/mimo-v2.6-flash-free"));
+    }
+
+    #[test]
+    fn a_nearly_full_quota_keeps_calidad() {
+        let (profile, note) = effective_profile(Profile::Calidad, Some((89.9, 89.9)));
+        assert_eq!(profile, Profile::Calidad);
+        assert!(note.is_none(), "{note:?}");
+    }
+
+    #[test]
+    fn either_window_at_the_threshold_drops_to_equilibrado() {
+        for (five, week) in [(90.0, 0.0), (0.0, 90.0), (99.5, 100.0)] {
+            let (profile, note) = effective_profile(Profile::Calidad, Some((five, week)));
+            assert_eq!(profile, Profile::Equilibrado, "{five}/{week}");
+            let note = note.expect("note");
+            assert!(
+                note.starts_with(&format!(
+                    "Claude quota high ({:.0}% 5h / {:.0}% week)",
+                    five, week
+                )),
+                "{note}"
+            );
+            assert!(note.ends_with("equilibrado weights"), "{note}");
+        }
+    }
+
+    #[test]
+    fn an_unknown_or_already_low_profile_is_untouched() {
+        assert_eq!(effective_profile(Profile::Calidad, None), (Profile::Calidad, None));
+        // Equilibrado is already the conservative weights: no note, no change.
+        assert_eq!(
+            effective_profile(Profile::Equilibrado, Some((100.0, 100.0))),
+            (Profile::Equilibrado, None)
+        );
+    }
+
+    #[test]
+    fn a_full_claude_quota_routes_to_the_free_candidate() {
+        // Eligible through measured tool calls, so its quality stays at the
+        // free prior: the profile alone decides between sonnet and the free
+        // model, which is what the quota switch is meant to change.
+        let entries = vec![
+            entry("claude_code", "sonnet", true, 0),
+            entry("open_code", "opencode/mimo-v2.6-flash-free", true, 30),
+        ];
+        let stats = RouterStats::default();
+        let pool = candidates_from_scorecard(&entries, &stats);
+        let mut a = args(true);
+        a.task_kind = Some(TaskKind::Explore);
+
+        // Quota healthy: calidad spends the paid model.
+        let (p, note) = effective_profile(Profile::Calidad, Some((10.0, 10.0)));
+        assert!(note.is_none());
+        let plan = plan_with(&a, &pool, &stats, p, &mut || 0.5).unwrap();
+        assert_eq!(plan.agent_type, AgentType::ClaudeCode, "{:?}", plan.info);
+
+        // Quota spent: the same task now prefers the free candidate.
+        let (p, note) = effective_profile(Profile::Calidad, Some((95.0, 95.0)));
+        assert!(note.is_some());
+        let plan = plan_with(&a, &pool, &stats, p, &mut || 0.5).unwrap();
+        assert_eq!(plan.agent_type, AgentType::OpenCode, "{:?}", plan.info);
     }
 }
 

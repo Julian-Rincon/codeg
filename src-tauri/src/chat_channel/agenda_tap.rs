@@ -36,7 +36,7 @@ pub fn is_agenda_callback(data: &str) -> bool {
 }
 
 /// `NEXUS_BIN`, else the NEXUS virtualenv entry point under `$HOME`.
-fn nexus_bin() -> PathBuf {
+pub(crate) fn nexus_bin() -> PathBuf {
     if let Some(bin) = std::env::var_os("NEXUS_BIN").filter(|v| !v.is_empty()) {
         return PathBuf::from(bin);
     }

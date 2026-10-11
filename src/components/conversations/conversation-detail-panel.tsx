@@ -790,6 +790,8 @@ const ConversationTabView = memo(function ConversationTabView({
         onAccept={(candidate) => void handleFailoverAccept(candidate)}
         onDismiss={failover.dismiss}
         onRetry={failover.retry}
+        conversationId={dbConversationId ?? null}
+        connectionId={conn.connectionId ?? null}
       />
     ) : null
   const selectedModeId = useMemo(() => {

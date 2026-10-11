@@ -606,6 +606,14 @@ async fn async_main() -> ExitCode {
         tokio::spawn(codeg_lib::work_task::run_task_engine(engine));
     }
 
+    // Quota-resume loop: resumes conversations whose agent quota came back
+    // while nobody was watching (mirrors lib.rs setup). Started once per
+    // process; the spawn is idempotent.
+    codeg_lib::commands::quota_resume::spawn_resume_loop(
+        state.db.conn.clone(),
+        state.connection_manager.clone_ref(),
+    );
+
     // Config-sync uploader (mirrors lib.rs setup): sleeps a minute, then
     // compares the configuration's hash every interval and uploads only when
     // it changed. Does nothing at all until a WebDAV endpoint is configured.

@@ -2229,6 +2229,21 @@
         "loadFailed": "Não foi possível ler o estado: {message}",
         "openSettings": "Abrir configurações",
         "refresh": "Atualizar"
+      },
+      "usage": {
+        "agent": "Claude",
+        "title": "Token usage",
+        "ariaLabel": "Token usage",
+        "compact": "{agent} {fiveHour}% · wk {week}%",
+        "compactTokens": "{tokens} today",
+        "fiveHour": "5 h",
+        "week": "Week",
+        "resetsAt": "Resets at {time}",
+        "plan": "Plan {plan}",
+        "claudeError": "Couldn't read Claude usage: {message}",
+        "today": "Today",
+        "weekTokens": "This week: {tokens}",
+        "empty": "No tokens recorded yet"
       }
     },
     "auxPanel": {
@@ -3946,7 +3961,11 @@
         "noSuccessorWithReset": "Ainda não há um sucessor medido disponível ({resets}).",
         "error": "Não foi possível preparar a transferência.",
         "retry": "Tentar novamente",
-        "dismiss": "Descartar"
+        "dismiss": "Descartar",
+        "waitAndContinue": "Wait and continue alone",
+        "resumeScheduled": "I'll continue at {time}",
+        "cancel": "Cancel",
+        "resumeError": "Couldn't schedule the resume."
       },
       "backgroundTasks": {
         "settledFallback": "Tarefa em segundo plano concluída ({status})",

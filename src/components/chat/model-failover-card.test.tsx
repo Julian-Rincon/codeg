@@ -1,6 +1,15 @@
-import { fireEvent, render, screen } from "@testing-library/react"
+import { fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { NextIntlClientProvider } from "next-intl"
-import { describe, expect, it, vi } from "vitest"
+import { beforeEach, describe, expect, it, vi } from "vitest"
+
+const usage = vi.hoisted(() => ({
+  scheduleQuotaResume: vi.fn(),
+  cancelQuotaResume: vi.fn(),
+}))
+vi.mock("@/lib/usage-meter", () => ({
+  scheduleQuotaResume: usage.scheduleQuotaResume,
+  cancelQuotaResume: usage.cancelQuotaResume,
+}))
 
 import { ModelFailoverCard } from "./model-failover-card"
 import enMessages from "@/i18n/messages/en.json"
@@ -64,6 +73,11 @@ const successorOffer: PhantomSuccessorResponse = {
 }
 
 describe("ModelFailoverCard", () => {
+  beforeEach(() => {
+    usage.scheduleQuotaResume.mockReset()
+    usage.cancelQuotaResume.mockReset()
+  })
+
   it("is an accessible status region announcing the limit with the reset hint", () => {
     renderCard({ offer: successorOffer })
     const region = screen.getByRole("status")
@@ -131,5 +145,51 @@ describe("ModelFailoverCard", () => {
     })
     expect(acceptButton).toBeDisabled()
     expect(screen.getByText("Wait")).toBeDisabled()
+  })
+
+  it('schedules an automatic resume on "Wait and continue alone"', async () => {
+    usage.scheduleQuotaResume.mockResolvedValue({
+      id: "r1",
+      resume_at: "2026-10-10T20:00:00Z",
+    })
+    renderCard({
+      offer: successorOffer,
+      conversationId: 42,
+      connectionId: "c-7",
+    })
+    fireEvent.click(screen.getByText("Wait and continue alone"))
+    await waitFor(() =>
+      expect(usage.scheduleQuotaResume).toHaveBeenCalledWith({
+        connection_id: "c-7",
+        conversation_id: 42,
+        agent_type: "claude_code",
+      })
+    )
+    expect(await screen.findByText(/I'll continue at/)).toBeVisible()
+    expect(screen.getByText("Cancel")).toBeVisible()
+  })
+
+  it("cancels a scheduled resume and restores the action", async () => {
+    usage.scheduleQuotaResume.mockResolvedValue({
+      id: "r1",
+      resume_at: "2026-10-10T20:00:00Z",
+    })
+    usage.cancelQuotaResume.mockResolvedValue(undefined)
+    renderCard({
+      offer: successorOffer,
+      conversationId: 42,
+      connectionId: "c-7",
+    })
+    fireEvent.click(screen.getByText("Wait and continue alone"))
+    fireEvent.click(await screen.findByText("Cancel"))
+    await waitFor(() =>
+      expect(usage.cancelQuotaResume).toHaveBeenCalledWith("r1")
+    )
+    expect(screen.getByText("Wait and continue alone")).toBeVisible()
+  })
+
+  it("disables the resume action without a connection target", () => {
+    renderCard({ offer: successorOffer })
+    expect(screen.getByText("Wait and continue alone")).toBeDisabled()
   })
 })
