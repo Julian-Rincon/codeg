@@ -46,6 +46,7 @@ import { ModelScorecardView } from "@/components/token-usage/model-scorecard-vie
 import { FolderAliasLabel } from "@/components/conversations/folder-alias-label"
 import { formatFolderLabelWithAlias } from "@/lib/folder-display"
 import {
+  opencodeProviderCatalog,
   tokenUsageFacets,
   tokenUsageReport,
   tokenUsageStatus,
@@ -68,6 +69,7 @@ import {
   formatDuration,
   formatPercent,
   formatTokensPrecise,
+  formatUsd,
   freshTokens,
   idleDays,
   localTzOffsetMinutes,
@@ -78,9 +80,17 @@ import {
   suggestBucket,
   type TokenUsageRangePreset,
 } from "@/lib/token-usage"
+import {
+  buildRateIndex,
+  coveragePercent,
+  estimateItemCost,
+  estimateReportCost,
+  resolveRate,
+} from "@/lib/model-api-rates"
 import { cn } from "@/lib/utils"
 import type {
   AgentType,
+  OpenCodeCatalogProvider,
   TokenUsageBucket,
   TokenUsageFacets,
   TokenUsageReport,
@@ -362,6 +372,7 @@ function TokenUsageDashboard() {
   const [facets, setFacets] = useState<TokenUsageFacets | null>(null)
   const [status, setStatus] = useState<TokenUsageSyncStatus | null>(null)
   const [report, setReport] = useState<TokenUsageReport | null>(null)
+  const [catalog, setCatalog] = useState<OpenCodeCatalogProvider[] | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [syncing, setSyncing] = useState(false)
@@ -465,6 +476,23 @@ function TokenUsageDashboard() {
   useEffect(() => {
     void load()
   }, [load])
+
+  // Independent of the usage report: the same 24h models.dev catalog the
+  // OpenCode settings page already loads. Failures stay quiet and hide the
+  // dollar line instead of blocking the token counts.
+  useEffect(() => {
+    let cancelled = false
+    void opencodeProviderCatalog()
+      .then((list) => {
+        if (!cancelled) setCatalog(list)
+      })
+      .catch(() => {
+        if (!cancelled) setCatalog([])
+      })
+    return () => {
+      cancelled = true
+    }
+  }, [])
 
   // Latest-ref so the event subscription below is set up once, not torn down
   // and re-established on every filter change (`load`'s identity tracks the
@@ -595,6 +623,15 @@ function TokenUsageDashboard() {
 
   const totals = report?.totals
   const cache = totals ? cacheHitRate(totals) : null
+  const rateIndex = useMemo(
+    () => (catalog && catalog.length > 0 ? buildRateIndex(catalog) : null),
+    [catalog]
+  )
+  const apiEstimate = useMemo(() => {
+    if (!report || !rateIndex) return null
+    const estimate = estimateReportCost(report.by_model, rateIndex)
+    return estimate.coverage > 0 ? estimate : null
+  }, [report, rateIndex])
   const heat = useMemo(
     () => buildHeatMatrix(report?.heatmap ?? []),
     [report?.heatmap]
@@ -721,13 +758,33 @@ function TokenUsageDashboard() {
     const { shown, other } = foldBreakdown(breakdownItems, BREAKDOWN_LIMIT)
     const share = (v: number) =>
       totals.total_tokens > 0 ? v / totals.total_tokens : null
-    const rows: RankedDatum[] = shown.map((it) => ({
-      key: it.key,
-      label: breakdownLabel(it.key, it.label),
-      value: it.total_tokens,
-      share: share(it.total_tokens),
-      hint: t("sessionsCount", { count: it.conversation_count }),
-    }))
+    const rows: RankedDatum[] = shown.map((it) => {
+      const sessions = t("sessionsCount", { count: it.conversation_count })
+      let hint = sessions
+      if (dim === "model" && rateIndex) {
+        const cost = estimateItemCost(it, resolveRate(rateIndex, it.key))
+        if (cost.usd != null) {
+          const estimate =
+            cost.unpricedTokens > 0
+              ? t("apiListEstimatePartial", {
+                  amount: formatUsd(cost.usd),
+                  percent: coveragePercent(
+                    cost.pricedTokens,
+                    cost.unpricedTokens
+                  ),
+                })
+              : t("apiListEstimate", { amount: formatUsd(cost.usd) })
+          hint = `${sessions} · ${estimate}`
+        }
+      }
+      return {
+        key: it.key,
+        label: breakdownLabel(it.key, it.label),
+        value: it.total_tokens,
+        share: share(it.total_tokens),
+        hint,
+      }
+    })
     if (other) {
       rows.push({
         key: other.key,
@@ -739,7 +796,7 @@ function TokenUsageDashboard() {
       })
     }
     return rows
-  }, [breakdownItems, breakdownLabel, totals, t])
+  }, [breakdownItems, breakdownLabel, totals, t, dim, rateIndex])
 
   const onBreakdownSelect = useCallback(
     (key: string) => {
@@ -1140,6 +1197,23 @@ function TokenUsageDashboard() {
                                 />
                               )}
                             </div>
+                            {apiEstimate && (
+                              <div className="mt-2 text-sm text-muted-foreground">
+                                <span title={t("apiListEstimateHint")}>
+                                  {apiEstimate.unpricedTokens > 0
+                                    ? t("apiListEstimatePartial", {
+                                        amount: formatUsd(apiEstimate.usd),
+                                        percent: coveragePercent(
+                                          apiEstimate.pricedTokens,
+                                          apiEstimate.unpricedTokens
+                                        ),
+                                      })
+                                    : t("apiListEstimate", {
+                                        amount: formatUsd(apiEstimate.usd),
+                                      })}
+                                </span>
+                              </div>
+                            )}
                             {archetype && totals.total_tokens > 0 && (
                               // The outer wrapper owns the spacing: mt-auto pins
                               // the strip to the card's bottom edge on wide
