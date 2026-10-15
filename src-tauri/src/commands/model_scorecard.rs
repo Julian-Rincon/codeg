@@ -804,6 +804,24 @@ fn format_routing_guide(card: &ModelScorecard) -> String {
         }
     }
 
+    // Models currently out of quota — called out explicitly so a routing
+    // consumer (human or the `best_for` reader itself) never has to notice
+    // their absence from the recommendations above by itself. `best_for`
+    // already excludes these (see `is_ranking_eligible`); this line is why.
+    let limited: Vec<&ModelScorecardEntry> = card.models.iter().filter(|m| m.limited).collect();
+    if !limited.is_empty() {
+        out.push_str("Limited (excluded from recommendations): ");
+        let parts: Vec<String> = limited
+            .iter()
+            .map(|m| match &m.limit_resets_at {
+                Some(t) => format!("{}/{} (until {t})", m.agent_type, m.model),
+                None => format!("{}/{}", m.agent_type, m.model),
+            })
+            .collect();
+        out.push_str(&parts.join("; "));
+        out.push('\n');
+    }
+
     // Models available per agent, from the live catalog side of the scorecard
     // (an entry counts as "available" only when the catalog affirmatively
     // lists it — unknown-catalog and known-absent both stay out of this line).
@@ -832,33 +850,24 @@ fn format_routing_guide(card: &ModelScorecard) -> String {
         out.push('\n');
     }
 
-    // Models currently out of quota — called out explicitly so a routing
-    // consumer (human or the `best_for` reader itself) never has to notice
-    // their absence from the recommendations above by itself. `best_for`
-    // already excludes these (see `is_ranking_eligible`); this line is why.
-    let limited: Vec<&ModelScorecardEntry> = card.models.iter().filter(|m| m.limited).collect();
-    if !limited.is_empty() {
-        out.push_str("Limited (excluded from recommendations): ");
-        let parts: Vec<String> = limited
-            .iter()
-            .map(|m| match &m.limit_resets_at {
-                Some(t) => format!("{}/{} (until {t})", m.agent_type, m.model),
-                None => format!("{}/{}", m.agent_type, m.model),
-            })
-            .collect();
-        out.push_str(&parts.join("; "));
-        out.push('\n');
-    }
-
     truncate_to_chars(&out, 1500)
 }
 
-/// Truncate `s` to at most `max_chars` characters, on a char boundary.
+/// Truncate `s` to at most `max_chars` characters, on a char boundary. A cut
+/// never leaves half a model name behind: it backs up to the last line break or
+/// list separator and marks the cut with "…".
 fn truncate_to_chars(s: &str, max_chars: usize) -> String {
     if s.chars().count() <= max_chars {
         return s.to_string();
     }
-    s.chars().take(max_chars).collect()
+    let head: String = s.chars().take(max_chars.saturating_sub(1)).collect();
+    let cut = head
+        .rfind(", ")
+        .into_iter()
+        .chain(head.rfind('\n'))
+        .max()
+        .unwrap_or(head.len());
+    format!("{}…", &head[..cut])
 }
 
 // ─── Desktop command ─────────────────────────────────────────────────────
@@ -1392,6 +1401,15 @@ mod tests {
         let card = build_scorecard(&rows, &HashMap::new(), &HashMap::new(), now);
         let text = format_routing_guide(&card);
         assert!(text.chars().count() <= 1500);
+    }
+
+    #[test]
+    fn truncation_backs_up_to_a_separator_instead_of_cutting_a_name() {
+        let s = "Available models: claude_code: [claude-opus-5, claude-sonnet-5]";
+        let out = truncate_to_chars(s, 50);
+        assert!(out.chars().count() <= 50);
+        assert!(out.ends_with("claude-opus-5…"), "{out}");
+        assert_eq!(truncate_to_chars("short", 50), "short");
     }
 
     // ─── JSON shape (serde) ───────────────────────────────────────────────
