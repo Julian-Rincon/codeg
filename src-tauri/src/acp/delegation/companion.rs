@@ -6537,6 +6537,7 @@ mod tests {
             features: FEEDBACK_ONLY,
             custom_agents: Vec::new(),
             disabled_agents: Vec::new(),
+            routing_guide_file: None,
         };
         let inflight = Arc::new(InflightCalls::new());
         let mut texts = Vec::new();
