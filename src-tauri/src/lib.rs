@@ -44,6 +44,7 @@ mod network;
 pub mod office_watch;
 pub mod parsers;
 pub mod paths;
+pub mod coucou_bridge;
 pub mod pet_sessions;
 pub mod pet_state_mapper;
 pub mod pets;
