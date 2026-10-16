@@ -556,13 +556,6 @@ async fn async_main() -> ExitCode {
         pet_state_handle,
     ));
 
-    // Phantom → Coucou: delegations, automations and pending approvals on the
-    // island's `phantom` pill (no-op when Coucou is not running).
-    tokio::spawn(codeg_lib::coucou_bridge::coucou_bridge_task(
-        state.acp_event_bus.clone(),
-        state.event_broadcaster.clone(),
-    ));
-
     // Spawn the idle sweep so connections abandoned without an explicit
     // disconnect (e.g. browser tab closed, panic survivors) are reaped.
     // Override the 60-second default via `CODEG_ACP_IDLE_TIMEOUT_SECS`

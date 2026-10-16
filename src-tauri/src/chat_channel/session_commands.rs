@@ -637,6 +637,8 @@ pub async fn handle_task_with(
             crate::acp::connection::MODEL_CATEGORY_CONFIG_KEY.to_string(),
             model.clone(),
         );
+    } else {
+        preferred_config_values = lead_chat_config_values(db, agent_type).await;
     }
     let connection_id = match conn_mgr
         .spawn_agent(
@@ -991,7 +993,7 @@ pub async fn handle_resume(
             owner_label,
             emitter.clone(),
             None,
-            BTreeMap::new(),
+            lead_chat_config_values(db, conv.agent_type).await,
         )
         .await
     {
@@ -2099,6 +2101,33 @@ fn truncate_topic_title(task_description: &str) -> String {
     format!("Phantom: {title}").chars().take(128).collect()
 }
 
+/// Model + effort the router picks for a lead chat session on `agent_type`,
+/// as spawn config values. Empty when the router has nothing for that agent,
+/// so the agent's own default applies.
+async fn lead_chat_config_values(
+    db: &DatabaseConnection,
+    agent_type: AgentType,
+) -> BTreeMap<String, String> {
+    let mut values = BTreeMap::new();
+    let routing = crate::acp::delegation::routing::DbRouting::new(db.clone());
+    let Some(plan) = routing.plan_lead_chat(agent_type).await else {
+        return values;
+    };
+    if let Some(model) = plan.model {
+        values.insert(crate::acp::connection::MODEL_CATEGORY_CONFIG_KEY.to_string(), model);
+    }
+    if let Some(effort) = plan.effort {
+        values.insert(crate::acp::connection::EFFORT_CATEGORY_CONFIG_KEY.to_string(), effort);
+    }
+    if let Some(info) = plan.info {
+        tracing::info!(
+            "[Router] lead chat on {}: {} effort {} ({})",
+            info.agent_type, info.model, info.effort, info.reason
+        );
+    }
+    values
+}
+
 async fn build_chat_session_runtime_env(
     db: &DatabaseConnection,
     agent_type: AgentType,
@@ -2143,7 +2172,7 @@ async fn spawn_chat_connection_for_conversation(
             owner_label,
             emitter.clone(),
             None,
-            BTreeMap::new(),
+            lead_chat_config_values(db, conv.agent_type).await,
         )
         .await
         .map_err(|e| e.to_string())?;

@@ -191,6 +191,44 @@ pub fn plan_with(
     })
 }
 
+/// How a lead chat session (the Telegram / web chat Phantom opens) is routed:
+/// it plans and delegates, so it gets the router's plan/normal pick.
+pub const LEAD_CHAT_KIND: TaskKind = TaskKind::Plan;
+pub const LEAD_CHAT_DIFFICULTY: Difficulty = Difficulty::Normal;
+
+/// `pool` narrowed to `agent`: a chat session's agent is fixed by its
+/// conversation, so only the model and effort are routed.
+pub fn pool_for_agent(pool: RoutingPool, agent: AgentType) -> RoutingPool {
+    RoutingPool {
+        candidates: pool.candidates.into_iter().filter(|c| c.agent_type == agent).collect(),
+        hints: pool.hints.into_iter().filter(|h| h.agent_type == agent).collect(),
+        // A lead chat is never a trial run.
+        trials: Vec::new(),
+    }
+}
+
+/// Model + effort for a lead chat on `agent`, over already-loaded data.
+/// `None` when the router has nothing for that agent (the agent's own default
+/// applies then).
+pub fn plan_lead_chat_with(
+    agent: AgentType,
+    pool: RoutingPool,
+    stats: &RouterStats,
+    profile: Profile,
+) -> Option<RoutePlan> {
+    let args = RoutingArgs {
+        auto: true,
+        task_kind: Some(LEAD_CHAT_KIND),
+        difficulty: Some(LEAD_CHAT_DIFFICULTY),
+        ..Default::default()
+    };
+    let pool = pool_for_agent(pool, agent);
+    if pool.candidates.is_empty() {
+        return None;
+    }
+    plan_with(&args, &pool, stats, profile, &mut || 1.0).ok()
+}
+
 /// Claude quota (5 h, 7 day) in percent at or above which a `calidad` profile
 /// stops spending the paid models.
 const QUOTA_HIGH_PCT: f64 = 90.0;
@@ -636,6 +674,24 @@ impl DelegationRouting for DbRouting {
 }
 
 impl DbRouting {
+    /// Model + effort for a new lead chat session on `agent` (see
+    /// [`plan_lead_chat_with`]); quota-aware like `auto` delegations.
+    pub async fn plan_lead_chat(&self, agent: AgentType) -> Option<RoutePlan> {
+        let entries = match self.scorecard().await {
+            Ok(entries) => entries,
+            Err(e) => {
+                tracing::warn!("[Router] lead chat not routed: {e}");
+                return None;
+            }
+        };
+        let stats: RouterStats = self.load(STATS_KEY).await;
+        let pool = candidates_from_scorecard(&entries, &stats);
+        let claude = crate::commands::usage_meter::claude_usage_cached().await;
+        let claude = claude.map(|u| (u.five_hour.percent, u.seven_day.percent));
+        let (profile, _) = effective_profile(self.profile().await, claude);
+        plan_lead_chat_with(agent, pool, &stats, profile)
+    }
+
     async fn plan_auto(
         &self,
         args: &RoutingArgs,
@@ -811,6 +867,33 @@ mod tests {
         assert_eq!(plan.model.as_deref(), Some("opus"));
         assert_eq!(plan.effort, None);
         assert!(plan.info.is_none());
+    }
+
+    #[test]
+    fn lead_chat_stays_on_its_agent_and_plans_with_opus_high() {
+        let entries = vec![
+            entry("claude_code", "opus", true, 0),
+            entry("claude_code", "sonnet", true, 0),
+            entry("open_code", "opencode/space-bunny-free", true, 0),
+            entry("open_code", "space-bunny-free", false, 619),
+        ];
+        let stats = RouterStats::default();
+        let pool = candidates_from_scorecard(&entries, &stats);
+        let plan = plan_lead_chat_with(AgentType::ClaudeCode, pool.clone(), &stats, Profile::Calidad).unwrap();
+        assert_eq!(plan.agent_type, AgentType::ClaudeCode);
+        assert_eq!(plan.model.as_deref(), Some("opus"));
+        assert_eq!(plan.effort.as_deref(), Some("high"));
+        // Equilibrado may prefer a free model, but never off the chat's agent.
+        let plan = plan_lead_chat_with(AgentType::ClaudeCode, pool, &stats, Profile::Equilibrado).unwrap();
+        assert_eq!(plan.agent_type, AgentType::ClaudeCode);
+    }
+
+    #[test]
+    fn lead_chat_on_an_agent_without_candidates_is_not_routed() {
+        let entries = vec![entry("claude_code", "opus", true, 0)];
+        let stats = RouterStats::default();
+        let pool = candidates_from_scorecard(&entries, &stats);
+        assert!(plan_lead_chat_with(AgentType::Gemini, pool, &stats, Profile::Calidad).is_none());
     }
 
     #[test]
