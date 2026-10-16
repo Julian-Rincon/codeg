@@ -1604,6 +1604,23 @@ pub fn agent_busy_retry(lang: Lang) -> &'static str {
     }
 }
 
+/// A message sent while the agent is mid-turn: queued, it goes out (joined
+/// with anything else queued) as soon as the current turn ends.
+pub fn prompt_queued(lang: Lang) -> &'static str {
+    match lang {
+        Lang::Es => "📥 En cola: lo envío en cuanto termine el turno actual.",
+        _ => "📥 Queued: it goes out as soon as the current turn ends.",
+    }
+}
+
+/// The turn ended while a message was being queued, so it went out right away.
+pub fn prompt_sent_from_queue(lang: Lang) -> &'static str {
+    match lang {
+        Lang::Es => "📤 Enviado (el turno anterior acababa de terminar).",
+        _ => "📤 Sent (the previous turn had just ended).",
+    }
+}
+
 /// Shown when a task's initial prompt arrives while another turn is already in
 /// flight on the same (shared) connection. Unlike `agent_busy_retry`, the user
 /// does NOT need to resend — the kickoff is deferred and runs automatically

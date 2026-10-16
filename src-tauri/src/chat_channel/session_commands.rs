@@ -1342,7 +1342,8 @@ pub async fn handle_followup(req: FollowupRequest<'_>) -> RichMessage {
         // connection is alive, so do NOT tear down the bridge/session. Tell the
         // user to retry once the current turn finishes.
         if matches!(e, crate::acp::error::AcpError::TurnInProgress) {
-            return RichMessage::info(i18n::agent_busy_retry(req.lang).to_string());
+            return queue_chat_prompt(req.bridge, req.conn_mgr, &connection_id, req.text, req.lang)
+                .await;
         }
         // Otherwise the connection may have died — clean up.
         req.bridge.lock().await.remove(&connection_id);
@@ -1858,7 +1859,8 @@ async fn send_followup_to_session(
 
     if let Err(e) = send_chat_prompt(req.conn_mgr, &connection_id, req.text).await {
         if matches!(e, crate::acp::error::AcpError::TurnInProgress) {
-            return RichMessage::info(i18n::agent_busy_retry(req.lang).to_string());
+            return queue_chat_prompt(req.bridge, req.conn_mgr, &connection_id, req.text, req.lang)
+                .await;
         }
         req.bridge.lock().await.remove(&connection_id);
         if let Some(binding_id) = session_ref.binding_id {
@@ -2178,6 +2180,57 @@ async fn spawn_chat_connection_for_conversation(
         .map_err(|e| e.to_string())?;
 
     Ok((connection_id, folder))
+}
+
+/// Join `text` onto a queued prompt: queued messages go out together, oldest
+/// first, as one prompt (the way Claude Code merges what you type mid-turn).
+fn append_queued(queued: Option<String>, text: &str) -> String {
+    match queued {
+        Some(prev) if !prev.trim().is_empty() => format!("{prev}\n\n{text}"),
+        _ => text.to_string(),
+    }
+}
+
+/// A turn is in flight: queue `text` on the session instead of asking the user
+/// to resend. The `TurnComplete` handler sends the queue as the next prompt.
+async fn queue_chat_prompt(
+    bridge: &Arc<Mutex<SessionBridge>>,
+    conn_mgr: &ConnectionManager,
+    connection_id: &str,
+    text: &str,
+    lang: Lang,
+) -> RichMessage {
+    {
+        let mut guard = bridge.lock().await;
+        let Some(session) = guard.get_mut(connection_id) else {
+            return RichMessage::info(i18n::agent_busy_retry(lang).to_string());
+        };
+        session.pending_prompt = Some(append_queued(session.pending_prompt.take(), text));
+    }
+    // The turn may have ended between the rejected send and the queueing
+    // above; then no TurnComplete is left to flush the queue, so try once now.
+    let queued = bridge
+        .lock()
+        .await
+        .get_mut(connection_id)
+        .and_then(|s| s.pending_prompt.take());
+    if let Some(prompt) = queued {
+        match send_chat_prompt(conn_mgr, connection_id, &prompt).await {
+            Ok(()) => return RichMessage::info(i18n::prompt_sent_from_queue(lang).to_string()),
+            Err(_) => {
+                // Still busy (or failing): keep it for the next TurnComplete,
+                // ahead of anything queued meanwhile.
+                if let Some(s) = bridge.lock().await.get_mut(connection_id) {
+                    let later = s.pending_prompt.take();
+                    s.pending_prompt = Some(match later {
+                        Some(later) => append_queued(Some(prompt), &later),
+                        None => prompt,
+                    });
+                }
+            }
+        }
+    }
+    RichMessage::info(i18n::prompt_queued(lang).to_string())
 }
 
 async fn send_chat_prompt(
@@ -3156,5 +3209,12 @@ mod tests {
         let guard = bridge.lock().await;
         let session = guard.get("conn-voice-followup").expect("session");
         assert_eq!(session.pending_voice_reply_lang.as_deref(), Some("es"));
+    }
+
+    #[test]
+    fn queued_messages_are_joined_oldest_first() {
+        assert_eq!(append_queued(None, "uno"), "uno");
+        assert_eq!(append_queued(Some("  ".into()), "uno"), "uno");
+        assert_eq!(append_queued(Some("uno".into()), "dos"), "uno\n\ndos");
     }
 }

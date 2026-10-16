@@ -195,6 +195,9 @@ pub fn plan_with(
 /// it plans and delegates, so it gets the router's plan/normal pick.
 pub const LEAD_CHAT_KIND: TaskKind = TaskKind::Plan;
 pub const LEAD_CHAT_DIFFICULTY: Difficulty = Difficulty::Normal;
+/// The lead mostly talks and delegates; the heavy work goes to routed
+/// delegations with their own effort, so the lead itself runs at medium.
+pub const LEAD_CHAT_EFFORT: Effort = Effort::Medium;
 
 /// `pool` narrowed to `agent`: a chat session's agent is fixed by its
 /// conversation, so only the model and effort are routed.
@@ -220,6 +223,7 @@ pub fn plan_lead_chat_with(
         auto: true,
         task_kind: Some(LEAD_CHAT_KIND),
         difficulty: Some(LEAD_CHAT_DIFFICULTY),
+        effort: Some(LEAD_CHAT_EFFORT),
         ..Default::default()
     };
     let pool = pool_for_agent(pool, agent);
@@ -870,7 +874,7 @@ mod tests {
     }
 
     #[test]
-    fn lead_chat_stays_on_its_agent_and_plans_with_opus_high() {
+    fn lead_chat_stays_on_its_agent_and_plans_with_opus_medium() {
         let entries = vec![
             entry("claude_code", "opus", true, 0),
             entry("claude_code", "sonnet", true, 0),
@@ -882,7 +886,7 @@ mod tests {
         let plan = plan_lead_chat_with(AgentType::ClaudeCode, pool.clone(), &stats, Profile::Calidad).unwrap();
         assert_eq!(plan.agent_type, AgentType::ClaudeCode);
         assert_eq!(plan.model.as_deref(), Some("opus"));
-        assert_eq!(plan.effort.as_deref(), Some("high"));
+        assert_eq!(plan.effort.as_deref(), Some("medium"));
         // Equilibrado may prefer a free model, but never off the chat's agent.
         let plan = plan_lead_chat_with(AgentType::ClaudeCode, pool, &stats, Profile::Equilibrado).unwrap();
         assert_eq!(plan.agent_type, AgentType::ClaudeCode);
