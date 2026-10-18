@@ -21,12 +21,15 @@ import {
   type TasksViewMode,
 } from "@/lib/tasks-board-filter-storage"
 import { useAppWorkspaceStore } from "@/stores/app-workspace-store"
+import { isDeferred } from "@/components/tasks/task-acceptance"
 import type { WorkTask } from "@/lib/types"
 import { PHANTOM_UI_NAME } from "@/lib/phantom-ui"
 
 const WORK_TASK_CHANGED_EVENT = "task://changed"
 
-/** Statuses that need the user ("Needs you") — drives the sidebar badge. */
+/** Statuses that need the user ("Needs you") — drives the sidebar badge. A task
+ *  the user archived or put aside to handle later is not counted, whatever its
+ *  status: the badge mirrors the column, not the state machine. */
 const ATTENTION_STATUSES = new Set(["awaiting_input", "review", "failed"])
 
 interface TasksViewContextValue {
@@ -138,7 +141,10 @@ export function TasksViewProvider({ children }: { children: ReactNode }) {
   const attentionCount = useMemo(
     () =>
       tasks.filter(
-        (t) => ATTENTION_STATUSES.has(t.status) && t.archived_at == null
+        (t) =>
+          ATTENTION_STATUSES.has(t.status) &&
+          t.archived_at == null &&
+          !isDeferred(t)
       ).length,
     [tasks]
   )

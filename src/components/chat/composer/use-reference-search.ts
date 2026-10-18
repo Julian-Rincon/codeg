@@ -15,12 +15,15 @@ import {
 import type {
   AcpAgentInfo,
   AgentType,
+  AssistantInfo,
   DbConversationSummary,
   GitLogEntry,
 } from "@/lib/types"
+import { useAssistants } from "@/stores/assistants-store"
 
 import {
   agentToSuggestion,
+  assistantToSuggestion,
   commitToSuggestion,
   fileToSuggestion,
   sessionToSuggestion,
@@ -50,6 +53,7 @@ const EMPTY_COMMITS: Promise<GitLogEntry[]> = Promise.resolve([])
 export interface ReferenceGroupLabels {
   file: string
   agent: string
+  assistant: string
   session: string
   commit: string
   skill: string
@@ -62,6 +66,7 @@ export interface ReferenceGroupLabels {
 export const DEFAULT_GROUP_LABELS: ReferenceGroupLabels = {
   file: "Files",
   agent: "Agents",
+  assistant: "Assistants",
   session: "Sessions",
   commit: "Commits",
   skill: "Skills",
@@ -73,6 +78,12 @@ export interface ReferenceSearchSources {
   /** Workspace root the `files` were loaded under; null disables the group. */
   workspaceRoot: string | null
   agents: AcpAgentInfo[]
+  /** Live assistants in display order (the store's `useAssistants`). */
+  assistants: AssistantInfo[]
+  /** The agents an assistant's own agent is checked against; `agents` when
+   *  omitted. Separate so a hidden agent tab need not be built to fill the
+   *  assistant one. */
+  assistantAgents?: AcpAgentInfo[]
   sessions: DbConversationSummary[]
   commits: GitLogEntry[]
   /** Repo identity for commit URIs; null disables the commit group. */
@@ -101,7 +112,7 @@ function suggestionMatches(item: SuggestionItem, lowerQuery: string): boolean {
 
 /**
  * Pure: filter + adapt the raw sources into the fixed-order grouped suggestions
- * the `@` panel renders (files → agents → sessions → commits). Each group is
+ * the `@` panel renders (files → agents → assistants → sessions → commits). Each group is
  * independently capped at {@link MAX_PER_GROUP}; empty groups are kept
  * (the popup hides them) so the order is always stable. Extracted from the hook
  * so the matching/ordering/dedup logic is testable without React.
@@ -143,6 +154,25 @@ export function buildReferenceGroups(
     .filter((item) => suggestionMatches(item, q))
   const agentItems = agentMatches.slice(0, MAX_PER_GROUP)
 
+  // Only an assistant that can be delegated to is mentionable: enabled, and
+  // on an agent that is enabled too (a delegation to one that is not is
+  // refused). The live list already leaves deleted ones out.
+  const enabledAgents = new Set(
+    (sources.assistantAgents ?? sources.agents)
+      .filter((agent) => agent.enabled)
+      .map((agent) => agent.agent_type)
+  )
+  const assistantMatches = sources.assistants
+    .filter(
+      (assistant) =>
+        assistant.enabled &&
+        assistant.deleted_at === null &&
+        enabledAgents.has(assistant.agent_type)
+    )
+    .map(assistantToSuggestion)
+    .filter((item) => suggestionMatches(item, q))
+  const assistantItems = assistantMatches.slice(0, MAX_PER_GROUP)
+
   const sessionMatches = sources.sessions
     .map(sessionToSuggestion)
     .filter((item) => suggestionMatches(item, q))
@@ -177,6 +207,12 @@ export function buildReferenceGroups(
       truncated: agentMatches.length > MAX_PER_GROUP,
     },
     {
+      kind: "assistant",
+      label: labels.assistant,
+      items: assistantItems,
+      truncated: assistantMatches.length > MAX_PER_GROUP,
+    },
+    {
       kind: "session",
       label: labels.session,
       items: sessionItems,
@@ -208,8 +244,9 @@ export interface UseReferenceSearchOptions {
 }
 
 /**
- * Compose the live data sources (file tree, ACP agents, conversations, git log)
- * into a single {@link ReferenceSearch} for the composer's `@` panel. (Skills,
+ * Compose the live data sources (file tree, ACP agents, assistants,
+ * conversations, git log) into a single {@link ReferenceSearch} for the
+ * composer's `@` panel. (Skills,
  * commands and experts are inserted via the `/` / `$` triggers and the expert
  * menu, not this panel.)
  *
@@ -220,7 +257,8 @@ export interface UseReferenceSearchOptions {
  * on window focus) updates the refs but leaves `search` identity untouched — the
  * open panel keeps its results and the user's selection (R7).
  *
- * Files and agents are hook-loaded (and pre-warmed via `enabled`). Sessions and
+ * Files and agents are hook-loaded (and pre-warmed via `enabled`); assistants
+ * come from the assistants store, which the workspace layout keeps live. Sessions and
  * the git log are fetched lazily on the first `@`, key-cached in a ref, and
  * awaited by `search` so the first open is populated without an extra keystroke;
  * window focus busts those caches so they stay fresh. A tab the user hid (the
@@ -239,6 +277,7 @@ export function useReferenceSearch({
     enabled,
   })
   const { agents } = useAcpAgents()
+  const assistants = useAssistants()
 
   // Delegation hint source: the measured scorecard, resolved into one
   // localized "best at …" string per agent type. `useModelScorecard` is the
@@ -266,6 +305,7 @@ export function useReferenceSearch({
   })
   const agentsRef = useRef(agents)
   const agentHintsRef = useRef(agentHints)
+  const assistantsRef = useRef(assistants)
   const pathRef = useRef(path)
   const enabledRef = useRef(enabled)
   const labelsRef = useRef(labels)
@@ -291,8 +331,9 @@ export function useReferenceSearch({
         : { root: null, files: [] }
     agentsRef.current = agents
     agentHintsRef.current = agentHints
+    assistantsRef.current = assistants
     labelsRef.current = labels
-  }, [allFiles, loaded, path, agents, agentHints, labels])
+  }, [allFiles, loaded, path, agents, agentHints, assistants, labels])
 
   // Lazily-fetched network sources, key-cached so repeat searches reuse the
   // in-flight/resolved promise while a folder switch refetches.
@@ -390,6 +431,8 @@ export function useReferenceSearch({
         files: wants("file") ? fileState.files : [],
         workspaceRoot: fileState.root,
         agents: wants("agent") ? agentsRef.current : [],
+        assistants: wants("assistant") ? assistantsRef.current : [],
+        assistantAgents: wants("assistant") ? agentsRef.current : [],
         sessions,
         commits,
         repoKey: path,
