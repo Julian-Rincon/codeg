@@ -250,6 +250,21 @@
     "autostartDescription": "Se abre automáticamente después de que inicies sesión en este equipo.",
     "autostartSaveFailed": "No se pudo guardar la configuración de inicio automático: {message}",
     "autostartUnavailable": "No se pudo leer el registro de inicio de este equipo: {message}",
+    "cliAccessTitle": "Acceso por línea de comandos",
+    "cliAccessDescription": "Permite que el comando codeg-cli de este equipo ejecute indicaciones a través de Codeg: desde scripts, trabajos de CI o los terminales del propio Codeg. Solo este equipo puede conectarse, con una clave guardada en un archivo privado.",
+    "cliAccessEndpointFile": "Archivo de conexión:",
+    "cliAccessExample": "Prueba:",
+    "cliAccessOff": "Desactivado: codeg-cli en este equipo no puede conectarse a Codeg.",
+    "cliAccessUnavailable": "No se pudo iniciar el acceso por línea de comandos: {message}",
+    "cliAccessSaveFailed": "No se pudo cambiar el acceso por línea de comandos: {message}",
+    "cliToolInstall": "Instalar la herramienta de línea de comandos",
+    "cliToolInstalled": "{command} está en tu PATH:",
+    "cliToolPackage": "{command} vino con el paquete y está en tu PATH:",
+    "cliToolNotInstalled": "Pon {command} en tu PATH para que una terminal fuera de Codeg lo encuentre.",
+    "cliToolConflict": "Se dejó como estaba: {message}",
+    "cliToolNote": "Nota: {message}",
+    "cliToolInstalledToast": "{command} está en tu PATH. Abre una terminal nueva para usarlo.",
+    "cliToolInstallFailed": "No se pudo instalar la herramienta de línea de comandos: {message}",
     "proxyTitle": "Proxy de red",
     "proxyDescription": "Cuando está activado, las solicitudes de red posteriores usarán este proxy preferentemente (incluyendo chat ACP, instalación de agentes y operaciones remotas de Git).",
     "loadFailed": "Error al cargar: {message}",
@@ -1113,6 +1128,30 @@
       "apiKeyHint": "Se pasa a la CLI como KIRO_API_KEY. Déjala vacía para usar la cuenta con la que iniciaste sesión mediante kiro-cli login; solo hace falta donde no se puede iniciar sesión con el navegador (servidores, Docker).",
       "saveConfig": "Guardar configuración de Kiro"
     },
+    "trae": {
+      "configManagement": "Configuración",
+      "configDescription": "TRAE CLI 2.0 solo está disponible para clientes del plan insignia de TRAE Enterprise. Codeg ejecuta el traecli que instalaste, que guarda su inicio de sesión, sus habilidades y sus servidores MCP en ~/.trae. El modelo, el modo y el esfuerzo de razonamiento no están aquí: TRAE CLI los informa por ACP, así que los selectores del compositor los gestionan en cada sesión.",
+      "signInTitle": "Iniciar sesión",
+      "signInHint": "Ejecuta esto una vez en una terminal para iniciar sesión con el SSO de tu empresa. Las sesiones de Codeg reutilizan ese inicio de sesión.",
+      "copyCommand": "Copiar comando",
+      "commandCopied": "Comando copiado",
+      "patLabel": "Token de acceso personal (opcional)",
+      "patHint": "Para una máquina donde no se puede iniciar sesión con el navegador, como un servidor o una instalación de Docker. Codeg lo pasa a TRAE CLI como TRAECLI_PERSONAL_ACCESS_TOKEN e inicia sesión con él cada vez que empieza una sesión. Déjalo vacío para usar el inicio de sesión de traecli login.",
+      "hostLabel": "URL de la API empresarial (opcional)",
+      "hostHint": "Solo si tu organización ejecuta TRAE en su propio dominio. Se pasa como TRAECLI_HOST; déjala vacía para usar el servicio de TRAE.",
+      "saveConfig": "Guardar configuración de TRAE CLI"
+    },
+    "commandCode": {
+      "configManagement": "Configuración",
+      "configDescription": "Codeg ejecuta la CLI de Command Code del paquete npm command-code, que guarda su inicio de sesión, sus habilidades y sus servidores MCP en ~/.commandcode. El modelo, el modo y el esfuerzo de razonamiento no están aquí: Command Code los informa por ACP, así que los selectores del compositor los gestionan en cada sesión.",
+      "signInTitle": "Iniciar sesión",
+      "signInHint": "Ejecuta esto una vez en una terminal para iniciar sesión con tu cuenta de Command Code. Las sesiones de Codeg reutilizan ese inicio de sesión.",
+      "copyCommand": "Copiar comando",
+      "commandCopied": "Comando copiado",
+      "apiKeyLabel": "Clave de API (opcional)",
+      "apiKeyHint": "Para una máquina donde no se puede iniciar sesión con el navegador, como un servidor o una instalación de Docker. Se pasa a Command Code como COMMAND_CODE_API_KEY, que tiene prioridad sobre el inicio de sesión de command-code login. Déjala vacía para usar ese inicio de sesión.",
+      "saveConfig": "Guardar configuración de Command Code"
+    },
     "deepseek": {
       "configManagement": "Configuración de DeepSeek Harness",
       "configDescription": "El endpoint y la clave son variables de entorno que deepseek-acp lee al arrancar. El modelo y el esfuerzo de razonamiento son selectores por sesión: se eligen en el campo de mensaje.",
@@ -1608,6 +1647,10 @@
       "saveAntigravityConfigFailed": "Failed to save Antigravity config",
       "kiroSaved": "Configuración de Kiro guardada",
       "saveKiroFailed": "No se pudo guardar la configuración de Kiro",
+      "traeSaved": "Configuración de TRAE CLI guardada",
+      "saveTraeFailed": "No se pudo guardar la configuración de TRAE CLI",
+      "commandCodeSaved": "Configuración de Command Code guardada",
+      "saveCommandCodeFailed": "No se pudo guardar la configuración de Command Code",
       "systemAgentAlreadyLatest": "{name} ya está al día ({version})"
     },
     "distribution": {
@@ -2085,6 +2128,7 @@
       "runningCountBadge": "{count, plural, one {# sesión en ejecución} other {# sesiones en ejecución}}",
       "statusCancelledBadge": "Cancelado",
       "worktreeRemovedBadge": "Worktree de origen eliminado",
+      "cliBadge": "Iniciada desde la línea de comandos",
       "conversationCountUnit": "{count, plural, one {# conversación} other {# conversaciones}}",
       "emptyFolderHint": "Sin conversaciones",
       "noMatchingConversations": "No hay conversaciones coincidentes",
@@ -2165,9 +2209,11 @@
         "dropToUngroup": "Suelta aquí para quitar del grupo"
       },
       "recentFilterAll": "Todo",
+      "recentFilterCli": "Línea de comandos",
       "recentFilterTitle": "Mostrar en Recientes: {filter}",
       "noRecentChats": "No hay chats recientes",
       "noRecentFolders": "No hay conversaciones de carpeta recientes",
+      "noRecentCli": "No hay conversaciones recientes desde la línea de comandos",
       "recentFilterMenuLabel": "Mostrar en Recientes"
     },
     "conversation": {
@@ -2405,7 +2451,10 @@
         "commits": "Confirmaciones"
       },
       "noFolderTitle": "No hay carpeta abierta",
-      "noFolderHint": "Abre una carpeta para ver su contenido aquí"
+      "noFolderHint": "Abre una carpeta para ver su contenido aquí",
+      "openFullPage": "Abrir en página completa",
+      "back": "Atrás",
+      "noAutomations": "Este proyecto aún no tiene automatizaciones"
     },
     "windowControls": {
       "minimizeWindow": "Minimizar ventana",
@@ -3304,6 +3353,7 @@
       },
       "messageInput": {
         "askAnything": "Pregunta lo que sea...",
+        "promptSuggestion": "{suggestion} (Tab para usarla)",
         "removeAttachmentAria": "Quitar {name}",
         "attachFiles": "Adjuntar archivos",
         "addActions": "Añadir",
@@ -3333,6 +3383,10 @@
         "searchModelAria": "Buscar modelos",
         "modelListLabel": "Modelos",
         "recommendedBadge": "Recomendado",
+        "recommendedValue": "Recomendado: {value}",
+        "searchOptions": "Buscar opciones...",
+        "searchOptionsAria": "Buscar opciones",
+        "noOptions": "No se encontraron opciones",
         "noModels": "No se encontraron modelos",
         "cancel": "Cancelar",
         "send": "Enviar",
@@ -3973,13 +4027,16 @@
       },
       "messageNav": {
         "title": "Navegación de mensajes",
-        "collapse": "Contraer navegación de mensajes",
         "loadingEarlier": "Cargando mensajes anteriores…",
         "loadEarlier": "Cargar mensajes anteriores",
-        "collapsedSummary": "Mensajes {count}",
         "fileCount": "{count, plural, one {# archivo} other {# archivos}}",
-        "remove": "Quitar",
-        "noDiffDataAvailable": "No hay datos de diff disponibles para {filePath}"
+        "subAgentCount": "{count, plural, one {# subagente} other {# subagentes}}",
+        "showDiff": "Mostrar los cambios de {filePath}",
+        "hideDiff": "Ocultar los cambios de {filePath}",
+        "openFile": "Abrir {filePath}",
+        "collapse": "Contraer",
+        "currentMessage": "Mensaje actual",
+        "scrollToCurrent": "Desplazarse al mensaje actual (#{ordinal})"
       },
       "replyArtifacts": {
         "title": "Archivos modificados",
@@ -4037,6 +4094,9 @@
         "resumeDelegation": "Reanudando la tarea {task}",
         "resumeDelegationNoId": "Reanudando una tarea delegada",
         "promptLabel": "Instrucción",
+        "ackRecorded": "Registrado en la tarea de trabajo",
+        "ackNotRecorded": "No registrado en la tarea de trabajo",
+        "ackNotRecordedWithReason": "No registrado en la tarea de trabajo: {reason}",
         "verdict": {
           "success": "correcta",
           "needs_review": "requiere revisión",
@@ -4175,6 +4235,18 @@
         "tokens": "{count} tokens",
         "stopDeclined": "No se pudo detener esa tarea; puede que ya haya terminado.",
         "stopFailed": "No se pudo detener la tarea: {error}"
+      },
+      "remoteControl": {
+        "title": "Control remoto activado",
+        "open": "Abrir en el navegador",
+        "copy": "Copiar enlace",
+        "copied": "Copiado",
+        "qr": "Código QR",
+        "qrLabel": "Código QR del enlace de control remoto de esta sesión",
+        "qrHint": "Escanéalo con el teléfono para continuar esta sesión en la app de Claude o en claude.ai/code.",
+        "noUrl": "Claude Code no devolvió ningún enlace para esta sesión",
+        "turnOff": "Desactivar",
+        "turnOffBusy": "Disponible cuando Claude termine"
       },
       "proposedPlan": {
         "title": "Plan propuesto",
@@ -5347,7 +5419,10 @@
     "reconnectNow": "Volver a conectar ahora",
     "sessionExpiredTitle": "Sesión caducada",
     "sessionExpiredDescription": "Tu sesión ya no es válida. Inicia sesión de nuevo para continuar.",
-    "goToLogin": "Ir al inicio de sesión"
+    "goToLogin": "Ir al inicio de sesión",
+    "versionChangedTitle": "El servidor ahora ejecuta Codeg {version}",
+    "versionChangedDescription": "Esta página sigue en la versión {version}. Recárgala para usar la versión del servidor.",
+    "reloadPage": "Recargar"
   },
   "LiveFeedback": {
     "placeholder": "Envía una nota a {agent} mientras trabaja…",

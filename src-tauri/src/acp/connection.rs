@@ -4,7 +4,8 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 
 use agent_client_protocol::schema::v1::{
-    BlobResourceContents, CancelNotification, ClientCapabilities, ClientSessionCapabilities,
+    AuthMethod, AuthenticateRequest, BlobResourceContents, CancelNotification,
+    ClientCapabilities, ClientSessionCapabilities,
     CloseSessionRequest, CompactionCapabilities, ContentBlock, ContentChunk,
     CreateTerminalRequest, CreateTerminalResponse, ElicitationCapabilities,
     ElicitationFormCapabilities, EmbeddedResource, EmbeddedResourceResource,
@@ -59,12 +60,12 @@ use crate::acp::terminal_runtime::{
 };
 use crate::acp::types::{
     AcpEvent, AsyncTaskDelta, AsyncTaskUsage, AvailableCommandInfo, ConnectionInfo,
-    ConnectionStatus, GrokModelCatalog, GrokModelSpec, KiroReasoning, PermissionOptionInfo,
-    PlanEntryInfo, PluginLoadFailure, PromptCapabilitiesInfo, PromptInputBlock,
-    SessionConfigBooleanInfo, SessionConfigKindInfo, SessionConfigOptionInfo,
-    SessionConfigSelectGroupInfo, SessionConfigSelectInfo, SessionConfigSelectOptionInfo,
-    SessionFailureRecord, SessionModeInfo, SessionModeStateInfo, SessionNotice, ToolCallImageInfo,
-    UserMessageBlock,
+    ConnectionStatus, GrokModelCatalog, GrokModelSpec, KiroReasoning, PermissionAnswerOrigin,
+    PermissionOptionInfo, PlanEntryInfo, PluginLoadFailure, PromptCapabilitiesInfo,
+    PromptInputBlock, RemoteControlInfo, SessionConfigBooleanInfo, SessionConfigKindInfo,
+    SessionConfigOptionInfo, SessionConfigSelectGroupInfo, SessionConfigSelectInfo,
+    SessionConfigSelectOptionInfo, SessionFailureRecord, SessionModeInfo, SessionModeStateInfo,
+    SessionNotice, ToolCallImageInfo, UserMessageBlock,
 };
 use crate::logging::throttle::LeadingEdgeThrottle;
 use crate::models::agent::AgentType;
@@ -222,6 +223,7 @@ fn merge_agent_env_with_color(
     // even when codeg installed the binary outside the user's shell PATH — the
     // Windows self-managed dir, or `~/.local/bin` under a GUI launch.
     prepend_officecli_path(&mut merged);
+    prepend_own_cli_path(&mut merged);
 
     // LAST, after `runtime_env`, and that ordering is the whole fix rather than
     // a style choice. A self-extracting agent binary resolves its unpack
@@ -1151,6 +1153,16 @@ fn prepend_officecli_path(env: &mut BTreeMap<String, String>) {
     }
 }
 
+/// Prepend the directory of codeg's own `codeg-cli` (`cli_run::shim`) to a
+/// merged env's PATH — the process's PATH already starts with it, but an
+/// agent's own env may set PATH outright. PATH-only, like the above.
+fn prepend_own_cli_path(env: &mut BTreeMap<String, String>) {
+    if let Some(dir) = crate::cli_run::shim::path_dir() {
+        let fallback = std::env::var("PATH").unwrap_or_default();
+        prepend_dir_to_path_env(env, &dir.to_string_lossy(), &fallback, cfg!(windows));
+    }
+}
+
 /// The two actions codex's bespoke `_codex/session/goal_control` request
 /// accepts (codex-acp #293, v1.1.4). Start / resume / re-objective are NOT part
 /// of this method — those go through the `/goal` prompt (a real slash command;
@@ -1209,10 +1221,17 @@ pub enum ConnectionCommand {
     },
     SetMode {
         mode_id: String,
+        /// Attached only by a caller that waits for the agent's answer to THIS
+        /// request (`ConnectionManager::set_mode_and_wait`). `None` =
+        /// fire-and-forget, as the composer sends it.
+        reply: Option<SetterReply>,
     },
     SetConfigOption {
         config_id: String,
         value_id: String,
+        /// As [`Self::SetMode`]'s `reply`
+        /// (`ConnectionManager::set_config_option_and_wait`).
+        reply: Option<SetterReply>,
     },
     GoalControl {
         action: GoalControlAction,
@@ -1227,6 +1246,9 @@ pub enum ConnectionCommand {
     RespondPermission {
         request_id: String,
         option_id: String,
+        /// Who is answering; reported on `PermissionResolved` when this answer
+        /// is the one that takes effect.
+        origin: PermissionAnswerOrigin,
     },
     Fork {
         /// Fork at a chosen message instead of the tail. `None` keeps the
@@ -1268,6 +1290,81 @@ pub enum ConnectionCommand {
         reply: tokio::sync::oneshot::Sender<Result<bool, AcpError>>,
     },
     Disconnect,
+}
+
+/// The part of a connection's `runtime_env` its ACP `terminal/create`
+/// commands get. Only the codeg git credential helper keys — not the agent's
+/// API tokens or model provider credentials: `git fetch`/`git push` run
+/// through a terminal authenticate via the same helper path the agent process
+/// uses, while unrelated secrets stay scoped to the agent and out of arbitrary
+/// shell commands it runs. The connection's id travels too, so a `codeg-cli`
+/// run from such a command names the same caller as one the agent process
+/// starts itself.
+fn terminal_env_from_runtime(runtime_env: &BTreeMap<String, String>) -> BTreeMap<String, String> {
+    runtime_env
+        .iter()
+        .filter(|(k, _)| {
+            k.starts_with("GIT_CONFIG_") || k.as_str() == crate::cli_run::CLI_CALLER_ENV
+        })
+        .map(|(k, v)| (k.clone(), v.clone()))
+        .collect()
+}
+
+/// What a `SetMode` / `SetConfigOption` sent with a reply learned from the
+/// agent.
+///
+/// The composer needs none of this: its selectors follow the broadcasts. A
+/// caller that must not go on unless ITS request landed — a headless run that
+/// refuses to prompt on the wrong model — cannot read that off the broadcasts
+/// either: agents re-send their option list unprompted (codex flips
+/// `collaboration_mode` mid-turn, pi answers every set twice), so a list that
+/// happens to show the target value may have nothing to do with the request.
+/// This is the agent's answer to the one request, sorted by what that answer
+/// can prove.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SetterOutcome {
+    /// The answer names the value now in effect: the option list a standard
+    /// `session/set_config_option` returns (select or boolean, encoded as the
+    /// selector transport does), or a mode the agent acknowledged.
+    Confirmed { current: String },
+    /// The agent took the request, but its answer does not say what took
+    /// effect: Grok's `session/set_model`, Kiro's model / effort / thinking
+    /// channels, or a standard answer that leaves the option out.
+    Accepted,
+    /// Nothing was sent: Grok's effort with no model known yet, an option the
+    /// agent's channel routes nowhere, or Kiro's `default` thinking value.
+    NotExecuted,
+    /// The agent refused, and the connection has already surfaced that as a
+    /// recoverable error (Grok's model switch across agent types).
+    Refused { message: String },
+}
+
+/// Where a waiting caller receives a setter's outcome; `Err` carries the
+/// agent's error text.
+pub type SetterReply = oneshot::Sender<Result<SetterOutcome, String>>;
+
+/// Hand a setter's outcome to the caller waiting for it, if one is. A caller
+/// that has stopped waiting (dropped receiver) is not an error.
+fn send_setter_reply(reply: Option<SetterReply>, outcome: Result<SetterOutcome, String>) {
+    if let Some(reply) = reply {
+        let _ = reply.send(outcome);
+    }
+}
+
+/// The outcome a standard `session/set_config_option` answer reports for
+/// `config_id`.
+fn config_option_outcome(updated: &[SessionConfigOptionInfo], config_id: &str) -> SetterOutcome {
+    match updated.iter().find(|o| o.id == config_id).map(|o| &o.kind) {
+        Some(SessionConfigKindInfo::Select(select)) => SetterOutcome::Confirmed {
+            current: select.current_value.clone(),
+        },
+        Some(SessionConfigKindInfo::Boolean(toggle)) => SetterOutcome::Confirmed {
+            current: toggle.current_value.to_string(),
+        },
+        // Left out of the answer, or a kind this build cannot read: the agent
+        // took the request without saying where it landed.
+        _ => SetterOutcome::Accepted,
+    }
 }
 
 /// Sentinel string embedded in a `agent_client_protocol::Error` when the Initialize
@@ -2468,6 +2565,7 @@ pub async fn spawn_agent_connection(
     preferred_config_values: BTreeMap<String, String>,
     delegation_injection: Option<DelegationInjection>,
     terminal_shell_config: TerminalShellRuntimeConfig,
+    cli_root: Option<crate::cli_run::RootSeed>,
 ) -> Result<tokio::sync::oneshot::Receiver<()>, AcpError> {
     // Create the authoritative session state up front. Subsequent emit_with_state
     // calls write through this state and increment its seq counter so the first
@@ -2490,6 +2588,14 @@ pub async fn spawn_agent_connection(
     // this point.
     initial_state.env_pinned_config_option_ids =
         env_pinned_config_option_ids(agent_type, &runtime_env);
+    initial_state.trae_pat_sign_in =
+        agent_type == AgentType::Trae && crate::acp::trae::pat_sign_in_requested(&runtime_env);
+    // A `codeg-cli` run's root: marked before anything can look, the codeg-mcp
+    // injection below included.
+    if let Some(seed) = cli_root {
+        initial_state.cli_run = Some(seed.tag);
+        initial_state.cli_output_schema = seed.output_schema;
+    }
 
     let session_state = Arc::new(RwLock::new(initial_state));
 
@@ -2610,22 +2716,13 @@ pub async fn spawn_agent_connection(
         &crate::parsers::AgentEnv::from_overrides(runtime_env.clone()),
     );
 
-    // Forward only the codeg git credential helper keys into the terminal
-    // runtime — not the agent's API tokens or model provider credentials.
-    // This makes `git fetch`/`git push` issued through the ACP
-    // `terminal/create` tool authenticate via the same helper path the
-    // agent process uses, while keeping unrelated secrets scoped to the
-    // agent and out of arbitrary shell commands it runs.
-    let mut terminal_base_env: BTreeMap<String, String> = runtime_env
-        .iter()
-        .filter(|(k, _)| k.starts_with("GIT_CONFIG_"))
-        .map(|(k, v)| (k.clone(), v.clone()))
-        .collect();
+    let mut terminal_base_env = terminal_env_from_runtime(&runtime_env);
     // Also surface a codeg-installed OfficeCLI on the terminal's PATH: agents run
     // office skills' `officecli …` through this `terminal/create` tool, not as a
     // child of the agent process, so the agent-env injection alone wouldn't reach
     // them right after install (before install.ps1's User-PATH change lands).
     prepend_officecli_path(&mut terminal_base_env);
+    prepend_own_cli_path(&mut terminal_base_env);
 
     let (cmd_tx, cmd_rx) = mpsc::channel::<ConnectionCommand>(32);
     let handshake = CancellationToken::new();
@@ -3258,9 +3355,10 @@ async fn resolve_permission(
     emitter: &EventEmitter,
     request_id: String,
     option_id: String,
+    origin: PermissionAnswerOrigin,
 ) {
     let mut queue = perms.lock().await;
-    let resolved = queue.resolve(&request_id, option_id);
+    let resolved = queue.resolve(&request_id, option_id.clone());
     if !resolved.answered {
         return;
     }
@@ -3274,7 +3372,18 @@ async fn resolve_permission(
         let depth = queue.waiting_len();
         publish_promoted(state, emitter, &scope, &request_id, card, depth).await;
     }
-    emit_with_state(state, emitter, AcpEvent::PermissionResolved { request_id }).await;
+    // Only an answer that took effect gets here (a stale or duplicate one
+    // returned above), so this option and origin are the effective ones.
+    emit_with_state(
+        state,
+        emitter,
+        AcpEvent::PermissionResolved {
+            request_id,
+            option_id: Some(option_id),
+            origin: Some(origin),
+        },
+    )
+    .await;
 }
 
 /// Publish the card a departing one promoted onto the screen, with `depth`
@@ -3331,7 +3440,16 @@ async fn withdraw_permission(
                 let depth = queue.waiting_len();
                 publish_promoted(state, emitter, &scope, &request_id, card, depth).await;
             }
-            emit_with_state(state, emitter, AcpEvent::PermissionResolved { request_id }).await;
+            emit_with_state(
+                state,
+                emitter,
+                AcpEvent::PermissionResolved {
+                    request_id,
+                    option_id: None,
+                    origin: None,
+                },
+            )
+            .await;
         }
         Departure::Queued => {
             emit_with_state(
@@ -3459,7 +3577,16 @@ async fn drain_permissions_locked(
 ) {
     if let Some(request_id) = queue.drain() {
         tracing::info!("[ACP] permission {request_id} cancelled by drain");
-        emit_with_state(state, emitter, AcpEvent::PermissionResolved { request_id }).await;
+        emit_with_state(
+            state,
+            emitter,
+            AcpEvent::PermissionResolved {
+                request_id,
+                option_id: None,
+                origin: None,
+            },
+        )
+        .await;
     }
 }
 
@@ -4882,7 +5009,7 @@ async fn set_config_option_for_agent(
     emitter: &EventEmitter,
     config_id: String,
     value_id: String,
-) -> Result<(), agent_client_protocol::Error> {
+) -> Result<SetterOutcome, agent_client_protocol::Error> {
     match agent_type {
         AgentType::Grok => {
             set_grok_config_option(cx, session_id, state, emitter, config_id, value_id).await
@@ -4904,9 +5031,15 @@ async fn set_kiro_config_option(
     emitter: &EventEmitter,
     config_id: String,
     value_id: String,
-) -> Result<(), agent_client_protocol::Error> {
-    match config_id.as_str() {
-        KIRO_MODEL_OPTION_ID => set_kiro_model(cx, session_id, &value_id).await?,
+) -> Result<SetterOutcome, agent_client_protocol::Error> {
+    let outcome = match config_id.as_str() {
+        // Kiro answers a model switch with an empty object.
+        KIRO_MODEL_OPTION_ID => {
+            set_kiro_model(cx, session_id, &value_id).await?;
+            SetterOutcome::Accepted
+        }
+        // A standard `session/set_mode`: the acknowledgement is the
+        // confirmation, as for every other agent's mode.
         KIRO_MODE_OPTION_ID => {
             set_kiro_mode(cx, session_id, &value_id).await?;
             emit_with_state(
@@ -4917,30 +5050,38 @@ async fn set_kiro_config_option(
                 },
             )
             .await;
+            SetterOutcome::Confirmed {
+                current: value_id.clone(),
+            }
         }
+        // Kiro answers an effort it does not know with success too; what took
+        // effect shows only on a later `_kiro.dev/metadata`, which names no
+        // request. The local state below is codeg's optimism, not an answer.
         KIRO_EFFORT_OPTION_ID => {
             set_kiro_effort(cx, session_id, &value_id).await?;
             if let Some(r) = state.write().await.kiro_reasoning.as_mut() {
                 r.current = Some(value_id.clone());
             }
+            SetterOutcome::Accepted
         }
         KIRO_THINKING_OPTION_ID => {
             // `default` is what an unset toggle shows; it is not a setting.
             let Some(enabled) = kiro_thinking_value(&value_id) else {
-                return Ok(());
+                return Ok(SetterOutcome::NotExecuted);
             };
             set_kiro_thinking(cx, session_id, enabled).await?;
             if let Some(r) = state.write().await.kiro_reasoning.as_mut() {
                 r.thinking = Some(enabled);
             }
+            SetterOutcome::Accepted
         }
         _ => {
             return set_session_config_option(cx, session_id, state, emitter, config_id, value_id)
                 .await
         }
-    }
+    };
     update_emitted_option(state, emitter, &config_id, &value_id).await;
-    Ok(())
+    Ok(outcome)
 }
 
 /// Build the `session/set_model` params. A reasoning-effort override rides in
@@ -5272,7 +5413,7 @@ async fn set_grok_config_option(
     emitter: &EventEmitter,
     config_id: String,
     value_id: String,
-) -> Result<(), agent_client_protocol::Error> {
+) -> Result<SetterOutcome, agent_client_protocol::Error> {
     // Resolve the `set_model` args for whichever selector changed. A model pick
     // is the model itself (no effort override); an effort pick re-sends the
     // current model carrying the new `_meta.reasoningEffort`. Any other id is a
@@ -5283,10 +5424,10 @@ async fn set_grok_config_option(
         match current_grok_model_id(state).await {
             Some(model_id) => (model_id, Some(value_id.clone())),
             // No model known yet — nothing to carry the effort override on.
-            None => return Ok(()),
+            None => return Ok(SetterOutcome::NotExecuted),
         }
     } else {
-        return Ok(());
+        return Ok(SetterOutcome::NotExecuted);
     };
     match set_grok_model(cx, session_id, model_id, effort).await {
         Ok(()) => {
@@ -5317,15 +5458,23 @@ async fn set_grok_config_option(
                 })
             })
             .await;
-            Ok(())
+            // `set_model` succeeded, but grok's answer carries no option list.
+            Ok(SetterOutcome::Accepted)
         }
         Err(e) if is_grok_incompatible_agent_switch(&e) => {
             emit_grok_incompatible_agent_switch(state, emitter).await;
-            Ok(())
+            Ok(SetterOutcome::Refused {
+                message: GROK_INCOMPATIBLE_AGENT_SWITCH_MESSAGE.to_string(),
+            })
         }
         Err(e) => Err(e),
     }
 }
+
+/// What the recoverable error of a refused cross-agent-type Grok model switch
+/// says (localized by the frontend through its code).
+const GROK_INCOMPATIBLE_AGENT_SWITCH_MESSAGE: &str =
+    "Cannot switch to that model in an existing conversation. Start a new session to use it.";
 
 /// Recover from a Grok cross-agent-type model-switch rejection: revert the
 /// composer's optimistic selection by re-emitting the authoritative (unchanged)
@@ -5350,9 +5499,7 @@ async fn emit_grok_incompatible_agent_switch(
         state,
         emitter,
         AcpEvent::Error {
-            message: "Cannot switch to that model in an existing conversation. \
-                      Start a new session to use it."
-                .to_string(),
+            message: GROK_INCOMPATIBLE_AGENT_SWITCH_MESSAGE.to_string(),
             agent_type: AgentType::Grok.to_string(),
             code: Some(GROK_INCOMPATIBLE_AGENT_ERROR_CODE.to_string()),
             details: None,
@@ -5642,8 +5789,24 @@ fn resolve_working_dir(working_dir: Option<&str>) -> PathBuf {
     }
 }
 
+/// The `_meta.claudeCode` object every Claude session request names
+/// (`session/new`, `load`, `resume`, `fork`): the raw SDK message stream, and,
+/// when `prompt_suggestions` is false, `options.promptSuggestions: false`.
+///
+/// claude-agent-acp 0.92.0 turns the SDK's `promptSuggestions` on for every
+/// session it serves an AIR client: after each turn Claude Code sends one more
+/// request, with the whole conversation, the main model and its thinking, to
+/// predict the user's next prompt (measured against a fake API: none on 0.91.0,
+/// one after every turn past the first on 0.92.0; never written to the
+/// transcript). The composer offers the prediction (`AcpEvent::PromptSuggestion`),
+/// so a session someone types into keeps it. A session nobody composes in asks
+/// for none (see `SessionState.wants_prompt_suggestions`). The flag is fixed
+/// for a connection, and every request of it must name the same object: the
+/// adapter restarts a session whose resume names other settings than it was
+/// started with (see `crate::acp::fork::build_fork_request`).
 pub(crate) fn claude_raw_sdk_session_meta(
     agent_type: AgentType,
+    prompt_suggestions: bool,
 ) -> Option<serde_json::Map<String, serde_json::Value>> {
     if agent_type != AgentType::ClaudeCode {
         return None;
@@ -5654,6 +5817,12 @@ pub(crate) fn claude_raw_sdk_session_meta(
         "emitRawSDKMessages".to_string(),
         serde_json::Value::Bool(true),
     );
+    if !prompt_suggestions {
+        claude_code.insert(
+            "options".to_string(),
+            serde_json::json!({ "promptSuggestions": false }),
+        );
+    }
 
     let mut meta = serde_json::Map::new();
     meta.insert(
@@ -5737,7 +5906,7 @@ fn build_client_capabilities(
     // it denies `AskUserQuestion` for the session, so the model never gets the
     // tool. Verified on the real 1.1.67 wire, MCP tool-call approvals staying
     // on `session/request_permission`; the same form and answer handling ship
-    // in every release from 1.1.23 through 1.1.72, which matters because codeg
+    // in every release from 1.1.23 through 1.1.73, which matters because codeg
     // launches a `qoder` found on PATH ahead of the pinned package). Agents
     // without the bit fall back to their own `request_permission` button path.
     if matches!(
@@ -6082,9 +6251,10 @@ fn build_new_session_request(
     agent_type: AgentType,
     cwd: &Path,
     mcp_servers: Vec<McpServer>,
+    prompt_suggestions: bool,
 ) -> NewSessionRequest {
     let mut req = NewSessionRequest::new(cwd.to_path_buf());
-    if let Some(meta) = claude_raw_sdk_session_meta(agent_type) {
+    if let Some(meta) = claude_raw_sdk_session_meta(agent_type, prompt_suggestions) {
         req = req.meta(meta);
     }
     if !mcp_servers.is_empty() {
@@ -6098,9 +6268,10 @@ fn build_load_session_request(
     session_id: SessionId,
     cwd: &Path,
     mcp_servers: Vec<McpServer>,
+    prompt_suggestions: bool,
 ) -> LoadSessionRequest {
     let mut req = LoadSessionRequest::new(session_id, cwd.to_path_buf());
-    if let Some(meta) = claude_raw_sdk_session_meta(agent_type) {
+    if let Some(meta) = claude_raw_sdk_session_meta(agent_type, prompt_suggestions) {
         req = req.meta(meta);
     }
     if !mcp_servers.is_empty() {
@@ -6119,9 +6290,10 @@ pub(crate) fn build_resume_session_request(
     session_id: SessionId,
     cwd: &Path,
     mcp_servers: Vec<McpServer>,
+    prompt_suggestions: bool,
 ) -> ResumeSessionRequest {
     let mut req = ResumeSessionRequest::new(session_id, cwd.to_path_buf());
-    if let Some(meta) = claude_raw_sdk_session_meta(agent_type) {
+    if let Some(meta) = claude_raw_sdk_session_meta(agent_type, prompt_suggestions) {
         req = req.meta(meta);
     }
     if !mcp_servers.is_empty() {
@@ -6202,8 +6374,8 @@ async fn send_new_session_capturing_models(
 /// state and never reads them back: the config it starts each session with
 /// carries no MCP servers, and the SDK connects only the servers in cline's own
 /// `cline_mcp_settings.json` and its plugins. Checked in the source of every
-/// release from 3.0.55 through 3.0.72, and live on 3.0.71 and 3.0.72: a stdio
-/// server sent on `session/new` is never started, while one in the settings
+/// release from 3.0.55 through 3.0.73, and live on 3.0.71 through 3.0.73: a
+/// stdio server sent on `session/new` is never started, while one in the settings
 /// file is, and its tools reach the model. User servers still reach Cline,
 /// through that file (see [`agent_reads_own_mcp_config`]); the codeg-mcp
 /// companion, which only travels over the wire, cannot.
@@ -6225,7 +6397,80 @@ fn agent_reads_own_mcp_config(agent_type: AgentType) -> bool {
             | AgentType::Antigravity
             | AgentType::Kiro
             | AgentType::Cline
+            | AgentType::Trae
+            | AgentType::CommandCode
     )
+}
+
+/// How long the handshake waits for TRAE CLI to exchange a PAT. The exchange is
+/// one request to TRAE's service; a stalled one must not hold the session
+/// hostage, since a login the CLI already stored still serves it.
+const TRAE_PAT_SIGN_IN_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// The auth method a TRAE CLI connection signs in with before `session/new`,
+/// or `None` when there is nothing to do.
+///
+/// TRAE CLI keeps its login in its own store (`traecli login`), which the ACP
+/// server reuses; a `TRAECLI_PERSONAL_ACCESS_TOKEN` in its environment is NOT
+/// read on its own — `session/new` still answers `Authentication required` —
+/// until the PAT method runs through ACP `authenticate` (verified against
+/// 0.209.1, where it attempts the token exchange). So codeg sends it when the
+/// launch carries a PAT and the server advertises the method; a server that
+/// stops advertising it gets nothing it would reject.
+fn trae_pat_sign_in_method(
+    agent_type: AgentType,
+    pat_configured: bool,
+    auth_methods: &[AuthMethod],
+) -> Option<&'static str> {
+    let method = crate::acp::trae::TRAE_PAT_AUTH_METHOD;
+    (agent_type == AgentType::Trae
+        && pat_configured
+        && auth_methods
+            .iter()
+            .any(|advertised| advertised.id().0.as_ref() == method))
+    .then_some(method)
+}
+
+/// Sign TRAE CLI in with its PAT auth method ([`trae_pat_sign_in_method`]).
+///
+/// A failed or stalled exchange is logged and the handshake carries on: an
+/// existing `traecli login` may still serve the session, and when it does not,
+/// `session/new` answers `authRequired`, which already reaches the user as
+/// "sign in from the agent's settings". Only a cancelled handshake stops here.
+async fn sign_in_trae_with_pat(
+    cx: &ConnectionTo<Agent>,
+    handshake: &CancellationToken,
+    method_id: &'static str,
+) -> Result<(), agent_client_protocol::Error> {
+    let started = std::time::Instant::now();
+    let outcome = unless_cancelled(
+        handshake,
+        tokio::time::timeout(
+            TRAE_PAT_SIGN_IN_TIMEOUT,
+            cx.send_request_to(Agent, AuthenticateRequest::new(method_id))
+                .block_task(),
+        ),
+    )
+    .await?;
+    match outcome {
+        Ok(Ok(_)) => tracing::info!(
+            "[ACP][{}] signed in with {method_id} in {:?}",
+            AgentType::Trae,
+            started.elapsed()
+        ),
+        Ok(Err(e)) => tracing::warn!(
+            "[ACP][{}] {method_id} sign-in failed after {:?}: {e}; opening the session \
+             anyway, which an existing login still serves",
+            AgentType::Trae,
+            started.elapsed()
+        ),
+        Err(_) => tracing::warn!(
+            "[ACP][{}] {method_id} sign-in timed out after {:?}; opening the session anyway",
+            AgentType::Trae,
+            TRAE_PAT_SIGN_IN_TIMEOUT
+        ),
+    }
+    Ok(())
 }
 
 /// Load MCP servers configured for `agent_type` and convert them into the
@@ -6270,6 +6515,18 @@ fn load_mcp_servers_for_agent(agent_type: AgentType) -> Vec<McpServer> {
     // settings UI manages, and ignores the wire list altogether (see
     // `agent_delivers_wire_mcp`), so forwarding that file's servers again only
     // sends entries nobody reads.
+    //
+    // TRAE CLI joins it: `traecli acp serve` loads `[mcp_servers]` from
+    // `<TRAE_HOME>/traecli.toml` and ALSO starts what `session/new` carries —
+    // verified against 0.209.1, where a server from each source reached the
+    // model side by side — so forwarding the file's servers would mount every
+    // one of them twice. codeg's MCP settings UI manages that file.
+    //
+    // Command Code joins it for the same reason: `command-code acp` loads
+    // `~/.commandcode/mcp.json` and starts what `session/new` carries as well
+    // (verified against 1.84.0, a server from each source in one session's
+    // tool list), and its docs say a name on both sides keeps the file's copy.
+    // codeg's MCP settings UI manages that file.
     if agent_reads_own_mcp_config(agent_type) {
         return Vec::new();
     }
@@ -6498,6 +6755,9 @@ struct CompanionFeatureFlags {
     /// it still injects the companion so a task session always has its reporting
     /// tools.
     tasks: bool,
+    /// `submit_result`: per-spawn too, for the root of a `codeg-cli` run given
+    /// `--output-schema`.
+    result: bool,
     /// `create_automation`, gated by the chat-authoring setting.
     automations: bool,
     /// `create_work_task`, gated by the chat-authoring setting.
@@ -6543,6 +6803,9 @@ fn companion_features_arg(flags: CompanionFeatureFlags) -> Option<String> {
     if flags.tasks {
         features.push("tasks");
     }
+    if flags.result {
+        features.push("result");
+    }
     if flags.automations {
         features.push("automations");
     }
@@ -6582,6 +6845,18 @@ struct CompanionInjection {
     feedback_available: bool,
     /// Whether the `delegate_to_agent` tool group was exposed this launch.
     delegation_enabled: bool,
+    /// Whether `submit_result` was.
+    result_enabled: bool,
+}
+
+/// The tool groups a launch carries whatever the settings say, for who
+/// launched it. Named fields, as in [`CompanionFeatureFlags`].
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+struct LaunchGroups {
+    /// `task_progress` / `task_complete`: a task-engine launch.
+    tasks: bool,
+    /// `submit_result`: the root of a `codeg-cli` run given `--output-schema`.
+    result: bool,
 }
 
 async fn inject_codeg_mcp(
@@ -6589,7 +6864,7 @@ async fn inject_codeg_mcp(
     injection: &DelegationInjection,
     parent_connection_id: &str,
     working_dir: &Path,
-    tasks_enabled: bool,
+    groups: LaunchGroups,
     host_tools: HostToolsPolicy,
 ) -> Option<CompanionInjection> {
     inject_codeg_mcp_with_binary_locator(
@@ -6597,7 +6872,7 @@ async fn inject_codeg_mcp(
         injection,
         parent_connection_id,
         working_dir,
-        tasks_enabled,
+        groups,
         host_tools,
         locate_codeg_mcp_binary,
     )
@@ -6609,7 +6884,7 @@ async fn inject_codeg_mcp_with_binary_locator<F>(
     injection: &DelegationInjection,
     parent_connection_id: &str,
     working_dir: &Path,
-    tasks_enabled: bool,
+    groups: LaunchGroups,
     host_tools: HostToolsPolicy,
     locate_binary: F,
 ) -> Option<CompanionInjection>
@@ -6620,8 +6895,9 @@ where
     // Inject it when EITHER feature is enabled; the `--features` arg tells the
     // companion which tool groups to expose so a disabled feature's tools never
     // surface to the LLM. (Historically this was gated on delegation alone.)
-    // `tasks_enabled` is per-spawn: true only for task-engine launches, which
-    // must get their reporting tools regardless of the settings toggles.
+    // `groups` are per-spawn: the reporting tools of a task-engine launch and
+    // the `submit_result` of a `codeg-cli` run's root, each given regardless of
+    // the settings toggles.
     let feedback_enabled = injection.feedback.is_enabled().await;
     let authoring = injection.authoring.snapshot().await;
     // Delegation is a THIRD door into the same room as `fs/*` and `terminal/*`:
@@ -6661,7 +6937,8 @@ where
         feedback: feedback_enabled,
         ask: injection.ask.is_enabled().await,
         sessions: injection.sessions.is_enabled().await,
-        tasks: tasks_enabled,
+        tasks: groups.tasks,
+        result: groups.result,
         automations: authoring.automations_enabled,
         taskboard: authoring.work_tasks_enabled,
         // `cfg!` rather than a runtime probe: a browser tab is a native
@@ -6755,6 +7032,7 @@ where
         token,
         feedback_available: feedback_enabled,
         delegation_enabled: flags.delegation,
+        result_enabled: flags.result,
     })
 }
 
@@ -7055,6 +7333,13 @@ async fn run_connection(
                     // `codeg_ask_auto_allow_option`).
                     let responder =
                         match try_auto_allow_codeg_ask(&perm_ask_access, &req, responder).await {
+                            Ok(()) => return Ok(()),
+                            Err(responder) => responder,
+                        };
+                    // Handing a CLI run its result needs no one's permission
+                    // (see `try_auto_allow_codeg_submit`).
+                    let responder =
+                        match try_auto_allow_codeg_submit(&state_inner, &req, responder).await {
                             Ok(()) => return Ok(()),
                             Err(responder) => responder,
                         };
@@ -7502,6 +7787,15 @@ async fn run_connection(
             )
             .await;
 
+            // TRAE CLI ignores a PAT in its environment until its PAT auth
+            // method runs, so sign in with it before any session is opened.
+            let trae_pat_requested = state.read().await.trae_pat_sign_in;
+            if let Some(method_id) =
+                trae_pat_sign_in_method(agent_type, trae_pat_requested, &init_resp.auth_methods)
+            {
+                sign_in_trae_with_pat(&cx, &handshake, method_id).await?;
+            }
+
             let supports_fork = agent_type != AgentType::ZCode && init_resp
                 .agent_capabilities
                 .session_capabilities
@@ -7643,15 +7937,21 @@ async fn run_connection(
             let delegate_injection = if agent_supports_mcp && agent_delivers_wire_mcp(agent_type) {
                 if let Some(inj) = delegation_injection.as_ref() {
                     // Task-engine launches (owner label "work_task") carry the
-                    // task_progress / task_complete tool group.
-                    let tasks_enabled =
-                        { state.read().await.owner_window_label == "work_task" };
+                    // task_progress / task_complete tool group; the root of a
+                    // `codeg-cli` run given `--output-schema`, submit_result.
+                    let groups = {
+                        let s = state.read().await;
+                        LaunchGroups {
+                            tasks: s.owner_window_label == "work_task",
+                            result: s.cli_output_schema.is_some(),
+                        }
+                    };
                     inject_codeg_mcp(
                         &mut mcp_servers,
                         inj,
                         &conn_id,
                         &cwd,
-                        tasks_enabled,
+                        groups,
                         host_tools,
                     )
                     .await
@@ -7687,6 +7987,7 @@ async fn run_connection(
                     // — the authoritative gate for submit + UI, fixed at
                     // launch.
                     s.feedback_tool_available = injected.feedback_available;
+                    s.result_tool_available = injected.result_enabled;
                 } else {
                     // Keep a reused/test state fail-closed if companion
                     // injection was skipped; no stale token or delegation
@@ -7694,6 +7995,7 @@ async fn run_connection(
                     s.delegation_token = None;
                     s.delegation_enabled = false;
                     s.feedback_tool_available = false;
+                    s.result_tool_available = false;
                 }
             }
 
@@ -7720,6 +8022,10 @@ async fn run_connection(
             )
             .await;
 
+            // Fixed for the connection, so every session request below names
+            // the same Claude settings (see `claude_raw_sdk_session_meta`).
+            let prompt_suggestions = state.read().await.wants_prompt_suggestions;
+
             if let Some(sid) = session_id {
                 // Prefer session/resume when the agent advertises the
                 // capability: it restores session context WITHOUT replaying
@@ -7734,6 +8040,7 @@ async fn run_connection(
                         SessionId::new(sid.clone()),
                         &cwd,
                         mcp_servers.clone(),
+                        prompt_suggestions,
                     );
                     match unless_cancelled(&handshake, send_resume_session(&cx, resume_req)).await? {
                         Ok((resume_resp, models_raw)) => {
@@ -7878,6 +8185,7 @@ async fn run_connection(
                         SessionId::new(sid.clone()),
                         &cwd,
                         mcp_servers.clone(),
+                        prompt_suggestions,
                     );
                     if agent_type == AgentType::Kiro {
                         unless_cancelled(
@@ -8233,7 +8541,12 @@ async fn run_connection(
                             &handshake,
                             send_new_session_capturing_models(
                                 &cx,
-                                build_new_session_request(agent_type, &cwd, mcp_servers.clone()),
+                                build_new_session_request(
+                                    agent_type,
+                                    &cwd,
+                                    mcp_servers.clone(),
+                                    prompt_suggestions,
+                                ),
                             ),
                         )
                         .await?
@@ -8352,7 +8665,12 @@ async fn run_connection(
                     &handshake,
                     send_new_session_capturing_models(
                         &cx,
-                        build_new_session_request(agent_type, &cwd, mcp_servers.clone()),
+                        build_new_session_request(
+                            agent_type,
+                            &cwd,
+                            mcp_servers.clone(),
+                            prompt_suggestions,
+                        ),
                     ),
                 )
                 .await?
@@ -8657,20 +8975,68 @@ async fn handle_grok_ask_user_question(
 /// outlives this turn and this connection, so it stays theirs to make. With no
 /// such option (an agent that offers only "always"), `None` keeps today's card.
 fn codeg_ask_auto_allow_option(req: &RequestPermissionRequest) -> Option<String> {
+    codeg_tool_auto_allow_option(req, crate::acp::question::is_codeg_ask_tool_name)
+}
+
+/// The `allow_once` option of a request gating the codeg-mcp tool `is_tool`
+/// names, as [`codeg_ask_auto_allow_option`] reads it.
+fn codeg_tool_auto_allow_option(
+    req: &RequestPermissionRequest,
+    is_tool: fn(&str) -> bool,
+) -> Option<String> {
     let permission_title = crate::acp::air_contract::permission_record(req.meta.as_ref())
         .and_then(|p| p.get("title"))
         .and_then(serde_json::Value::as_str);
-    let is_ask = [req.tool_call.fields.title.as_deref(), permission_title]
+    let is_it = [req.tool_call.fields.title.as_deref(), permission_title]
         .into_iter()
         .flatten()
-        .any(crate::acp::question::is_codeg_ask_tool_name);
-    if !is_ask {
+        .any(is_tool);
+    if !is_it {
         return None;
     }
     req.options
         .iter()
         .find(|opt| opt.kind == PermissionOptionKind::AllowOnce)
         .map(|opt| opt.option_id.to_string())
+}
+
+/// The option that allows a request gating `submit_result` — on a connection
+/// codeg `given` the tool; on any other, a request naming it is not the tool
+/// this speaks for.
+fn codeg_submit_auto_allow_option(req: &RequestPermissionRequest, given: bool) -> Option<String> {
+    if !given {
+        return None;
+    }
+    codeg_tool_auto_allow_option(req, crate::cli_run::output_schema::is_codeg_submit_tool_name)
+}
+
+/// Answer a permission request that only gates `submit_result`, on the one
+/// kind of connection codeg gives that tool to: the root of a `codeg-cli` run
+/// started with `--output-schema`. The tool's whole effect is to hand the run
+/// the JSON its starter asked for — it runs and reads nothing on the machine —
+/// so asking "run submit_result?" would only have `--permissions deny` refuse
+/// the run its own result. Chosen as the ask tool's is: `allow_once`, by name.
+///
+/// `Err(responder)` hands the request back for the ordinary permission path.
+// `result_large_err`: as on `try_auto_allow_codeg_ask`.
+#[allow(clippy::result_large_err)]
+async fn try_auto_allow_codeg_submit(
+    state: &Arc<RwLock<SessionState>>,
+    req: &RequestPermissionRequest,
+    responder: Responder<RequestPermissionResponse>,
+) -> Result<(), Responder<RequestPermissionResponse>> {
+    let given = state.read().await.result_tool_available;
+    let Some(option_id) = codeg_submit_auto_allow_option(req, given) else {
+        return Err(responder);
+    };
+    tracing::debug!(
+        "[ACP] auto-allowing the permission request for codeg's own submit_result tool \
+         (option {option_id}); it only hands the run its result"
+    );
+    let _ = responder.respond(RequestPermissionResponse::new(
+        RequestPermissionOutcome::Selected(SelectedPermissionOutcome::new(option_id)),
+    ));
+    Ok(())
 }
 
 /// Answer a permission request that is merely gating codeg's own ask tool, so
@@ -9618,7 +9984,7 @@ async fn set_session_config_option(
     emitter: &EventEmitter,
     config_id: String,
     value_id: String,
-) -> Result<(), agent_client_protocol::Error> {
+) -> Result<SetterOutcome, agent_client_protocol::Error> {
     // An explicit set means someone has taken ownership of this option — the
     // user in the composer, or the post-establishment re-assert (already
     // drained). Either way the establishment-time value stops being the one to
@@ -9645,13 +10011,13 @@ async fn set_session_config_option(
     // Compare BEFORE emitting: the agent's answer is the only place a request and
     // its outcome are correlated. Once the option list is broadcast it is
     // indistinguishable from an unsolicited update.
-    if let Some(rejection) =
-        config_option_rejection(&map_session_config_options(&updated), &config_id, &value_id)
-    {
+    let mapped = map_session_config_options(&updated);
+    if let Some(rejection) = config_option_rejection(&mapped, &config_id, &value_id) {
         emit_with_state(state, emitter, rejection).await;
     }
+    let outcome = config_option_outcome(&mapped, &config_id);
     emit_session_config_options_values(state, emitter, updated).await;
-    Ok(())
+    Ok(outcome)
 }
 
 /// Build a [`AcpEvent::ConfigOptionRejected`] when the agent's answer settled the
@@ -11523,11 +11889,13 @@ async fn handle_fork_or_exit(
     // fork response exactly as before. Neither is worse off than it was before
     // this call existed.
     let resumed = if supports_resume {
+        let prompt_suggestions = state.read().await.wants_prompt_suggestions;
         let resume_req = build_resume_session_request(
             agent_type,
             SessionId::new(new_sid.clone()),
             cwd,
             mcp_servers.to_vec(),
+            prompt_suggestions,
         );
         match send_resume_session(&cx, resume_req).await {
             Ok(pair) => Some(pair),
@@ -12775,6 +13143,9 @@ async fn run_conversation_loop(
                 // this conversation as transcript-less (see `record_prompt`).
                 record_prompt(agent_type, &sid.0, &prompt_blocks).await;
                 prompted = true;
+                // claude-agent-acp answers a `/remote-control` prompt itself;
+                // its reply says whether Remote Control is on.
+                cb_state.claude_remote_control = remote_control_command(agent_type, &prompt_blocks);
                 let turn_started_at_ms = crate::acp_transcript::now_epoch_ms();
                 let prompt_request = PromptRequest::new(sid.clone(), prompt_blocks);
                 // Snapshot the stderr write position BEFORE the request is
@@ -12871,6 +13242,15 @@ async fn run_conversation_loop(
                 // to avoid deadlocking when the agent awaits a permission response.
                 loop {
                     tokio::select! {
+                        // Updates before the response: an agent that writes
+                        // its last update right before the response (as
+                        // claude-agent-acp does for the replies it writes
+                        // itself, `/remote-control`'s among them) delivers
+                        // both at once, and the update is queued by the time
+                        // the response is ready. Taken the other way round,
+                        // the turn would end `empty` and the update land on
+                        // the idle loop, where a Claude chunk is dropped.
+                        biased;
                         update = session.read_update() => {
                             // An `Err` is the session's router going away, not one bad
                             // message (see `AgentSession::read_update`): the connection
@@ -13340,22 +13720,26 @@ async fn run_conversation_loop(
                                 Some(ConnectionCommand::RespondPermission {
                                     request_id,
                                     option_id,
+                                    origin,
                                 }) => {
                                     resolve_permission(
-                                        perms, state, emitter, request_id, option_id,
+                                        perms, state, emitter, request_id, option_id, origin,
                                     )
                                     .await;
                                 }
-                                Some(ConnectionCommand::SetMode { mode_id }) => {
+                                Some(ConnectionCommand::SetMode { mode_id, reply }) => {
                                     let req = SetSessionModeRequest::new(sid.clone(), mode_id.clone());
-                                    match cx.send_request_to(Agent, req).block_task().await {
+                                    let outcome = match cx.send_request_to(Agent, req).block_task().await {
                                         Ok(_) => {
                                             emit_with_state(
                                                 state,
                                                 emitter,
-                                                AcpEvent::ModeChanged { mode_id },
+                                                AcpEvent::ModeChanged {
+                                                    mode_id: mode_id.clone(),
+                                                },
                                             )
                                             .await;
+                                            Ok(SetterOutcome::Confirmed { current: mode_id })
                                         }
                                         Err(e) => {
                                             emit_with_state(
@@ -13373,35 +13757,46 @@ async fn run_conversation_loop(
                                                 },
                                             )
                                             .await;
+                                            Err(e.to_string())
                                         }
-                                    }
+                                    };
+                                    send_setter_reply(reply, outcome);
                                 }
                                 Some(ConnectionCommand::SetConfigOption {
                                     config_id,
                                     value_id,
+                                    reply,
                                 }) => {
                                     let set_result = set_config_option_for_agent(
                                         agent_type, &cx, &sid, state, emitter, config_id,
                                         value_id,
                                     )
                                     .await;
-                                    if let Err(e) = set_result {
-                                        emit_with_state(
-                                            state,
-                                            emitter,
-                                            AcpEvent::Error {
-                                                message: format!("Failed to set config option: {e}"),
-                                                agent_type: agent_type.to_string(),
-                                                code: Some(
-                                                    SET_CONFIG_OPTION_FAILED_ERROR_CODE.to_string(),
-                                                ),
-                                                details: None,
-                                                // Recoverable: just a failed config-option toggle.
-                                                terminal: false,
-                                            },
-                                        )
-                                        .await;
-                                    }
+                                    let outcome = match set_result {
+                                        Ok(outcome) => Ok(outcome),
+                                        Err(e) => {
+                                            emit_with_state(
+                                                state,
+                                                emitter,
+                                                AcpEvent::Error {
+                                                    message: format!(
+                                                        "Failed to set config option: {e}"
+                                                    ),
+                                                    agent_type: agent_type.to_string(),
+                                                    code: Some(
+                                                        SET_CONFIG_OPTION_FAILED_ERROR_CODE
+                                                            .to_string(),
+                                                    ),
+                                                    details: None,
+                                                    // Recoverable: just a failed config-option toggle.
+                                                    terminal: false,
+                                                },
+                                            )
+                                            .await;
+                                            Err(e.to_string())
+                                        }
+                                    };
+                                    send_setter_reply(reply, outcome);
                                 }
                                 Some(ConnectionCommand::GoalControl { action, reply }) => {
                                     let method = state.read().await.goal_control_method.clone();
@@ -13685,31 +14080,40 @@ async fn run_conversation_loop(
             Some(ConnectionCommand::RespondPermission {
                 request_id,
                 option_id,
+                origin,
             }) => {
-                resolve_permission(perms, state, emitter, request_id, option_id).await;
+                resolve_permission(perms, state, emitter, request_id, option_id, origin).await;
             }
-            Some(ConnectionCommand::SetMode { mode_id }) => {
-                if let Err(e) = set_session_mode(session, state, emitter, mode_id).await {
-                    emit_with_state(
-                        state,
-                        emitter,
-                        AcpEvent::Error {
-                            message: format!("Failed to set mode: {e}"),
-                            agent_type: agent_type.to_string(),
-                            code: Some(SET_MODE_FAILED_ERROR_CODE.to_string()),
-                            details: None,
-                            // Recoverable: idle SetMode failure leaves the
-                            // connection alive — same rationale as the
-                            // mid-prompt SetMode site above.
-                            terminal: false,
-                        },
-                    )
-                    .await;
-                }
+            Some(ConnectionCommand::SetMode { mode_id, reply }) => {
+                let outcome = match set_session_mode(session, state, emitter, mode_id.clone()).await
+                {
+                    // `set_session_mode` only returns once the agent answered.
+                    Ok(()) => Ok(SetterOutcome::Confirmed { current: mode_id }),
+                    Err(e) => {
+                        emit_with_state(
+                            state,
+                            emitter,
+                            AcpEvent::Error {
+                                message: format!("Failed to set mode: {e}"),
+                                agent_type: agent_type.to_string(),
+                                code: Some(SET_MODE_FAILED_ERROR_CODE.to_string()),
+                                details: None,
+                                // Recoverable: idle SetMode failure leaves the
+                                // connection alive — same rationale as the
+                                // mid-prompt SetMode site above.
+                                terminal: false,
+                            },
+                        )
+                        .await;
+                        Err(e.to_string())
+                    }
+                };
+                send_setter_reply(reply, outcome);
             }
             Some(ConnectionCommand::SetConfigOption {
                 config_id,
                 value_id,
+                reply,
             }) => {
                 let cx = session.connection();
                 let sid = session.session_id().clone();
@@ -13717,22 +14121,27 @@ async fn run_conversation_loop(
                     agent_type, &cx, &sid, state, emitter, config_id, value_id,
                 )
                 .await;
-                if let Err(e) = set_result {
-                    emit_with_state(
-                        state,
-                        emitter,
-                        AcpEvent::Error {
-                            message: format!("Failed to set config option: {e}"),
-                            agent_type: agent_type.to_string(),
-                            code: Some(SET_CONFIG_OPTION_FAILED_ERROR_CODE.to_string()),
-                            details: None,
-                            // Recoverable: idle SetConfigOption failure leaves
-                            // the connection alive.
-                            terminal: false,
-                        },
-                    )
-                    .await;
-                }
+                let outcome = match set_result {
+                    Ok(outcome) => Ok(outcome),
+                    Err(e) => {
+                        emit_with_state(
+                            state,
+                            emitter,
+                            AcpEvent::Error {
+                                message: format!("Failed to set config option: {e}"),
+                                agent_type: agent_type.to_string(),
+                                code: Some(SET_CONFIG_OPTION_FAILED_ERROR_CODE.to_string()),
+                                details: None,
+                                // Recoverable: idle SetConfigOption failure leaves
+                                // the connection alive.
+                                terminal: false,
+                            },
+                        )
+                        .await;
+                        Err(e.to_string())
+                    }
+                };
+                send_setter_reply(reply, outcome);
             }
             Some(ConnectionCommand::GoalControl { action, reply }) => {
                 let cx = session.connection();
@@ -13862,12 +14271,14 @@ async fn run_conversation_loop(
                 // brought; only one landing from now on can be newer than that
                 // handshake (see `SessionState::grok_catalog_broadcast`).
                 state.write().await.grok_catalog_broadcast = None;
+                let prompt_suggestions = state.read().await.wants_prompt_suggestions;
                 let result = crate::acp::fork::fork_session(
                     &cx,
                     &sid,
                     agent_type,
                     cwd,
                     mcp_servers,
+                    prompt_suggestions,
                     fork_point.as_ref(),
                 )
                 .await;
@@ -16171,6 +16582,131 @@ fn session_info_goal_value(
     }
 }
 
+/// What a `session_info_update` says about the predicted follow-up prompt:
+/// `Some(Some(text))` offers `text`, `Some(None)` withdraws the one offered,
+/// and `None` (the key absent or unreadable) leaves it as it is.
+///
+/// claude-agent-acp 0.92.0 (#1356) forwards the prompt Claude Code predicts
+/// after a turn as `_meta.promptSuggestions = {suggestions: [{text}]}`, to an
+/// AIR client only, and sends `suggestions: []` when the next prompt arrives
+/// (the prediction is spent) or a conversation reset drops the transcript it
+/// was drawn from. The first non-blank `text` is the one offered, as AIR offers
+/// it. The key names no vendor, but it is read only from the two adapters codeg
+/// declares AIR to ([`crate::acp::air_contract::speaks_air_contract`]), the
+/// only agents that send it.
+fn prompt_suggestion_update(
+    agent_type: AgentType,
+    meta: Option<&serde_json::Map<String, serde_json::Value>>,
+) -> Option<Option<String>> {
+    if !crate::acp::air_contract::speaks_air_contract(agent_type) {
+        return None;
+    }
+    let suggestions = meta?
+        .get("promptSuggestions")?
+        .get("suggestions")?
+        .as_array()?;
+    Some(
+        suggestions
+            .iter()
+            .filter_map(|entry| entry.get("text")?.as_str())
+            .map(str::trim)
+            .find(|text| !text.is_empty())
+            .map(str::to_string),
+    )
+}
+
+/// What a `/remote-control` prompt asks claude-agent-acp for (0.93.0, #1197).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RemoteControlCommand {
+    /// `/remote-control` or `/remote-control <session name>`: turn Remote
+    /// Control on, or answer with its URL again when it is on already.
+    Connect,
+    /// `/remote-control off`.
+    Disconnect,
+}
+
+/// The `/remote-control` command a Claude prompt is, read the way
+/// claude-agent-acp 0.93.0 reads it (`parseRemoteControlCommand`), since the
+/// adapter answers only what it parses: exactly one text block whose
+/// JavaScript-trimmed text is `/remote-control`, alone or followed by
+/// whitespace and an argument. An argument that trims to `off`, in any case,
+/// turns it off; any other (a session name), or none, turns it on.
+fn remote_control_command(
+    agent_type: AgentType,
+    blocks: &[ContentBlock],
+) -> Option<RemoteControlCommand> {
+    use crate::acp::js_text::is_js_whitespace;
+    if agent_type != AgentType::ClaudeCode {
+        return None;
+    }
+    let [ContentBlock::Text(text)] = blocks else {
+        return None;
+    };
+    let rest = text
+        .text
+        .trim_matches(is_js_whitespace)
+        .strip_prefix("/remote-control")?;
+    if rest.is_empty() {
+        return Some(RemoteControlCommand::Connect);
+    }
+    // `(?:\s+([\s\S]*))?$`: whatever follows the name starts with whitespace.
+    if !rest.starts_with(is_js_whitespace) {
+        return None;
+    }
+    if rest.trim_matches(is_js_whitespace).to_lowercase() == "off" {
+        Some(RemoteControlCommand::Disconnect)
+    } else {
+        Some(RemoteControlCommand::Connect)
+    }
+}
+
+/// What claude-agent-acp's reply to a `/remote-control` prompt says Remote
+/// Control is now: `Some(Some(_))` on, `Some(None)` off, and `None` when the
+/// text is no such reply, or one that leaves Remote Control as it was.
+///
+/// The adapter answers the command itself, with no model turn, in one
+/// `agent_message_chunk` of fixed wording (0.93.0's `runRemoteControlCommand`):
+///  - "Remote Control is active. Continue this session from claude.ai/code or
+///    the Claude mobile app:\n\n<session URL>\n\nRun /remote-control off to
+///    disconnect.", or "Remote Control is active, but Claude Code did not
+///    return a session URL.": on.
+///  - "Could not start Remote Control: <error>": off. Claude Code answers with
+///    the bridge it has while that one is up, and tears a failed one down
+///    before it tries again, so a start that fails leaves none.
+///  - "Remote Control is off. Run /remote-control to reconnect.": off.
+///  - "Could not stop Remote Control: <error>": unchanged.
+///
+/// None of it reaches the transcript, and the CLI's own `bridge_state` frames
+/// reach the client only with the next model turn, so this text is the one
+/// timely report. Wording that stops matching (a later adapter, or Claude Code
+/// answering a command the adapter left to it) changes nothing, which leaves
+/// codeg where it was before it read the reply at all.
+fn remote_control_reply(
+    command: RemoteControlCommand,
+    text: &str,
+) -> Option<Option<RemoteControlInfo>> {
+    match command {
+        RemoteControlCommand::Connect if text.starts_with("Remote Control is active") => {
+            Some(Some(RemoteControlInfo {
+                session_url: remote_control_session_url(text),
+            }))
+        }
+        RemoteControlCommand::Connect if text.starts_with("Could not start Remote Control") => {
+            Some(None)
+        }
+        RemoteControlCommand::Disconnect if text.starts_with("Remote Control is off") => Some(None),
+        _ => None,
+    }
+}
+
+/// The session URL an "active" reply names: its first word that parses as an
+/// `https` URL, kept as written.
+fn remote_control_session_url(text: &str) -> Option<String> {
+    text.split_whitespace()
+        .find(|word| url::Url::parse(word).is_ok_and(|url| url.scheme() == "https"))
+        .map(str::to_string)
+}
+
 /// The raw `sessionFailure` value out of a `_meta.jetbrains.air` envelope —
 /// present only when the envelope itself is well-formed (integer
 /// `version >= 1`, mirroring the advertisement check the adapters run on
@@ -16968,6 +17504,10 @@ struct CodeBuddyLiveState {
     /// raw arguments, which must be rewritten the same way. Dropped at a final
     /// status and cleared at turn start, like `hosted_terminal_calls`.
     kiro_calls: HashMap<String, KiroLiveCall>,
+    /// The `/remote-control` command the latest Claude prompt was
+    /// ([`remote_control_command`]), until the adapter's reply to it arrives
+    /// ([`remote_control_reply`]) or the next prompt replaces it.
+    claude_remote_control: Option<RemoteControlCommand>,
 }
 
 /// What [`kiro_live_tool`] remembers about one live Kiro tool call.
@@ -20080,6 +20620,13 @@ async fn emit_conversation_update(
                         // into the live Agent capsule.
                         let parent_tool_use_id =
                             claude_chunk_parent_tool_use_id(agent_type, meta.as_ref());
+                        // The adapter's own answer to a `/remote-control`
+                        // prompt is one top-level chunk.
+                        let remote_control =
+                            match (cb_state.claude_remote_control, &parent_tool_use_id) {
+                                (Some(command), None) => remote_control_reply(command, &text.text),
+                                _ => None,
+                            };
                         emit_with_state(
                             state,
                             emitter,
@@ -20089,6 +20636,15 @@ async fn emit_conversation_update(
                             },
                         )
                         .await;
+                        if let Some(remote_control) = remote_control {
+                            cb_state.claude_remote_control = None;
+                            emit_with_state(
+                                state,
+                                emitter,
+                                AcpEvent::RemoteControl { remote_control },
+                            )
+                            .await;
+                        }
                     }
                 }
             }
@@ -21059,10 +21615,15 @@ async fn emit_conversation_update(
                 crate::acp::session_title::accept_wire_title(state, emitter, agent_type, title)
                     .await;
             }
+            // claude-agent-acp 0.92.0's predicted follow-up prompt, offered in
+            // the empty composer. It arrives after the turn's response (Claude
+            // Code predicts once the turn has ended), and its clear at the
+            // start of the next prompt.
+            if let Some(text) = prompt_suggestion_update(agent_type, info.meta.as_ref()) {
+                emit_with_state(state, emitter, AcpEvent::PromptSuggestion { text }).await;
+            }
             let neutral_goal_channel = state.read().await.neutral_goal_channel;
-            if let Some(goal) =
-                session_info_goal_value(neutral_goal_channel, info.meta.as_ref())
-            {
+            if let Some(goal) = session_info_goal_value(neutral_goal_channel, info.meta.as_ref()) {
                 if let Some(marker) =
                     crate::acp::codex_goal::next_goal_marker(&mut cb_state.codex_open_goal, goal)
                 {
@@ -21721,11 +22282,156 @@ mod tests {
         assert!(
             events.iter().any(|e| matches!(
                 &e.payload,
-                AcpEvent::PermissionResolved { request_id } if *request_id == shown
+                AcpEvent::PermissionResolved {
+                    request_id,
+                    option_id: None,
+                    origin: None,
+                } if *request_id == shown
             )),
-            "the card must be retracted, not left up with no one behind it"
+            "the card must be retracted, not left up with no one behind it, and \
+             a withdrawal names no option and no answerer"
         );
         assert!(perms.lock().await.showing.is_none());
+    }
+
+    /// The answer that takes effect is reported with its option and who gave
+    /// it; a second answer to the same card changes nothing and reports
+    /// nothing — even when it picks the very same option, which is why the
+    /// author cannot be inferred by comparing options.
+    #[tokio::test]
+    async fn the_effective_permission_answer_is_reported_with_its_origin() {
+        use agent_client_protocol::schema::v1::{
+            PermissionOption, ToolCallUpdate, ToolCallUpdateFields,
+        };
+        use agent_client_protocol::Channel;
+
+        let (client_end, agent_end) = Channel::duplex();
+        let state = Arc::new(RwLock::new(SessionState::new(
+            "conn-test".to_string(),
+            AgentType::ClaudeCode,
+            None,
+            "win".to_string(),
+            None,
+        )));
+        let perms = PendingPermissions::default();
+
+        let agent = tokio::spawn(Agent.builder().connect_with(
+            agent_end,
+            async |cx: ConnectionTo<Client>| {
+                cx.send_request_to(
+                    Client,
+                    RequestPermissionRequest::new(
+                        SessionId::new("s1"),
+                        ToolCallUpdate::new("call-1", ToolCallUpdateFields::new().title("Bash")),
+                        vec![
+                            PermissionOption::new("deny", "Deny", PermissionOptionKind::RejectOnce),
+                            PermissionOption::new(
+                                "allow",
+                                "Allow",
+                                PermissionOptionKind::AllowOnce,
+                            ),
+                        ],
+                    ),
+                )
+                .block_task()
+                .await
+            },
+        ));
+
+        let client = tokio::spawn({
+            let state = Arc::clone(&state);
+            let perms = perms.clone();
+            Client
+                .builder()
+                .on_receive_request(
+                    async move |req: RequestPermissionRequest,
+                                responder: Responder<RequestPermissionResponse>,
+                                cx: ConnectionTo<Agent>| {
+                        handle_permission_request(
+                            &cx,
+                            &state,
+                            &EventEmitter::Noop,
+                            &perms,
+                            "/tmp",
+                            AgentType::ClaudeCode,
+                            req,
+                            responder,
+                        )
+                        .await;
+                        Ok(())
+                    },
+                    on_receive_request!(),
+                )
+                .connect_with(client_end, async |_cx: ConnectionTo<Agent>| {
+                    std::future::pending::<Result<(), agent_client_protocol::Error>>().await
+                })
+        });
+
+        let shown = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let Some(id) = perms.lock().await.showing.clone() {
+                    break id;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(5)).await;
+            }
+        })
+        .await
+        .expect("the card is shown");
+
+        let policy = PermissionAnswerOrigin::CliPolicy {
+            run_id: "run-1".to_string(),
+        };
+        resolve_permission(
+            &perms,
+            &state,
+            &EventEmitter::Noop,
+            shown.clone(),
+            "deny".to_string(),
+            policy.clone(),
+        )
+        .await;
+        // The same option again, from a person: a no-op.
+        resolve_permission(
+            &perms,
+            &state,
+            &EventEmitter::Noop,
+            shown.clone(),
+            "deny".to_string(),
+            PermissionAnswerOrigin::User,
+        )
+        .await;
+
+        let response = tokio::time::timeout(std::time::Duration::from_secs(5), agent)
+            .await
+            .expect("the agent gets its answer")
+            .expect("agent task")
+            .expect("a response, not an error");
+        client.abort();
+        match response.outcome {
+            RequestPermissionOutcome::Selected(selected) => {
+                assert_eq!(selected.option_id.to_string(), "deny");
+            }
+            other => panic!("expected the selected option, got {other:?}"),
+        }
+
+        let guard = state.read().await;
+        let events = guard.recent_events_after(0).expect("events recorded");
+        let resolved: Vec<_> = events
+            .iter()
+            .filter_map(|e| match &e.payload {
+                AcpEvent::PermissionResolved {
+                    request_id,
+                    option_id,
+                    origin,
+                } => Some((request_id.clone(), option_id.clone(), origin.clone())),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            resolved,
+            vec![(shown, Some("deny".to_string()), Some(policy))],
+            "exactly one report, naming the effective option and its answerer"
+        );
     }
 
     /// An agent request codeg has no handler for still gets an answer. One
@@ -22278,6 +22984,57 @@ mod tests {
         assert!(!init_advertises_steering(None));
     }
 
+    /// claude-agent-acp 0.92.0's `initialize` answer, as its own scenario harness
+    /// records it for codeg's exact `clientCapabilities`: ACP SDK 1.9.0 adds the
+    /// unstable `sessionCapabilities.systemPrompt`, which this schema crate does
+    /// not know. The typed response must still parse, with every capability
+    /// codeg reads beside it intact — a failed parse here would end every
+    /// Claude connection at its handshake.
+    #[test]
+    fn claude_0920_initialize_response_parses_past_its_system_prompt_capability() {
+        let wire = serde_json::json!({
+            "_meta": {
+                "jetbrains": {"air": {
+                    "capabilities": ["sessionFailure", "agentFileChangeReport", "nativeSubagentSessions",
+                        "asyncTasks", "customInstructions", "recommendedValue", "diffPatch", "planFile"],
+                    "goal": {"actions": ["set", "clear"], "controlMethod": "_session/goal", "version": 1},
+                    "version": 1
+                }},
+                "steering": {"supported": true}
+            },
+            "agentCapabilities": {
+                "_meta": {"authStatus": {}, "claudeCode": {"promptQueueing": true}},
+                "auth": {"logout": {}},
+                "loadSession": true,
+                "mcpCapabilities": {"http": true, "sse": true},
+                "promptCapabilities": {"embeddedContext": true, "image": true},
+                "providers": {},
+                "sessionCapabilities": {
+                    "additionalDirectories": {}, "close": {}, "delete": {}, "fork": {}, "list": {},
+                    "resume": {}, "subagents": {},
+                    "systemPrompt": {"mode": {"override": {}}}
+                }
+            },
+            "agentInfo": {"name": "@agentclientprotocol/claude-agent-acp", "title": "Claude Agent", "version": "0.92.0"},
+            "authMethods": [],
+            "protocolVersion": 1
+        });
+        let response: agent_client_protocol::schema::v1::InitializeResponse =
+            serde_json::from_value(wire).expect("0.92.0 initialize parses");
+        let caps = &response.agent_capabilities;
+        assert!(caps.load_session);
+        assert!(caps.session_capabilities.resume.is_some());
+        assert!(caps.session_capabilities.close.is_some());
+        assert!(caps.session_capabilities.fork.is_some());
+        assert!(caps.prompt_capabilities.image);
+        assert!(init_advertises_steering(response.meta.as_ref()));
+        assert!(init_advertises_goal(response.meta.as_ref()));
+        assert_eq!(
+            response.agent_info.as_ref().map(|info| info.name.as_str()),
+            Some(crate::acp::registry::CLAUDE_AGENT_ACP_PACKAGE)
+        );
+    }
+
     #[test]
     fn init_advertises_goal_requires_integer_version_at_least_1() {
         // The real advertisements: codex-acp 1.2.0+ / claude-agent-acp 0.66.0+.
@@ -22376,6 +23133,423 @@ mod tests {
             "version": 1, "sessionFailure": {"id": "x", "revision": 1}
         }}}));
         assert!(session_info_goal_value(true, Some(&failure)).is_none());
+    }
+
+    // --- predicted follow-up prompt (`_meta.promptSuggestions`) ------------
+
+    #[test]
+    fn prompt_suggestion_update_reads_the_offer_the_clear_and_nothing_else() {
+        let read = |meta: serde_json::Value| {
+            prompt_suggestion_update(AgentType::ClaudeCode, Some(&meta_map(meta)))
+        };
+        // claude-agent-acp 0.92.0's two frames: an offer, and the clear it
+        // sends when the next prompt arrives.
+        assert_eq!(
+            read(
+                serde_json::json!({"promptSuggestions": {"suggestions": [{"text": "Run the tests"}]}})
+            ),
+            Some(Some("Run the tests".to_string()))
+        );
+        assert_eq!(
+            read(serde_json::json!({"promptSuggestions": {"suggestions": []}})),
+            Some(None)
+        );
+        // The first non-blank text is the one offered, trimmed.
+        assert_eq!(
+            read(serde_json::json!({"promptSuggestions": {"suggestions": [
+                {"text": "   "}, {"other": 1}, {"text": "  commit this \n"}, {"text": "push it"}
+            ]}})),
+            Some(Some("commit this".to_string()))
+        );
+        // Only blank texts withdraw the offer rather than showing an empty hint.
+        assert_eq!(
+            read(serde_json::json!({"promptSuggestions": {"suggestions": [{"text": " "}]}})),
+            Some(None)
+        );
+        // Anything else leaves the held one as it is: no key, an unreadable
+        // shape, or a goal/title-only update.
+        assert_eq!(read(serde_json::json!({"goal": {"version": 1}})), None);
+        assert_eq!(read(serde_json::json!({"promptSuggestions": null})), None);
+        assert_eq!(
+            read(serde_json::json!({"promptSuggestions": {"suggestions": "x"}})),
+            None
+        );
+        assert_eq!(read(serde_json::json!({"promptSuggestions": {}})), None);
+        assert_eq!(prompt_suggestion_update(AgentType::ClaudeCode, None), None);
+    }
+
+    /// Read only from the two adapters codeg declares AIR to, the only ones the
+    /// key is sent to: an unnamespaced key from anyone else is not taken on trust.
+    #[test]
+    fn prompt_suggestion_update_is_read_from_the_air_adapters_only() {
+        let offer = meta_map(serde_json::json!({
+            "promptSuggestions": {"suggestions": [{"text": "Run the tests"}]}
+        }));
+        assert!(prompt_suggestion_update(AgentType::Codex, Some(&offer)).is_some());
+        for agent_type in [AgentType::CodeBuddy, AgentType::Grok, AgentType::OpenCode] {
+            assert_eq!(
+                prompt_suggestion_update(agent_type, Some(&offer)),
+                None,
+                "{agent_type:?}"
+            );
+        }
+    }
+
+    /// Drive one `session_info_update` with this `_meta` through
+    /// `emit_conversation_update`, as the idle loop does between turns.
+    async fn drive_session_info_meta(
+        state: &Arc<RwLock<SessionState>>,
+        agent_type: AgentType,
+        meta: serde_json::Value,
+    ) {
+        let update: SessionUpdate = serde_json::from_value(serde_json::json!({
+            "sessionUpdate": "session_info_update",
+            "_meta": meta,
+        }))
+        .expect("valid session_info_update wire shape");
+        let mut cache = ToolCallOutputCache::default();
+        let mut cb = CodeBuddyLiveState::default();
+        emit_conversation_update(
+            state,
+            &EventEmitter::Noop,
+            agent_type,
+            update,
+            None,
+            &mut cache,
+            &mut cb,
+        )
+        .await;
+    }
+
+    /// The offer and the clear each become a `PromptSuggestion` event, which the
+    /// session state keeps for the snapshot; an update without the key (a goal,
+    /// a title) emits none and leaves the held offer alone.
+    #[tokio::test]
+    async fn session_info_update_offers_and_withdraws_the_predicted_prompt() {
+        let state = Arc::new(RwLock::new(SessionState::new(
+            "conn-suggest".to_string(),
+            AgentType::ClaudeCode,
+            None,
+            "win".to_string(),
+            None,
+        )));
+        let suggestions = |state: &SessionState| -> Vec<Option<String>> {
+            state
+                .recent_events_after(0)
+                .unwrap_or_default()
+                .iter()
+                .filter_map(|e| match &e.payload {
+                    AcpEvent::PromptSuggestion { text } => Some(text.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        drive_session_info_meta(
+            &state,
+            AgentType::ClaudeCode,
+            serde_json::json!({"promptSuggestions": {"suggestions": [{"text": "Run the tests"}]}}),
+        )
+        .await;
+        assert_eq!(
+            state.read().await.prompt_suggestion.as_deref(),
+            Some("Run the tests")
+        );
+
+        drive_session_info_meta(
+            &state,
+            AgentType::ClaudeCode,
+            serde_json::json!({"jetbrains": {"air": {"version": 1}}}),
+        )
+        .await;
+        assert_eq!(
+            state.read().await.prompt_suggestion.as_deref(),
+            Some("Run the tests"),
+            "an update without the key keeps the offer"
+        );
+
+        drive_session_info_meta(
+            &state,
+            AgentType::ClaudeCode,
+            serde_json::json!({"promptSuggestions": {"suggestions": []}}),
+        )
+        .await;
+        assert_eq!(state.read().await.prompt_suggestion, None);
+        assert_eq!(
+            suggestions(&*state.read().await),
+            vec![Some("Run the tests".to_string()), None]
+        );
+    }
+
+    // --- Claude Code's Remote Control (claude-agent-acp 0.93.0) ------------
+
+    /// The success reply of claude-agent-acp 0.93.0's `runRemoteControlCommand`,
+    /// verbatim.
+    fn remote_control_active_reply(url: &str) -> String {
+        format!(
+            "Remote Control is active. Continue this session from claude.ai/code or the \
+             Claude mobile app:\n\n{url}\n\nRun /remote-control off to disconnect."
+        )
+    }
+
+    fn text_blocks(texts: &[&str]) -> Vec<ContentBlock> {
+        texts
+            .iter()
+            .map(|text| ContentBlock::Text(TextContent::new(*text)))
+            .collect()
+    }
+
+    /// The prompts the adapter answers itself, read with its own
+    /// `parseRemoteControlCommand` rules: one text block, JavaScript `trim`
+    /// and `\s`, the name exact, `off` in any case.
+    #[test]
+    fn remote_control_command_reads_what_the_adapter_parses() {
+        use RemoteControlCommand::{Connect, Disconnect};
+        for (text, want) in [
+            ("/remote-control", Some(Connect)),
+            ("  /remote-control\n", Some(Connect)),
+            ("/remote-control My laptop session", Some(Connect)),
+            ("/remote-control\toff", Some(Disconnect)),
+            ("/remote-control OFF", Some(Disconnect)),
+            ("  /remote-control   Off  ", Some(Disconnect)),
+            // JavaScript's whitespace, not Rust's: U+FEFF trims, U+0085 doesn't.
+            ("\u{FEFF}/remote-control off\u{FEFF}", Some(Disconnect)),
+            ("/remote-control\u{3000}off", Some(Disconnect)),
+            ("/remote-control\u{85}off", None),
+            ("/remote-control off now", Some(Connect)),
+            ("/remote-controller", None),
+            ("/Remote-Control", None),
+            ("please /remote-control", None),
+            ("/rc", None),
+        ] {
+            assert_eq!(
+                remote_control_command(AgentType::ClaudeCode, &text_blocks(&[text])),
+                want,
+                "{text:?}"
+            );
+        }
+        // Anything beside the one text block goes to Claude Code instead.
+        assert_eq!(
+            remote_control_command(
+                AgentType::ClaudeCode,
+                &text_blocks(&["/remote-control", "extra"])
+            ),
+            None
+        );
+        assert_eq!(remote_control_command(AgentType::ClaudeCode, &[]), None);
+        // Only claude-agent-acp has the command.
+        assert_eq!(
+            remote_control_command(AgentType::Codex, &text_blocks(&["/remote-control"])),
+            None
+        );
+    }
+
+    /// The adapter's five replies, verbatim, and what each says Remote Control
+    /// is now; any other text says nothing.
+    #[test]
+    fn remote_control_reply_reads_the_adapters_five_replies() {
+        use RemoteControlCommand::{Connect, Disconnect};
+        let url = "https://claude.ai/code/session_01ABCdef";
+        assert_eq!(
+            remote_control_reply(Connect, &remote_control_active_reply(url)),
+            Some(Some(RemoteControlInfo {
+                session_url: Some(url.to_string())
+            }))
+        );
+        assert_eq!(
+            remote_control_reply(
+                Connect,
+                "Remote Control is active, but Claude Code did not return a session URL."
+            ),
+            Some(Some(RemoteControlInfo { session_url: None }))
+        );
+        // Measured through a gateway (0.93.0, CLI 2.1.300).
+        assert_eq!(
+            remote_control_reply(
+                Connect,
+                "Could not start Remote Control: Remote Control is only available when using \
+                 Claude via api.anthropic.com. ANTHROPIC_BASE_URL is set and does not point at \
+                 api.anthropic.com, so this session is using a custom endpoint — unset it (or \
+                 run in a shell without it) to use Remote Control."
+            ),
+            Some(None)
+        );
+        assert_eq!(
+            remote_control_reply(
+                Disconnect,
+                "Remote Control is off. Run /remote-control to reconnect."
+            ),
+            Some(None)
+        );
+        assert_eq!(
+            remote_control_reply(Disconnect, "Could not stop Remote Control: offline"),
+            None,
+            "a stop that failed leaves it as it was"
+        );
+        // Claude Code's own answer to a command the adapter left to it, and
+        // replies to the other command, say nothing.
+        assert_eq!(
+            remote_control_reply(
+                Connect,
+                "/remote-control isn't available in this environment."
+            ),
+            None
+        );
+        assert_eq!(
+            remote_control_reply(Disconnect, &remote_control_active_reply(url)),
+            None
+        );
+        assert_eq!(
+            remote_control_reply(
+                Connect,
+                "Remote Control is off. Run /remote-control to reconnect."
+            ),
+            None
+        );
+    }
+
+    #[test]
+    fn remote_control_session_url_takes_the_first_https_url_as_written() {
+        assert_eq!(
+            remote_control_session_url(&remote_control_active_reply(
+                "https://claude.ai/code/session_01?x=1"
+            ))
+            .as_deref(),
+            Some("https://claude.ai/code/session_01?x=1")
+        );
+        assert_eq!(remote_control_session_url("no url here"), None);
+        assert_eq!(
+            remote_control_session_url("see http://claude.ai/code/x or https://"),
+            None,
+            "plain http and a bare scheme are no session URL"
+        );
+    }
+
+    /// Drive one top-level `agent_message_chunk` through
+    /// `emit_conversation_update` with `cb`'s pending command.
+    async fn drive_agent_text(
+        state: &Arc<RwLock<SessionState>>,
+        cb: &mut CodeBuddyLiveState,
+        text: &str,
+        parent_tool_use_id: Option<&str>,
+    ) {
+        let mut update = serde_json::json!({
+            "sessionUpdate": "agent_message_chunk",
+            "content": {"type": "text", "text": text},
+        });
+        if let Some(parent) = parent_tool_use_id {
+            update["_meta"] = serde_json::json!({"claudeCode": {"parentToolUseId": parent}});
+        }
+        let update: SessionUpdate =
+            serde_json::from_value(update).expect("valid agent_message_chunk wire shape");
+        let mut cache = ToolCallOutputCache::default();
+        emit_conversation_update(
+            state,
+            &EventEmitter::Noop,
+            AgentType::ClaudeCode,
+            update,
+            None,
+            &mut cache,
+            cb,
+        )
+        .await;
+    }
+
+    fn remote_control_events(state: &SessionState) -> Vec<Option<RemoteControlInfo>> {
+        state
+            .recent_events_after(0)
+            .unwrap_or_default()
+            .iter()
+            .filter_map(|e| match &e.payload {
+                AcpEvent::RemoteControl { remote_control } => Some(remote_control.clone()),
+                _ => None,
+            })
+            .collect()
+    }
+
+    /// The reply to a pending command becomes a `RemoteControl` event after
+    /// the text itself, which still renders; the command is then spent. Text
+    /// before the reply, a subagent's text, and text with no command pending
+    /// say nothing.
+    #[tokio::test]
+    async fn the_adapters_reply_to_a_pending_command_sets_remote_control() {
+        let state = Arc::new(RwLock::new(SessionState::new(
+            "conn-rc".to_string(),
+            AgentType::ClaudeCode,
+            None,
+            "win".to_string(),
+            None,
+        )));
+        let url = "https://claude.ai/code/session_01";
+        let mut cb = CodeBuddyLiveState::default();
+
+        drive_agent_text(&state, &mut cb, &remote_control_active_reply(url), None).await;
+        assert!(
+            remote_control_events(&*state.read().await).is_empty(),
+            "no command pending: an agent that merely says so changes nothing"
+        );
+
+        cb.claude_remote_control = Some(RemoteControlCommand::Connect);
+        drive_agent_text(&state, &mut cb, "some straggler", None).await;
+        drive_agent_text(
+            &state,
+            &mut cb,
+            &remote_control_active_reply(url),
+            Some("toolu_1"),
+        )
+        .await;
+        assert!(remote_control_events(&*state.read().await).is_empty());
+        assert_eq!(
+            cb.claude_remote_control,
+            Some(RemoteControlCommand::Connect)
+        );
+
+        drive_agent_text(&state, &mut cb, &remote_control_active_reply(url), None).await;
+        let on = Some(RemoteControlInfo {
+            session_url: Some(url.to_string()),
+        });
+        assert_eq!(state.read().await.remote_control, on);
+        assert_eq!(
+            cb.claude_remote_control, None,
+            "the reply spends the command"
+        );
+        let events = state
+            .read()
+            .await
+            .recent_events_after(0)
+            .unwrap_or_default();
+        let reply_at = events
+            .iter()
+            .position(|e| {
+                matches!(&e.payload, AcpEvent::ContentDelta { text, .. } if text.starts_with("Remote Control is active"))
+            })
+            .expect("the reply renders");
+        let state_at = events
+            .iter()
+            .position(|e| matches!(e.payload, AcpEvent::RemoteControl { .. }))
+            .expect("Remote Control is reported");
+        assert!(reply_at < state_at);
+
+        // Spent: the same words again change nothing.
+        drive_agent_text(
+            &state,
+            &mut cb,
+            "Remote Control is off. Run /remote-control to reconnect.",
+            None,
+        )
+        .await;
+        assert_eq!(state.read().await.remote_control, on);
+
+        cb.claude_remote_control = Some(RemoteControlCommand::Disconnect);
+        drive_agent_text(
+            &state,
+            &mut cb,
+            "Remote Control is off. Run /remote-control to reconnect.",
+            None,
+        )
+        .await;
+        assert_eq!(state.read().await.remote_control, None);
+        assert_eq!(remote_control_events(&*state.read().await), vec![on, None]);
     }
 
     // --- live ACP session title (`session_info_update.title`) --------------
@@ -23513,6 +24687,45 @@ mod tests {
             ],
         );
         assert!(codeg_ask_auto_allow_option(&always_only).is_none());
+    }
+
+    /// `submit_result` is answered by the same rule as the ask tool — codeg's
+    /// own, by name, allow-once only — and only on a connection given it.
+    #[test]
+    fn codeg_submit_auto_allow_option_picks_allow_once_where_codeg_gave_the_tool() {
+        let pick = |name: &str, given: bool| {
+            codeg_submit_auto_allow_option(
+                &claude_mcp_permission_request(name, claude_permission_options()),
+                given,
+            )
+        };
+        assert_eq!(
+            pick("mcp__codeg-mcp__submit_result", true).as_deref(),
+            Some("allow-once")
+        );
+        assert!(
+            pick("mcp__codeg-mcp__submit_result", false).is_none(),
+            "a connection codeg did not give the tool keeps its card"
+        );
+        for foreign in [
+            "mcp__other-server__submit_result",
+            // A server whose name only ends in codeg's is someone else's.
+            "mcp__other-codeg-mcp__submit_result",
+            "mcp__codeg-mcp__ask_user_question",
+            "Bash",
+        ] {
+            assert!(pick(foreign, true).is_none(), "{foreign} keeps its card");
+        }
+        // Only ever once: a durable allow is the user's to give.
+        let always_only = claude_mcp_permission_request(
+            "mcp__codeg-mcp__submit_result",
+            vec![agent_client_protocol::schema::v1::PermissionOption::new(
+                "allow-with-updates",
+                "Yes, and don't ask again",
+                PermissionOptionKind::AllowAlways,
+            )],
+        );
+        assert!(codeg_submit_auto_allow_option(&always_only, true).is_none());
     }
 
     #[test]
@@ -25533,7 +26746,7 @@ mod tests {
 
     #[test]
     fn claude_raw_sdk_meta_enabled_only_for_claude() {
-        let claude_meta = claude_raw_sdk_session_meta(AgentType::ClaudeCode)
+        let claude_meta = claude_raw_sdk_session_meta(AgentType::ClaudeCode, true)
             .expect("Claude must have raw SDK meta");
         assert_eq!(
             claude_meta
@@ -25543,7 +26756,50 @@ mod tests {
             Some(true)
         );
 
-        assert!(claude_raw_sdk_session_meta(AgentType::Codex).is_none());
+        assert!(claude_raw_sdk_session_meta(AgentType::Codex, true).is_none());
+        assert!(claude_raw_sdk_session_meta(AgentType::Codex, false).is_none());
+        // A session that asks for predicted prompts names nothing else: the
+        // adapter turns them on itself.
+        assert_eq!(
+            serde_json::Value::Object(claude_meta),
+            serde_json::json!({"claudeCode": {"emitRawSDKMessages": true}})
+        );
+    }
+
+    /// claude-agent-acp 0.92.0 reads `_meta.claudeCode.options` into the SDK
+    /// options after its own `promptSuggestions: true`, so this is what keeps
+    /// a session nobody types into from paying for a prediction after every
+    /// turn (measured against a fake API: no prediction request at all).
+    #[test]
+    fn claude_session_meta_turns_prompt_suggestions_off_when_asked() {
+        let meta = claude_raw_sdk_session_meta(AgentType::ClaudeCode, false)
+            .expect("Claude must have raw SDK meta");
+        assert_eq!(
+            serde_json::Value::Object(meta),
+            serde_json::json!({"claudeCode": {
+                "emitRawSDKMessages": true,
+                "options": {"promptSuggestions": false},
+            }})
+        );
+        // Every request of the connection names the same object.
+        let cwd = std::path::PathBuf::from("/tmp/codeg");
+        let new_req = build_new_session_request(AgentType::ClaudeCode, &cwd, Vec::new(), false);
+        let load_req = build_load_session_request(
+            AgentType::ClaudeCode,
+            SessionId::new("abc".to_string()),
+            &cwd,
+            Vec::new(),
+            false,
+        );
+        let resume_req = build_resume_session_request(
+            AgentType::ClaudeCode,
+            SessionId::new("abc".to_string()),
+            &cwd,
+            Vec::new(),
+            false,
+        );
+        assert_eq!(new_req.meta, load_req.meta);
+        assert_eq!(new_req.meta, resume_req.meta);
     }
 
     #[test]
@@ -28099,7 +29355,7 @@ mod tests {
     #[test]
     fn build_new_session_request_sets_claude_raw_meta() {
         let cwd = std::path::PathBuf::from("/tmp/codeg");
-        let req = build_new_session_request(AgentType::ClaudeCode, &cwd, Vec::new());
+        let req = build_new_session_request(AgentType::ClaudeCode, &cwd, Vec::new(), true);
 
         assert_eq!(
             req.meta
@@ -28459,6 +29715,11 @@ mod tests {
         }
 
         /// Wait for codeg's end of the connection to go away.
+        ///
+        /// Only once the agent has nothing left to send: an answer still on its
+        /// way out when codeg lets go is written into a closed pipe, and the
+        /// agent's connection ends on that failed write without reporting the
+        /// close.
         async fn closed(self) {
             tokio::time::timeout(std::time::Duration::from_secs(5), self.closed)
                 .await
@@ -28552,6 +29813,20 @@ mod tests {
                 .expect("the connection is running");
         }
 
+        /// Wait for the turn in flight to end.
+        async fn turn_completed(&mut self) {
+            loop {
+                let envelope =
+                    tokio::time::timeout(std::time::Duration::from_secs(10), self.events.recv())
+                        .await
+                        .expect("the turn ends")
+                        .expect("event stream");
+                if matches!(envelope.payload, AcpEvent::TurnComplete { .. }) {
+                    return;
+                }
+            }
+        }
+
         /// How the connection ended — which has to be soon — and what it
         /// emitted on the way.
         async fn ended(mut self) -> (Result<(), AcpError>, Vec<AcpEvent>) {
@@ -28630,7 +29905,7 @@ mod tests {
     async fn a_prompt_sent_during_the_handshake_reaches_the_agent() {
         let (client_end, agent_end) = agent_client_protocol::Channel::duplex();
         let mut agent = HandshakeAgent::start(agent_end, HandshakeScript::default());
-        let run = HandshakeRun::start(client_end).await;
+        let mut run = HandshakeRun::start(client_end).await;
         assert_eq!(agent.next_request().await, "initialize");
         assert_eq!(agent.next_request().await, "session/new");
 
@@ -28638,6 +29913,9 @@ mod tests {
         agent.open_session.notify_one();
 
         assert_eq!(agent.next_request().await, "session/prompt: hello");
+        // The agent reports the prompt before it answers, so let the answer
+        // reach codeg before letting go (see `HandshakeAgent::closed`).
+        run.turn_completed().await;
         run.cmd_tx
             .send(ConnectionCommand::Disconnect)
             .await
@@ -28946,6 +30224,7 @@ mod tests {
             SessionId::new("abc".to_string()),
             &cwd,
             Vec::new(),
+            true,
         );
 
         assert!(req.meta.is_none());
@@ -28964,7 +30243,7 @@ mod tests {
     fn openclaw_session_requests_carry_no_mcp_servers() {
         let cwd = std::path::PathBuf::from("/tmp/codeg");
 
-        let new_req = build_new_session_request(AgentType::OpenClaw, &cwd, Vec::new());
+        let new_req = build_new_session_request(AgentType::OpenClaw, &cwd, Vec::new(), true);
         assert!(
             new_req.mcp_servers.is_empty(),
             "OpenClaw session/new must carry no MCP servers"
@@ -28981,6 +30260,7 @@ mod tests {
             SessionId::new("openclaw-session".to_string()),
             &cwd,
             Vec::new(),
+            true,
         );
         assert!(
             load_req.mcp_servers.is_empty(),
@@ -29126,6 +30406,7 @@ mod tests {
             SessionId::new("abc".to_string()),
             &cwd,
             Vec::new(),
+            true,
         );
 
         assert_eq!(
@@ -29146,6 +30427,7 @@ mod tests {
             SessionId::new("abc".to_string()),
             &cwd,
             Vec::new(),
+            true,
         );
 
         assert!(req.meta.is_none());
@@ -29167,6 +30449,7 @@ mod tests {
             SessionId::new("openclaw-session".to_string()),
             &cwd,
             Vec::new(),
+            true,
         );
         assert!(
             req.mcp_servers.is_empty(),
@@ -33687,6 +34970,32 @@ mod tests {
         assert_eq!(merged_value(&merged, "FROM_ROW"), Some("row"));
     }
 
+    /// Cline's registry env (in-process sessions, no self-update; see the
+    /// Cline registry entry) is what an npx launch merges, and a per-agent row
+    /// can still put Cline back on its hub without losing the other default.
+    #[test]
+    fn cline_launch_env_reaches_the_merge_and_a_row_still_wins() {
+        let AgentDistribution::Npx { env, .. } =
+            registry::get_agent_meta(AgentType::Cline).distribution
+        else {
+            panic!("Cline is an npx agent");
+        };
+        let merged = merge_agent_env_with_color(false, env, &BTreeMap::new(), None);
+        assert_eq!(
+            merged_value(&merged, "CLINE_SESSION_BACKEND_MODE"),
+            Some("local")
+        );
+        assert_eq!(merged_value(&merged, "CLINE_NO_AUTO_UPDATE"), Some("1"));
+
+        let row = BTreeMap::from([("CLINE_SESSION_BACKEND_MODE".to_string(), "auto".to_string())]);
+        let merged = merge_agent_env_with_color(false, env, &row, None);
+        assert_eq!(
+            merged_value(&merged, "CLINE_SESSION_BACKEND_MODE"),
+            Some("auto")
+        );
+        assert_eq!(merged_value(&merged, "CLINE_NO_AUTO_UPDATE"), Some("1"));
+    }
+
     /// A launch that carries a proxy leaves with the loopback exception, in
     /// both spellings — the agent's own local services (OpenCode's embedded
     /// server, Antigravity's harness socket) must never be sent to it. The proxy
@@ -34427,7 +35736,7 @@ mod tests {
             &injection,
             "parent-conn",
             std::path::Path::new("/tmp"),
-            false,
+            LaunchGroups::default(),
             HostToolsPolicy::Default,
         )
         .await;
@@ -34443,6 +35752,43 @@ mod tests {
             injection.tokens.lookup("any-token").await.is_none(),
             "disabled broker must not register a delegate token"
         );
+    }
+
+    /// The root of a `codeg-cli` run given `--output-schema` gets a companion
+    /// carrying `submit_result` with every setting off, as a task launch gets
+    /// its reporting tools.
+    #[tokio::test]
+    async fn a_cli_runs_root_gets_submit_result_whatever_the_settings() {
+        let injection = test_delegation_injection(
+            Arc::new(TestAllAgentsAvailable) as Arc<dyn AgentAvailabilityLookup>
+        );
+        let mut servers: Vec<McpServer> = Vec::new();
+        let injected = inject_codeg_mcp_with_binary_locator(
+            &mut servers,
+            &injection,
+            "cli-root",
+            std::path::Path::new("/tmp"),
+            LaunchGroups {
+                tasks: false,
+                result: true,
+            },
+            HostToolsPolicy::Agent,
+            || Some(PathBuf::from("/opt/codeg/codeg-mcp")),
+        )
+        .await
+        .expect("a companion for submit_result alone");
+        assert!(injected.result_enabled);
+        assert!(!injected.delegation_enabled);
+        let McpServer::Stdio(server) = &servers[0] else {
+            panic!("a stdio server: {servers:?}");
+        };
+        let features = server
+            .args
+            .iter()
+            .position(|a| a == "--features")
+            .map(|i| server.args[i + 1].clone());
+        assert_eq!(features.as_deref(), Some("result"));
+        assert!(injection.tokens.lookup(&injected.token).await.is_some());
     }
 
     // ─── delegate_target_args: enable-toggle filtering ──────────
@@ -34577,6 +35923,8 @@ mod tests {
         assert_eq!(only(|f| f.sessions = true), Some("sessions".to_string()));
         // Per-spawn tasks group: injects alone.
         assert_eq!(only(|f| f.tasks = true), Some("tasks".to_string()));
+        // So does the per-spawn result group of a `codeg-cli` run's root.
+        assert_eq!(only(|f| f.result = true), Some("result".to_string()));
         // Each chat-authoring group injects the companion on its own too, so a
         // user who only wants "create a task from chat" still gets the tool.
         assert_eq!(
@@ -34595,6 +35943,7 @@ mod tests {
                 ask: true,
                 sessions: true,
                 tasks: true,
+                result: true,
                 automations: true,
                 taskboard: true,
                 browser: true,
@@ -34604,8 +35953,8 @@ mod tests {
                 computer_clipboard: true,
             }),
             Some(
-                "delegation,feedback,ask,sessions,tasks,automations,taskboard,browser,browser_eval,\
-                 computer,computer_launch,computer_clipboard"
+                "delegation,feedback,ask,sessions,tasks,result,automations,taskboard,browser,\
+                 browser_eval,computer,computer_launch,computer_clipboard"
                     .to_string()
             )
         );
@@ -34788,7 +36137,7 @@ mod tests {
     #[test]
     fn untyped_new_session_carries_the_typed_request_payload() {
         let cwd = std::path::PathBuf::from("/tmp/codeg");
-        let req = build_new_session_request(AgentType::Cline, &cwd, Vec::new());
+        let req = build_new_session_request(AgentType::Cline, &cwd, Vec::new(), true);
         let expected = serde_json::to_value(&req).unwrap();
 
         let untyped = UntypedMessage::new(AGENT_METHOD_NAMES.session_new, req).expect("builds");
@@ -36469,6 +37818,7 @@ mod tests {
         grok.until_barrier().await;
 
         grok.send(ConnectionCommand::SetConfigOption {
+            reply: None,
             config_id: GROK_MODEL_OPTION_ID.to_string(),
             value_id: "grok-4.7".to_string(),
         })
@@ -37095,6 +38445,239 @@ mod tests {
             claude.sweeps_at_steer.lock().unwrap().is_empty(),
             "no steer was sent"
         );
+        claude.shutdown().await;
+    }
+
+    /// `run_conversation_loop` for a Claude session whose agent answers every
+    /// prompt with one `agent_message_chunk` and the `end_turn` response,
+    /// written back to back, the way claude-agent-acp 0.93.0 answers a
+    /// `/remote-control` prompt it handles itself.
+    struct ClaudeReplyLoop {
+        state: Arc<RwLock<SessionState>>,
+        cmd_tx: mpsc::Sender<ConnectionCommand>,
+        events: tokio::sync::broadcast::Receiver<Arc<crate::acp::types::EventEnvelope>>,
+        /// The text the agent answers the next prompt with.
+        reply: Arc<std::sync::Mutex<String>>,
+        client: tokio::task::JoinHandle<()>,
+        agent: tokio::task::JoinHandle<()>,
+    }
+
+    impl ClaudeReplyLoop {
+        async fn start() -> Self {
+            use agent_client_protocol::schema::v1::PromptResponse;
+
+            let reply = Arc::new(std::sync::Mutex::new(String::from("ok")));
+            let agent_reply = Arc::clone(&reply);
+            let (client_end, agent_end) = agent_client_protocol::Channel::duplex();
+            let agent = tokio::spawn(async move {
+                let _ = Agent
+                    .builder()
+                    .on_receive_request(
+                        async |_req: NewSessionRequest,
+                               responder: Responder<NewSessionResponse>,
+                               _cx: ConnectionTo<Client>| {
+                            responder.respond(NewSessionResponse::new(SessionId::new("s1")))
+                        },
+                        on_receive_request!(),
+                    )
+                    .on_receive_request(
+                        async move |req: PromptRequest,
+                                    responder: Responder<PromptResponse>,
+                                    cx: ConnectionTo<Client>| {
+                            let text = agent_reply.lock().unwrap().clone();
+                            cx.send_notification(UntypedMessage::new(
+                                "session/update",
+                                serde_json::json!({
+                                    "sessionId": req.session_id.0.to_string(),
+                                    "update": {
+                                        "sessionUpdate": "agent_message_chunk",
+                                        "content": {"type": "text", "text": text},
+                                    },
+                                }),
+                            )?)?;
+                            responder.respond(PromptResponse::new(StopReason::EndTurn))
+                        },
+                        on_receive_request!(),
+                    )
+                    .connect_with(agent_end, async |_cx: ConnectionTo<Client>| {
+                        std::future::pending::<Result<(), agent_client_protocol::Error>>().await
+                    })
+                    .await;
+            });
+
+            let state = Arc::new(RwLock::new(SessionState::new(
+                "conn-claude-reply".to_string(),
+                AgentType::ClaudeCode,
+                None,
+                "win".to_string(),
+                None,
+            )));
+            let events = state.read().await.event_stream().subscribe();
+            let (cmd_tx, mut cmd_rx) = mpsc::channel(16);
+            let loop_state = Arc::clone(&state);
+            let client = tokio::spawn(async move {
+                let _ = Client
+                    .builder()
+                    .connect_with(client_end, async move |cx: ConnectionTo<Agent>| {
+                        let raw = cx
+                            .send_request_to(
+                                Agent,
+                                UntypedMessage::new("session/new", NewSessionRequest::new("/tmp"))?,
+                            )
+                            .block_task()
+                            .await?;
+                        let response: NewSessionResponse = serde_json::from_value(raw)
+                            .map_err(agent_client_protocol::Error::into_internal_error)?;
+                        let mut session = AgentSession::attach(&cx, response)?;
+                        let perms = PendingPermissions::default();
+                        let ledger = background_watch::PromptLedger::shared();
+                        let stderr_tail = Arc::new(StderrTail::new());
+                        run_conversation_loop(
+                            &mut session,
+                            "conn-claude-reply",
+                            &EventEmitter::Noop,
+                            &loop_state,
+                            AgentType::ClaudeCode,
+                            &perms,
+                            &mut cmd_rx,
+                            Arc::new(TerminalRuntime::with_base_env(BTreeMap::new())),
+                            "/tmp",
+                            false,
+                            &[],
+                            &ledger,
+                            None,
+                            &stderr_tail,
+                        )
+                        .await?;
+                        Ok(())
+                    })
+                    .await;
+            });
+
+            Self {
+                state,
+                cmd_tx,
+                events,
+                reply,
+                client,
+                agent,
+            }
+        }
+
+        /// Prompt with `text`, the agent answering `reply`, and return every
+        /// event of the turn through its `TurnComplete`.
+        async fn turn(&mut self, text: &str, reply: &str) -> Vec<AcpEvent> {
+            *self.reply.lock().unwrap() = reply.to_string();
+            self.state.write().await.turn_in_flight = true;
+            self.cmd_tx
+                .send(ConnectionCommand::Prompt {
+                    blocks: vec![PromptInputBlock::Text { text: text.into() }],
+                    user_message: None,
+                    internal_suffix: Vec::new(),
+                })
+                .await
+                .expect("the loop is running");
+            let mut seen = Vec::new();
+            loop {
+                let envelope =
+                    tokio::time::timeout(std::time::Duration::from_secs(10), self.events.recv())
+                        .await
+                        .expect("the turn ends")
+                        .expect("event stream");
+                let done = matches!(envelope.payload, AcpEvent::TurnComplete { .. });
+                seen.push(envelope.payload.clone());
+                if done {
+                    return seen;
+                }
+            }
+        }
+
+        async fn shutdown(self) {
+            drop(self.cmd_tx);
+            self.client.abort();
+            self.agent.abort();
+        }
+    }
+
+    /// An answer written right before its response belongs to its turn. The
+    /// two arrive together, so the turn loop must take the update first:
+    /// taken the other way round, the turn ends `empty` (an error toast for a
+    /// turn that answered) and the text lands on the idle loop, where the
+    /// frontend drops a Claude chunk outside a turn. That is the ordinary case
+    /// for the replies claude-agent-acp writes itself, `/remote-control`'s
+    /// among them, which no transcript records either.
+    #[tokio::test]
+    async fn an_answer_written_with_its_response_stays_in_its_turn() {
+        let mut claude = ClaudeReplyLoop::start().await;
+        for n in 0..40 {
+            let reply = format!("answer {n}");
+            let events = claude.turn("hello", &reply).await;
+            let answered = events.iter().any(|e| {
+                matches!(e, AcpEvent::ContentDelta { text, parent_tool_use_id: None } if *text == reply)
+            });
+            assert!(
+                answered,
+                "turn {n}: the answer rendered in its turn: {events:?}"
+            );
+            match events.last() {
+                Some(AcpEvent::TurnComplete { stop_reason, .. }) => {
+                    assert_eq!(stop_reason, "end_turn", "turn {n}")
+                }
+                other => panic!("turn {n} ended with {other:?}"),
+            }
+        }
+        claude.shutdown().await;
+    }
+
+    /// `/remote-control` end to end through the turn loop: the adapter's reply
+    /// renders, Remote Control follows it, and `off` takes it back. The same
+    /// words in reply to another prompt change nothing.
+    #[tokio::test]
+    async fn remote_control_follows_the_adapters_replies_through_the_turn_loop() {
+        let mut claude = ClaudeReplyLoop::start().await;
+        let url = "https://claude.ai/code/session_01";
+        let remote_control = |events: &[AcpEvent]| -> Vec<Option<RemoteControlInfo>> {
+            events
+                .iter()
+                .filter_map(|e| match e {
+                    AcpEvent::RemoteControl { remote_control } => Some(remote_control.clone()),
+                    _ => None,
+                })
+                .collect()
+        };
+
+        let events = claude
+            .turn("what do you say?", &remote_control_active_reply(url))
+            .await;
+        assert!(remote_control(&events).is_empty());
+        assert_eq!(claude.state.read().await.remote_control, None);
+
+        let events = claude
+            .turn("/remote-control", &remote_control_active_reply(url))
+            .await;
+        let on = Some(RemoteControlInfo {
+            session_url: Some(url.to_string()),
+        });
+        assert_eq!(remote_control(&events), vec![on.clone()]);
+        assert!(matches!(
+            events.last(),
+            Some(AcpEvent::TurnComplete { stop_reason, .. }) if stop_reason == "end_turn"
+        ));
+        assert_eq!(claude.state.read().await.remote_control, on);
+        assert_eq!(
+            claude.state.read().await.to_snapshot().remote_control,
+            on,
+            "a client attaching later sees it too"
+        );
+
+        let events = claude
+            .turn(
+                "/remote-control off",
+                "Remote Control is off. Run /remote-control to reconnect.",
+            )
+            .await;
+        assert_eq!(remote_control(&events), vec![None]);
+        assert_eq!(claude.state.read().await.remote_control, None);
         claude.shutdown().await;
     }
 
@@ -38134,6 +39717,233 @@ mod tests {
             let _ = tokio::time::timeout(std::time::Duration::from_secs(5), self.client).await;
             self.agent.abort();
         }
+    }
+
+    /// A setter sent with a reply is answered from the agent's own response to
+    /// that request. Here the agent first re-sends its option list showing the
+    /// requested value — the unprompted echo that makes the broadcasts useless
+    /// for this — and then answers that it settled somewhere else. The reply
+    /// must report where it settled.
+    #[tokio::test]
+    async fn a_setter_reply_reports_the_agents_answer_not_an_echo() {
+        use agent_client_protocol::schema::v1::{
+            SetSessionConfigOptionResponse, SetSessionModeResponse,
+        };
+
+        fn effort_options(current: &str) -> serde_json::Value {
+            serde_json::json!([{
+                "type": "select",
+                "id": "effort",
+                "name": "Effort",
+                "category": "thought_level",
+                "currentValue": current,
+                "options": [
+                    {"value": "low", "name": "Low"},
+                    {"value": "medium", "name": "Medium"},
+                    {"value": "high", "name": "High"}
+                ]
+            }])
+        }
+
+        let agent_type = AgentType::custom(IDLE_PROBE_AGENT).expect("a valid custom id");
+        let (client_end, agent_end) = agent_client_protocol::Channel::duplex();
+        let agent = tokio::spawn(async move {
+            let _ = Agent
+                .builder()
+                .on_receive_request(
+                    async |_req: NewSessionRequest,
+                           responder: Responder<NewSessionResponse>,
+                           _cx: ConnectionTo<Client>| {
+                        responder.respond(NewSessionResponse::new(SessionId::new("s1")))
+                    },
+                    on_receive_request!(),
+                )
+                .on_receive_request(
+                    async |_req: SetSessionConfigOptionRequest,
+                           responder: Responder<SetSessionConfigOptionResponse>,
+                           cx: ConnectionTo<Client>| {
+                        send_grok_frames(
+                            &cx,
+                            &[custom_update(serde_json::json!({
+                                "sessionUpdate": "config_option_update",
+                                "configOptions": effort_options("high"),
+                            }))],
+                        )?;
+                        let settled =
+                            serde_json::from_value(effort_options("medium")).expect("parses");
+                        responder.respond(SetSessionConfigOptionResponse::new(settled))
+                    },
+                    on_receive_request!(),
+                )
+                .on_receive_request(
+                    async |req: SetSessionModeRequest,
+                           responder: Responder<SetSessionModeResponse>,
+                           _cx: ConnectionTo<Client>| {
+                        if req.mode_id.to_string() == "plan" {
+                            responder.respond(SetSessionModeResponse::new())
+                        } else {
+                            responder.respond_with_error(
+                                agent_client_protocol::Error::invalid_params().data("no such mode"),
+                            )
+                        }
+                    },
+                    on_receive_request!(),
+                )
+                .connect_with(agent_end, async |_cx: ConnectionTo<Client>| {
+                    std::future::pending::<Result<(), agent_client_protocol::Error>>().await
+                })
+                .await;
+        });
+
+        let state = Arc::new(RwLock::new(SessionState::new(
+            "conn-setter".to_string(),
+            agent_type,
+            None,
+            "win".to_string(),
+            None,
+        )));
+        let (cmd_tx, mut cmd_rx) = mpsc::channel(16);
+        let loop_state = Arc::clone(&state);
+        let client = tokio::spawn(async move {
+            let _ = Client
+                .builder()
+                .connect_with(client_end, async move |cx: ConnectionTo<Agent>| {
+                    let raw = cx
+                        .send_request_to(
+                            Agent,
+                            UntypedMessage::new("session/new", NewSessionRequest::new("/tmp"))?,
+                        )
+                        .block_task()
+                        .await?;
+                    let response: NewSessionResponse = serde_json::from_value(raw)
+                        .map_err(agent_client_protocol::Error::into_internal_error)?;
+                    let mut session = AgentSession::attach(&cx, response)?;
+                    let perms = PendingPermissions::default();
+                    let ledger = background_watch::PromptLedger::shared();
+                    let stderr_tail = Arc::new(StderrTail::new());
+                    run_conversation_loop(
+                        &mut session,
+                        "conn-setter",
+                        &EventEmitter::Noop,
+                        &loop_state,
+                        agent_type,
+                        &perms,
+                        &mut cmd_rx,
+                        Arc::new(TerminalRuntime::with_base_env(BTreeMap::new())),
+                        "/tmp",
+                        false,
+                        &[],
+                        &ledger,
+                        None,
+                        &stderr_tail,
+                    )
+                    .await?;
+                    Ok(())
+                })
+                .await;
+        });
+
+        async fn answer(
+            cmd_tx: &mpsc::Sender<ConnectionCommand>,
+            command: impl FnOnce(SetterReply) -> ConnectionCommand,
+        ) -> Result<SetterOutcome, String> {
+            let (reply, outcome) = oneshot::channel();
+            cmd_tx
+                .send(command(reply))
+                .await
+                .expect("the loop is running");
+            tokio::time::timeout(std::time::Duration::from_secs(10), outcome)
+                .await
+                .expect("the loop answers in time")
+                .expect("the loop answers instead of dropping the reply")
+        }
+
+        assert_eq!(
+            answer(&cmd_tx, |reply| ConnectionCommand::SetConfigOption {
+                config_id: "effort".to_string(),
+                value_id: "high".to_string(),
+                reply: Some(reply),
+            })
+            .await,
+            Ok(SetterOutcome::Confirmed {
+                current: "medium".to_string()
+            }),
+            "the agent settled on medium; the echo of high was not its answer"
+        );
+        assert_eq!(
+            answer(&cmd_tx, |reply| ConnectionCommand::SetMode {
+                mode_id: "plan".to_string(),
+                reply: Some(reply),
+            })
+            .await,
+            Ok(SetterOutcome::Confirmed {
+                current: "plan".to_string()
+            })
+        );
+        assert!(
+            answer(&cmd_tx, |reply| ConnectionCommand::SetMode {
+                mode_id: "nope".to_string(),
+                reply: Some(reply),
+            })
+            .await
+            .is_err(),
+            "a mode the agent refuses is an error, not a confirmation"
+        );
+
+        let _ = cmd_tx.send(ConnectionCommand::Disconnect).await;
+        let _ = tokio::time::timeout(std::time::Duration::from_secs(5), client).await;
+        agent.abort();
+    }
+
+    #[test]
+    fn terminals_get_the_git_helper_and_the_connection_id_but_no_secrets() {
+        let pair = |k: &str, v: &str| (k.to_string(), v.to_string());
+        let caller = crate::cli_run::CLI_CALLER_ENV;
+        let runtime_env = BTreeMap::from([
+            pair("GIT_CONFIG_COUNT", "1"),
+            pair("GIT_CONFIG_KEY_0", "credential.helper"),
+            pair("ANTHROPIC_API_KEY", "sk-secret"),
+            pair(caller, "conn-7"),
+        ]);
+        assert_eq!(
+            terminal_env_from_runtime(&runtime_env),
+            BTreeMap::from([
+                pair("GIT_CONFIG_COUNT", "1"),
+                pair("GIT_CONFIG_KEY_0", "credential.helper"),
+                pair(caller, "conn-7"),
+            ])
+        );
+    }
+
+    #[test]
+    fn a_standard_set_config_option_answer_reads_as_its_outcome() {
+        let options: Vec<SessionConfigOption> = serde_json::from_value(serde_json::json!([
+            {
+                "type": "select", "id": "model", "name": "Model", "currentValue": "b",
+                "options": [{"value": "a", "name": "A"}, {"value": "b", "name": "B"}]
+            },
+            {"type": "boolean", "id": "auto", "name": "Auto", "currentValue": true}
+        ]))
+        .expect("parses");
+        let mapped = map_session_config_options(&options);
+        assert_eq!(
+            config_option_outcome(&mapped, "model"),
+            SetterOutcome::Confirmed {
+                current: "b".to_string()
+            }
+        );
+        assert_eq!(
+            config_option_outcome(&mapped, "auto"),
+            SetterOutcome::Confirmed {
+                current: "true".to_string()
+            },
+            "a boolean reads back in the selector transport's own encoding"
+        );
+        assert_eq!(
+            config_option_outcome(&mapped, "effort"),
+            SetterOutcome::Accepted,
+            "an option the answer leaves out was taken, not confirmed"
+        );
     }
 
     /// Issue #903: a turn the agent runs on its own between two prompts — here
@@ -39191,6 +41001,27 @@ mod zcode_mode_tests {
         assert_eq!(transcript_dir_for(AgentType::DeepSeek), None);
         assert!(transcript_dir_for(AgentType::custom("example").unwrap()).is_some());
     }
+
+    #[test]
+    fn trae_records_history_in_its_own_transcript_dir() {
+        assert_eq!(transcript_dir_for(AgentType::Trae), Some("codeg-trae-cli"));
+        assert_ne!(
+            transcript_dir_for(AgentType::Trae),
+            transcript_dir_for(AgentType::ZCode)
+        );
+    }
+
+    #[test]
+    fn command_code_records_history_in_its_own_transcript_dir() {
+        assert_eq!(
+            transcript_dir_for(AgentType::CommandCode),
+            Some("codeg-command-code")
+        );
+        assert_ne!(
+            transcript_dir_for(AgentType::CommandCode),
+            transcript_dir_for(AgentType::Trae)
+        );
+    }
 }
 
 #[cfg(test)]
@@ -39227,5 +41058,100 @@ mod wire_mcp_gate_tests {
         }
         // DeepSeek reads no MCP file at all: the wire is its only channel.
         assert!(!agent_reads_own_mcp_config(AgentType::DeepSeek));
+    }
+
+    // TRAE CLI starts both the servers in its `traecli.toml` and the ones on
+    // `session/new`, so the file's servers stay off the wire (or each would be
+    // mounted twice) while the wire still carries the codeg-mcp companion.
+    #[test]
+    fn trae_takes_user_servers_from_its_config_and_the_companion_from_the_wire() {
+        assert!(agent_delivers_wire_mcp(AgentType::Trae));
+        assert!(agent_reads_own_mcp_config(AgentType::Trae));
+        assert!(load_mcp_servers_for_agent(AgentType::Trae).is_empty());
+    }
+
+    // Command Code also starts both its `~/.commandcode/mcp.json` servers and
+    // the ones on `session/new`: the file's stay off the wire, the companion
+    // rides it.
+    #[test]
+    fn command_code_takes_user_servers_from_its_config_and_the_companion_from_the_wire() {
+        assert!(agent_delivers_wire_mcp(AgentType::CommandCode));
+        assert!(agent_reads_own_mcp_config(AgentType::CommandCode));
+        assert!(load_mcp_servers_for_agent(AgentType::CommandCode).is_empty());
+    }
+}
+
+#[cfg(test)]
+mod trae_handshake_tests {
+    use super::*;
+    use agent_client_protocol::schema::v1::InitializeResponse;
+
+    /// The `initialize` result `traecli acp serve` 0.209.1 sends, trimmed to
+    /// what the PAT gate reads.
+    fn trae_initialize() -> InitializeResponse {
+        serde_json::from_value(serde_json::json!({
+            "protocolVersion": 1,
+            "agentCapabilities": {"loadSession": true},
+            "authMethods": [
+                {
+                    "id": "trae-tob-browser",
+                    "name": "Sign in with Enterprise SSO",
+                    "description": "Open your TRAE enterprise browser login"
+                },
+                {
+                    "id": "trae-tob-pat",
+                    "name": "Sign in with Personal Access Token",
+                    "description": "Requires `TRAECLI_PERSONAL_ACCESS_TOKEN` to be set before starting TRAE CLI."
+                }
+            ],
+            "agentInfo": {"name": "traecli-acp", "title": "TRAE CLI", "version": "0.209.1"}
+        }))
+        .expect("traecli 0.209.1 initialize parses")
+    }
+
+    #[test]
+    fn a_configured_pat_signs_trae_in_with_the_advertised_method() {
+        let init = trae_initialize();
+        assert_eq!(
+            trae_pat_sign_in_method(AgentType::Trae, true, &init.auth_methods),
+            Some("trae-tob-pat")
+        );
+    }
+
+    #[test]
+    fn no_pat_means_no_sign_in_and_the_stored_login_is_left_alone() {
+        let init = trae_initialize();
+        assert_eq!(
+            trae_pat_sign_in_method(AgentType::Trae, false, &init.auth_methods),
+            None
+        );
+    }
+
+    #[test]
+    fn a_server_without_the_method_and_other_agents_get_no_authenticate() {
+        let init = trae_initialize();
+        let browser_only: Vec<_> = init
+            .auth_methods
+            .iter()
+            .filter(|m| m.id().0.as_ref() != "trae-tob-pat")
+            .cloned()
+            .collect();
+        assert_eq!(
+            trae_pat_sign_in_method(AgentType::Trae, true, &browser_only),
+            None
+        );
+        // The flag is only ever set for TRAE CLI, but the gate does not rely
+        // on that: another agent advertising a same-named method is not TRAE.
+        for agent_type in [
+            AgentType::Kiro,
+            AgentType::Codex,
+            AgentType::custom("trae").unwrap(),
+        ] {
+            assert_eq!(
+                trae_pat_sign_in_method(agent_type, true, &init.auth_methods),
+                None,
+                "{agent_type}"
+            );
+        }
     }
 }

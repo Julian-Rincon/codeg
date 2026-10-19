@@ -290,7 +290,7 @@ async fn process_envelope(
     // Answered from any client: retire its phone buttons so a later tap can't
     // report an approval that never happened.
     match &envelope.payload {
-        AcpEvent::PermissionResolved { request_id } => {
+        AcpEvent::PermissionResolved { request_id, .. } => {
             permission_buttons::forget_request(request_id)
         }
         AcpEvent::QuestionResolved { question_id } => {

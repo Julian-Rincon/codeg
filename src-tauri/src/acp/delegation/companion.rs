@@ -14,10 +14,13 @@
 //! `ask_user_question` (block on a multiple-choice card), and `get_session_info`
 //! (resolve a referenced session by id) — whose schemas are embedded at compile
 //! time from [`TOOL_SCHEMA_JSON`] and gated by the `--features` groups (delegation
-//! / feedback / ask / sessions). Only `delegate_to_agent` registers a broker-side
-//! cancel handle; canceling a status / cancel / feedback / session round-trip
-//! merely suppresses its response — and for `check_user_feedback` also skips the
-//! delivery commit, so a cancelled note stays pending.
+//! / feedback / ask / sessions). `submit_result` (the `result` group of a
+//! `codeg-cli --output-schema` run) is the one tool not embedded: its input
+//! schema is the run's own, asked of the parent. Only `delegate_to_agent`
+//! registers a broker-side cancel handle; canceling a status / cancel /
+//! feedback / session round-trip merely suppresses its response — and for
+//! `check_user_feedback` also skips the delivery commit, so a cancelled note
+//! stays pending.
 //!
 //! Notifications (id = None) produce no response, matching MCP's expectation
 //! that `notifications/initialized` etc. are fire-and-forget.
@@ -58,20 +61,18 @@ use crate::acp::delegation::transport::{
     client_computer_verify_round_trip, client_computer_windows_round_trip,
     client_create_automation_round_trip, client_create_work_task_round_trip,
     client_feedback_round_trip, client_list_assistants_round_trip, client_ping,
-    client_rate_delegation_round_trip,
-    client_resume_task_round_trip, client_round_trip,
-    client_session_round_trip, client_status_round_trip, client_task_complete_round_trip,
-    client_task_progress_round_trip, BrokerAskRequest, BrokerBrowserActRequest,
-    BrokerBrowserCaptureRequest, BrokerBrowserConsoleRequest, BrokerBrowserEvalRequest,
-    BrokerBrowserSnapshotRequest, BrokerBrowserTabOpRequest, BrokerBrowserTabsRequest,
-    BrokerCancelRequest, BrokerCancelTaskRequest, BrokerCommitFeedbackRequest,
-    BrokerComputerActRequest, BrokerComputerAppsRequest, BrokerComputerCaptureRequest,
-    BrokerComputerClipboardRequest, BrokerComputerLaunchRequest, BrokerComputerSnapshotRequest,
-    BrokerComputerVerifyRequest, BrokerComputerWindowsRequest, BrokerCreateAutomationRequest,
-    BrokerCreateWorkTaskRequest, BrokerFeedbackRequest, BrokerListAssistantsRequest,
-    BrokerRateDelegationRequest,
-    BrokerRequest, BrokerResponse,
-    BrokerResumeTaskRequest, BrokerSessionRequest, BrokerStatusRequest,
+    client_rate_delegation_round_trip, client_result_schema_round_trip, client_resume_task_round_trip, client_round_trip,
+    client_session_round_trip, client_status_round_trip, client_submit_result_round_trip,
+    client_task_complete_round_trip, client_task_progress_round_trip, BrokerAskRequest,
+    BrokerBrowserActRequest, BrokerBrowserCaptureRequest, BrokerBrowserConsoleRequest,
+    BrokerBrowserEvalRequest, BrokerBrowserSnapshotRequest, BrokerBrowserTabOpRequest,
+    BrokerBrowserTabsRequest, BrokerCancelRequest, BrokerCancelTaskRequest,
+    BrokerCommitFeedbackRequest, BrokerComputerActRequest, BrokerComputerAppsRequest,
+    BrokerComputerCaptureRequest, BrokerComputerClipboardRequest, BrokerComputerLaunchRequest,
+    BrokerComputerSnapshotRequest, BrokerComputerVerifyRequest, BrokerComputerWindowsRequest,
+    BrokerCreateAutomationRequest, BrokerCreateWorkTaskRequest, BrokerFeedbackRequest,
+    BrokerListAssistantsRequest, BrokerRateDelegationRequest, BrokerRequest, BrokerResponse, BrokerResultSchemaRequest,
+    BrokerResumeTaskRequest, BrokerSessionRequest, BrokerStatusRequest, BrokerSubmitResultRequest,
     BrokerTaskCompleteRequest, BrokerTaskProgressRequest,
 };
 use crate::acp::delegation::assistants::{roster_for_schema, AssistantRosterEntry};
@@ -169,6 +170,10 @@ pub struct CompanionFeatures {
     /// Work-task reporting tools (`task_progress` / `task_complete`) — injected
     /// only into spawns launched by the task engine.
     pub tasks: bool,
+    /// `submit_result` — injected only into the root connection of a
+    /// `codeg-cli` run given `--output-schema`. Its input schema is that run's
+    /// schema, asked of the parent at `tools/list` time.
+    pub result: bool,
     /// `create_automation` — save a scheduled/manual automation from chat.
     pub automations: bool,
     /// `create_work_task` — queue a card on the work-task board from chat.
@@ -228,6 +233,7 @@ impl CompanionFeatures {
                 ask: false,
                 sessions: false,
                 tasks: false,
+                result: false,
                 automations: false,
                 taskboard: false,
                 browser: false,
@@ -243,6 +249,7 @@ impl CompanionFeatures {
             ask: false,
             sessions: false,
             tasks: false,
+            result: false,
             automations: false,
             taskboard: false,
             browser: false,
@@ -258,6 +265,7 @@ impl CompanionFeatures {
                 "ask" => f.ask = true,
                 "sessions" => f.sessions = true,
                 "tasks" => f.tasks = true,
+                "result" => f.result = true,
                 "automations" => f.automations = true,
                 "taskboard" => f.taskboard = true,
                 "browser" => f.browser = true,
@@ -278,6 +286,7 @@ impl CompanionFeatures {
             "ask_user_question" => self.ask,
             "get_session_info" => self.sessions,
             "task_progress" | "task_complete" => self.tasks,
+            "submit_result" => self.result,
             "create_automation" => self.automations,
             "create_work_task" => self.taskboard,
             "browser_list_tabs" | "browser_snapshot" | "browser_console_messages"
@@ -351,6 +360,64 @@ pub struct CompanionContext {
     /// by probing it (see [`AssistantSupportProbe`]). Shared by every clone of
     /// the context, so the answer is learned once per companion.
     pub assistant_support: AssistantSupportProbe,
+    /// The schema `submit_result` takes, asked of the parent once (see
+    /// [`ResultSchemaProbe`]).
+    pub result_schema: ResultSchemaProbe,
+}
+
+/// Upper bound on asking the parent for `submit_result`'s schema.
+const RESULT_SCHEMA_BUDGET: Duration = Duration::from_secs(5);
+
+/// The companion's copy of the schema `submit_result` takes. A definite
+/// answer — the schema, or that this connection was asked for none — is kept
+/// for the companion's life: a run's schema never changes. No answer is asked
+/// again next time.
+#[derive(Debug, Clone, Default)]
+pub struct ResultSchemaProbe {
+    known: Arc<Mutex<Option<Option<Value>>>>,
+}
+
+impl ResultSchemaProbe {
+    pub async fn resolve(&self, socket_path: &str, token: &str) -> Option<Value> {
+        let mut known = self.known.lock().await;
+        if let Some(answer) = &*known {
+            return answer.clone();
+        }
+        let req = BrokerResultSchemaRequest {
+            token: token.to_string(),
+        };
+        let resp = tokio::time::timeout(
+            RESULT_SCHEMA_BUDGET,
+            client_result_schema_round_trip(socket_path, &req),
+        )
+        .await
+        .ok()?
+        .ok()?;
+        // An answer without the field is no answer: asked again next time.
+        let schema = resp
+            .outcome
+            .get("schema")?
+            .as_object()
+            .cloned()
+            .map(Value::Object);
+        *known = Some(schema.clone());
+        schema
+    }
+}
+
+/// `submit_result`'s description. The input schema is the run's own.
+pub(crate) const SUBMIT_RESULT_DESCRIPTION: &str = "Hand in the result of this run. The person \
+who started it from Codeg's command line asked for the result as JSON matching this tool's input \
+schema: call this once you are done, with the result as the arguments. A result that does not \
+match is refused with what to fix; call again with the fixed result. The last result accepted is \
+the one that counts.";
+
+fn submit_result_tool(schema: Value) -> Value {
+    json!({
+        "name": "submit_result",
+        "description": SUBMIT_RESULT_DESCRIPTION,
+        "inputSchema": schema,
+    })
 }
 
 /// Whether the parent listener understands assistant delegation.
@@ -616,6 +683,17 @@ pub async fn dispatch_line(
             }
             if ctx.features.allows_tool("delegate_to_agent") {
                 offer_assistants_in_delegate_schema(ctx, &mut tools).await;
+            }
+            // Not in the embedded schema: its input schema is the run's own.
+            if ctx.features.result {
+                if let (Some(schema), Some(list)) = (
+                    ctx.result_schema
+                        .resolve(&ctx.socket_path, &ctx.token)
+                        .await,
+                    tools.as_array_mut(),
+                ) {
+                    list.push(submit_result_tool(schema));
+                }
             }
             LineAction::Respond(ok(id, json!({ "tools": tools })))
         }
@@ -1433,6 +1511,17 @@ async fn build_tools_call_spawn(
             let round_trip =
                 Box::pin(async move { client_task_complete_round_trip(&socket, &req).await });
             register_and_spawn(inflight, id, None, round_trip, render_task_ack).await
+        }
+        "submit_result" => {
+            // Checked against the schema on the codeg side, which keeps the
+            // result: the companion never holds a copy that could differ.
+            let req = BrokerSubmitResultRequest {
+                token: ctx.token.clone(),
+                result: arguments,
+            };
+            let round_trip =
+                Box::pin(async move { client_submit_result_round_trip(&socket, &req).await });
+            register_and_spawn(inflight, id, None, round_trip, render_submit_result).await
         }
         "create_automation" => {
             // Validate the shape HERE so a malformed call gets a synchronous
@@ -4289,6 +4378,35 @@ pub fn render_task_ack(outcome: &Value) -> Value {
     })
 }
 
+/// Map a `submit_result` round-trip outcome (a serialized
+/// [`crate::cli_run::output_schema::SubmitOutcome`]) into an MCP `tools/call`
+/// result. A refused result is not a tool error, as with
+/// [`render_authoring_result`]: the agent reads what to fix and calls again.
+/// The text carries the mismatches too — some hosts show the model only the
+/// text, others only `structuredContent`.
+pub fn render_submit_result(outcome: &Value) -> Value {
+    let mut text = outcome
+        .get("message")
+        .and_then(Value::as_str)
+        .unwrap_or("Not accepted.")
+        .to_string();
+    for error in outcome
+        .get("errors")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+    {
+        text.push_str("\n- ");
+        text.push_str(error);
+    }
+    json!({
+        "content": [{ "type": "text", "text": text }],
+        "isError": false,
+        "structuredContent": outcome.clone(),
+    })
+}
+
 /// Map a `create_automation` / `create_work_task` round-trip outcome (a
 /// serialized [`crate::acp::chat_authoring::AuthoringOutcome`]) into an MCP
 /// `tools/call` result.
@@ -4532,6 +4650,7 @@ mod tests {
             ask: false,
             sessions: false,
             tasks: false,
+            result: false,
             automations: false,
             taskboard: false,
             browser: false,
@@ -4552,6 +4671,7 @@ mod tests {
             disabled_agents: Vec::new(),
             routing_guide_file: None,
             assistant_support: AssistantSupportProbe::default(),
+            result_schema: Default::default(),
         }
     }
 
@@ -4682,6 +4802,8 @@ mod tests {
         assert!(agents.iter().any(|a| a == "antigravity"));
         assert!(agents.iter().any(|a| a == "kiro"));
         assert!(agents.iter().any(|a| a == "zcode"));
+        assert!(agents.iter().any(|a| a == "trae"));
+        assert!(agents.iter().any(|a| a == "command_code"));
         // get_delegation_status takes a single id param — task_ids (required) —
         // plus wait_ms. The legacy single `task_id` param is gone.
         let status = tools
@@ -4804,6 +4926,8 @@ mod tests {
         assert_eq!(agents[15], "antigravity");
         assert_eq!(agents[16], "kiro");
         assert_eq!(agents[17], "zcode");
+        assert_eq!(agents[18], "trae");
+        assert_eq!(agents[19], "command_code");
     }
 
     #[tokio::test]
@@ -5203,6 +5327,7 @@ mod tests {
         ask: false,
         sessions: false,
         tasks: false,
+        result: false,
         automations: false,
         taskboard: false,
         browser: false,
@@ -5217,6 +5342,7 @@ mod tests {
         ask: false,
         sessions: false,
         tasks: false,
+        result: false,
         automations: false,
         taskboard: false,
         browser: false,
@@ -5231,6 +5357,7 @@ mod tests {
         ask: true,
         sessions: false,
         tasks: false,
+        result: false,
         automations: false,
         taskboard: false,
         browser: false,
@@ -5245,6 +5372,7 @@ mod tests {
         ask: false,
         sessions: true,
         tasks: false,
+        result: false,
         automations: false,
         taskboard: false,
         browser: false,
@@ -6010,6 +6138,7 @@ mod tests {
         ask: false,
         sessions: false,
         tasks: false,
+        result: false,
         automations: true,
         taskboard: false,
         browser: false,
@@ -6024,6 +6153,7 @@ mod tests {
         ask: false,
         sessions: false,
         tasks: false,
+        result: false,
         automations: false,
         taskboard: true,
         browser: false,
@@ -6706,6 +6836,7 @@ mod tests {
             disabled_agents: Vec::new(),
             routing_guide_file: None,
             assistant_support: AssistantSupportProbe::default(),
+            result_schema: Default::default(),
         };
         let inflight = Arc::new(InflightCalls::new());
         // tools/call → Spawn (registers the inflight entry).
@@ -6793,6 +6924,7 @@ mod tests {
             disabled_agents: Vec::new(),
             routing_guide_file: None,
             assistant_support: AssistantSupportProbe::default(),
+            result_schema: Default::default(),
         };
         let inflight = Arc::new(InflightCalls::new());
         let mut texts = Vec::new();
@@ -6847,6 +6979,7 @@ mod tests {
         ask: false,
         sessions: false,
         tasks: false,
+        result: false,
         automations: false,
         taskboard: false,
         browser: true,
@@ -8658,5 +8791,138 @@ mod tests {
             result["structuredContent"]["error_code"],
             "assistant_support_unknown"
         );
+    }
+
+    // -- submit_result (the `result` group) -----------------------------------
+
+    #[cfg(unix)]
+    fn result_ctx(sock: &str, features: &str) -> CompanionContext {
+        let mut ctx = ctx_on(sock);
+        ctx.features = CompanionFeatures::parse(Some(features));
+        ctx
+    }
+
+    #[cfg(unix)]
+    async fn listed(ctx: &CompanionContext) -> Vec<Value> {
+        let line = r#"{"jsonrpc":"2.0","id":1,"method":"tools/list"}"#;
+        let resp = unwrap_respond(dispatch_line(ctx, Arc::new(InflightCalls::new()), line).await);
+        resp.result.unwrap()["tools"].as_array().unwrap().clone()
+    }
+
+    /// `submit_result` is listed only with its group, with the run's own
+    /// schema as its input schema — asked of the parent once, and asked again
+    /// only when the parent gave no answer.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn submit_result_takes_the_runs_schema_and_only_with_its_group() {
+        use crate::acp::delegation::transport::BrokerMessage;
+        let schema = json!({"type": "object", "required": ["verdict"]});
+        let dir = tempfile::tempdir_in("/tmp").unwrap();
+        let answer = schema.clone();
+        let (sock, seen) = fake_listener(&dir, move |msg| match msg {
+            BrokerMessage::ResultSchema(req) if req.token == "tok" => {
+                Some(json!({ "schema": answer }))
+            }
+            _ => None,
+        });
+        let ctx = result_ctx(&sock, "sessions,result");
+        for _ in 0..2 {
+            let tools = listed(&ctx).await;
+            let tool = tools
+                .iter()
+                .find(|t| t["name"] == "submit_result")
+                .expect("listed");
+            assert_eq!(tool["inputSchema"], schema);
+            assert_eq!(tool["description"], SUBMIT_RESULT_DESCRIPTION);
+        }
+        assert_eq!(*seen.lock().await, vec!["result_schema"], "asked once");
+
+        let without = result_ctx(&sock, "sessions");
+        assert!(!listed(&without)
+            .await
+            .iter()
+            .any(|t| t["name"] == "submit_result"));
+        assert_eq!(seen.lock().await.len(), 1, "not asked without the group");
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn no_schema_lists_no_submit_result_and_no_answer_is_asked_again() {
+        use crate::acp::delegation::transport::BrokerMessage;
+        let dir = tempfile::tempdir_in("/tmp").unwrap();
+        let (sock, seen) = fake_listener(&dir, |msg| match msg {
+            BrokerMessage::ResultSchema(_) => Some(json!({ "schema": null })),
+            _ => None,
+        });
+        let ctx = result_ctx(&sock, "result");
+        assert!(listed(&ctx).await.is_empty());
+        assert!(listed(&ctx).await.is_empty());
+        assert_eq!(
+            *seen.lock().await,
+            vec!["result_schema"],
+            "a definite answer is kept"
+        );
+
+        let quiet = tempfile::tempdir_in("/tmp").unwrap();
+        let (sock, seen) = fake_listener(&quiet, |_| None);
+        let ctx = result_ctx(&sock, "result");
+        assert!(listed(&ctx).await.is_empty());
+        assert!(listed(&ctx).await.is_empty());
+        assert_eq!(seen.lock().await.len(), 2, "silence is asked again");
+    }
+
+    /// A call hands its arguments to the parent as they are, and relays the
+    /// answer — what to fix included, in the text and in the structured
+    /// content alike. Without the group the tool does not exist.
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn submit_result_hands_the_result_to_the_parent_and_says_what_to_fix() {
+        use crate::acp::delegation::transport::BrokerMessage;
+        let dir = tempfile::tempdir_in("/tmp").unwrap();
+        let (sock, _seen) = fake_listener(&dir, |msg| match msg {
+            BrokerMessage::SubmitResult(req) if req.result == json!({"verdict": "pass"}) => {
+                Some(json!({"accepted": true, "message": "Accepted."}))
+            }
+            BrokerMessage::SubmitResult(_) => Some(json!({
+                "accepted": false,
+                "message": "Not accepted: fix it.",
+                "errors": ["at /verdict: value must be one of 'pass', 'fail'"]
+            })),
+            _ => None,
+        });
+        let call = |args: Value| {
+            json!({
+                "jsonrpc": "2.0", "id": 9, "method": "tools/call",
+                "params": { "name": "submit_result", "arguments": args }
+            })
+            .to_string()
+        };
+        let ctx = result_ctx(&sock, "result");
+        let refused = drive_call(&ctx, &call(json!({"verdict": "maybe"}))).await;
+        assert_eq!(
+            refused["isError"], false,
+            "the agent fixes it and calls again"
+        );
+        assert_eq!(refused["structuredContent"]["accepted"], false);
+        let text = refused["content"][0]["text"].as_str().unwrap();
+        assert!(text.starts_with("Not accepted: fix it."), "{text}");
+        assert!(
+            text.contains("\n- at /verdict: value must be one of"),
+            "{text}"
+        );
+        let accepted = drive_call(&ctx, &call(json!({"verdict": "pass"}))).await;
+        assert_eq!(accepted["structuredContent"]["accepted"], true);
+        assert_eq!(accepted["content"][0]["text"], "Accepted.");
+
+        let LineAction::Respond(resp) = dispatch_line(
+            &result_ctx(&sock, "delegation"),
+            Arc::new(InflightCalls::new()),
+            &call(json!({"verdict": "pass"})),
+        )
+        .await
+        else {
+            panic!("refused at once");
+        };
+        assert!(resp.error.unwrap().message.contains("unknown tool"));
     }
 }
