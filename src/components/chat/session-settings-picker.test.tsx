@@ -61,6 +61,7 @@ vi.mock("@/lib/model-scorecard", async (importOriginal) => ({
 }))
 
 import enMessages from "@/i18n/messages/en.json"
+import esMessages from "@/i18n/messages/es.json"
 import { SessionSettingsPicker } from "./session-settings-picker"
 import {
   localizeConfigOptions,
@@ -74,6 +75,7 @@ import type {
 } from "@/lib/types"
 
 const MSGS = enMessages.Folder.chat.messageInput
+const ES = esMessages.Folder.chat.messageInput
 
 afterEach(() => {
   cleanup()
@@ -153,22 +155,25 @@ function renderPicker({
   modes = [],
   currentModeId = null,
   loadingLabel = null,
+  locale = "en",
 }: {
   configOptions?: SessionConfigOptionInfo[]
   modes?: SessionModeInfo[]
   currentModeId?: string | null
   loadingLabel?: string | null
+  locale?: "en" | "es"
 } = {}) {
   const onChange = vi.fn()
+  const messages = locale === "es" ? esMessages : enMessages
   const tree = (options: SessionConfigOptionInfo[]) => (
-    <NextIntlClientProvider locale="en" messages={enMessages}>
+    <NextIntlClientProvider locale={locale} messages={messages}>
       <SessionSettingsPicker
         agentType="claude_code"
         settings={buildSessionSettings({
           configOptions: options,
           modes,
           currentModeId,
-          modeTitle: MSGS.modeLabel,
+          modeTitle: messages.Folder.chat.messageInput.modeLabel,
         })}
         loadingLabel={loadingLabel}
         onChange={onChange}
@@ -182,18 +187,22 @@ function renderPicker({
   return { onChange, view, update }
 }
 
-function trigger() {
-  return screen.getByRole("button", { name: new RegExp(MSGS.agentSettings) })
+function trigger(name: string = MSGS.agentSettings) {
+  return screen.getByRole("button", { name: new RegExp(name) })
 }
 
 // The chip's merged label (the agent icon carries an SVG <title> of its own).
-function summary() {
-  return trigger().querySelector('[data-slot="settings-summary"]')?.textContent
+function summary(name: string = MSGS.agentSettings) {
+  return trigger(name).querySelector('[data-slot="settings-summary"]')
+    ?.textContent
 }
 
-async function openPopover(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(trigger())
-  return screen.findByRole("dialog", { name: MSGS.agentSettings })
+async function openPopover(
+  user: ReturnType<typeof userEvent.setup>,
+  name: string = MSGS.agentSettings
+) {
+  await user.click(trigger(name))
+  return screen.findByRole("dialog", { name })
 }
 
 describe("SessionSettingsPicker — the chip", () => {
@@ -624,6 +633,157 @@ describe("SessionSettingsPicker — the popover", () => {
     expect(trigger()).toHaveAccessibleName(
       `${MSGS.agentSettings}: Model DeepSeek Flash`
     )
+  })
+})
+
+describe("SessionSettingsPicker — Phantom labels", () => {
+  it("speaks the UI locale instead of the agent's English", async () => {
+    const user = userEvent.setup()
+    renderPicker({ locale: "es" })
+    expect(summary(ES.agentSettings)).toBe("Opus 5.5/High")
+    expect(trigger(ES.agentSettings)).toHaveAccessibleName(
+      `${ES.agentSettings}: Modelo Opus 5.5, Esfuerzo High, Modo Manual, Modo rápido ${ES.toggleOff}`
+    )
+    const popover = await openPopover(user, ES.agentSettings)
+    expect(within(popover).getByRole("group", { name: "Modelo" })).toBeVisible()
+    expect(
+      within(popover).getByRole("group", { name: "Esfuerzo" })
+    ).toBeVisible()
+    const mode = within(popover).getByRole("group", { name: "Modo" })
+    expect(
+      within(mode).getByRole("button", { name: "Aceptar ediciones" })
+    ).toBeInTheDocument()
+    expect(
+      within(popover).getByRole("switch", { name: "Modo rápido" })
+    ).toBeInTheDocument()
+  })
+
+  it("groups plugin subagents under Plugins, showing just the agent", async () => {
+    const user = userEvent.setup()
+    const { onChange } = renderPicker({
+      configOptions: [
+        select("agent", "Agent", "agent", "builtin", [
+          { value: "builtin", name: "Built-in dev", description: null },
+          {
+            value: "impeccable:impeccable-asset-producer",
+            name: "impeccable:impeccable-asset-producer",
+            description: "Makes assets",
+          },
+          { value: "vercel:deploy", name: "vercel:deploy", description: null },
+        ]),
+      ],
+    })
+    const popover = await openPopover(user)
+    const list = within(popover).getByRole("group", { name: "Agent" })
+    expect(list).toHaveTextContent("Plugins")
+
+    const plugin = within(list).getByRole("button", {
+      name: /^impeccable-asset-producer/,
+    })
+    expect(plugin).toHaveTextContent("impeccable")
+    expect(plugin).not.toHaveTextContent("impeccable:impeccable-asset-producer")
+    expect(plugin).toHaveAttribute(
+      "title",
+      "impeccable:impeccable-asset-producer — Makes assets"
+    )
+    // Built-ins lead; the plugin group follows them.
+    const text = list.textContent ?? ""
+    expect(text.indexOf("Built-in dev")).toBeLessThan(text.indexOf("Plugins"))
+    expect(text.indexOf("Plugins")).toBeLessThan(
+      text.indexOf("impeccable-asset-producer")
+    )
+    await user.click(plugin)
+    expect(onChange).toHaveBeenCalledWith(
+      { type: "config", configId: "agent" },
+      "impeccable:impeccable-asset-producer"
+    )
+  })
+})
+
+describe("SessionSettingsPicker — bypass permissions", () => {
+  const BYPASS = [
+    select("mode", "Mode", "mode", "default", [
+      { value: "default", name: "Manual", description: null },
+      { value: "acceptEdits", name: "Accept edits", description: null },
+      { value: "plan", name: "Plan", description: null },
+      { value: "dontAsk", name: "Don't ask", description: null },
+      {
+        value: "bypassPermissions",
+        name: "Bypass Permissions",
+        description: null,
+      },
+    ]),
+  ]
+
+  it("tints the option and asks before applying it", async () => {
+    const user = userEvent.setup()
+    const { onChange } = renderPicker({ configOptions: BYPASS, locale: "es" })
+    const popover = await openPopover(user, ES.agentSettings)
+    const option = within(popover).getByRole("button", {
+      name: "Omitir permisos",
+    })
+    expect(option.querySelector("svg")).not.toBeNull()
+    expect(option.querySelector(".text-destructive")).not.toBeNull()
+
+    await user.click(option)
+    expect(onChange).not.toHaveBeenCalled()
+    expect(screen.getByText(ES.bypassConfirm)).toBeInTheDocument()
+
+    // The safe choice holds focus, and cancelling keeps the previous value.
+    expect(
+      screen.getByRole("button", { name: ES.bypassConfirmCancel })
+    ).toHaveFocus()
+    await user.click(
+      screen.getByRole("button", { name: ES.bypassConfirmCancel })
+    )
+    expect(onChange).not.toHaveBeenCalled()
+    expect(screen.queryByRole("alertdialog")).toBeNull()
+
+    await user.click(option)
+    await user.click(
+      screen.getByRole("button", { name: ES.bypassConfirmAccept })
+    )
+    expect(onChange).toHaveBeenCalledWith(
+      { type: "config", configId: "mode" },
+      "bypassPermissions"
+    )
+  })
+
+  it("needs no confirmation to switch away from it", async () => {
+    const user = userEvent.setup()
+    const bypassCurrent = BYPASS.map((option) => ({
+      ...option,
+      kind: { ...option.kind, current_value: "bypassPermissions" },
+    })) as SessionConfigOptionInfo[]
+    const { onChange } = renderPicker({ configOptions: bypassCurrent })
+    const popover = await openPopover(user)
+    await user.click(within(popover).getByRole("button", { name: "Plan" }))
+    expect(screen.queryByRole("alertdialog")).toBeNull()
+    expect(onChange).toHaveBeenCalledWith(
+      { type: "config", configId: "mode" },
+      "plan"
+    )
+  })
+
+  it("keeps arrow navigation in the group, confirming only on Enter", async () => {
+    const user = userEvent.setup()
+    const { onChange } = renderPicker({ configOptions: BYPASS })
+    const popover = await openPopover(user)
+    const mode = within(popover).getByRole("group", { name: "Mode" })
+    within(mode).getByRole("button", { name: "Plan" }).focus()
+    await user.keyboard("{ArrowRight}")
+    expect(
+      within(mode).getByRole("button", { name: "Don't ask" })
+    ).toHaveFocus()
+    await user.keyboard("{ArrowRight}")
+    const bypass = within(mode).getByRole("button", {
+      name: "Bypass permissions",
+    })
+    expect(bypass).toHaveFocus()
+    expect(onChange).not.toHaveBeenCalled()
+    await user.keyboard("{Enter}")
+    expect(onChange).not.toHaveBeenCalled()
+    expect(screen.getByRole("alertdialog")).toBeInTheDocument()
   })
 })
 
