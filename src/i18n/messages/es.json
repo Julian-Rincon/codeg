@@ -3444,7 +3444,24 @@
           "codeBlockNote": "Bloque de código."
         },
         "modelLimited": "Sin tokens hasta {resets}",
-        "modelLimitedGeneric": "Sin tokens"
+        "modelLimitedGeneric": "Sin tokens",
+        "settingModel": "Modelo",
+        "settingEffort": "Esfuerzo",
+        "settingMode": "Modo",
+        "settingAgent": "Agente",
+        "settingFastMode": "Modo rápido",
+        "modeOptionDefault": "Manual",
+        "modeOptionAcceptEdits": "Aceptar ediciones",
+        "modeOptionPlan": "Plan",
+        "modeOptionDontAsk": "No preguntar",
+        "modeOptionBypassPermissions": "Omitir permisos",
+        "modeOptionAuto": "Automático",
+        "modeOptionYolo": "Omitir permisos",
+        "pluginsGroup": "Complementos",
+        "bypassConfirmTitle": "Omitir permisos",
+        "bypassConfirm": "El agente ejecutará todo sin pedir permiso. ¿Continuar?",
+        "bypassConfirmCancel": "Cancelar",
+        "bypassConfirmAccept": "Continuar"
       },
       "messageQueue": {
         "addToQueue": "Agregar a la cola",

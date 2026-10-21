@@ -3444,7 +3444,24 @@
           "codeBlockNote": "程式碼區塊。"
         },
         "modelLimited": "無可用 token，至 {resets} 恢復",
-        "modelLimitedGeneric": "無可用 token"
+        "modelLimitedGeneric": "無可用 token",
+        "settingModel": "Model",
+        "settingEffort": "Effort",
+        "settingMode": "Mode",
+        "settingAgent": "Agent",
+        "settingFastMode": "Fast mode",
+        "modeOptionDefault": "Manual",
+        "modeOptionAcceptEdits": "Accept edits",
+        "modeOptionPlan": "Plan",
+        "modeOptionDontAsk": "Don't ask",
+        "modeOptionBypassPermissions": "Bypass permissions",
+        "modeOptionAuto": "Auto",
+        "modeOptionYolo": "Bypass permissions",
+        "pluginsGroup": "Plugins",
+        "bypassConfirmTitle": "Bypass permissions",
+        "bypassConfirm": "The agent will run everything without asking for permission. Continue?",
+        "bypassConfirmCancel": "Cancel",
+        "bypassConfirmAccept": "Continue"
       },
       "messageQueue": {
         "addToQueue": "加入佇列",

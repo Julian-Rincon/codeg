@@ -3444,7 +3444,24 @@
           "codeBlockNote": "Codeblock."
         },
         "modelLimited": "Keine Tokens bis {resets}",
-        "modelLimitedGeneric": "Keine Tokens"
+        "modelLimitedGeneric": "Keine Tokens",
+        "settingModel": "Model",
+        "settingEffort": "Effort",
+        "settingMode": "Mode",
+        "settingAgent": "Agent",
+        "settingFastMode": "Fast mode",
+        "modeOptionDefault": "Manual",
+        "modeOptionAcceptEdits": "Accept edits",
+        "modeOptionPlan": "Plan",
+        "modeOptionDontAsk": "Don't ask",
+        "modeOptionBypassPermissions": "Bypass permissions",
+        "modeOptionAuto": "Auto",
+        "modeOptionYolo": "Bypass permissions",
+        "pluginsGroup": "Plugins",
+        "bypassConfirmTitle": "Bypass permissions",
+        "bypassConfirm": "The agent will run everything without asking for permission. Continue?",
+        "bypassConfirmCancel": "Cancel",
+        "bypassConfirmAccept": "Continue"
       },
       "messageQueue": {
         "addToQueue": "Zur Warteschlange",

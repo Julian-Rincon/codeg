@@ -3444,7 +3444,24 @@
           "codeBlockNote": "كتلة برمجية."
         },
         "modelLimited": "لا رموز متاحة حتى {resets}",
-        "modelLimitedGeneric": "لا رموز متاحة"
+        "modelLimitedGeneric": "لا رموز متاحة",
+        "settingModel": "Model",
+        "settingEffort": "Effort",
+        "settingMode": "Mode",
+        "settingAgent": "Agent",
+        "settingFastMode": "Fast mode",
+        "modeOptionDefault": "Manual",
+        "modeOptionAcceptEdits": "Accept edits",
+        "modeOptionPlan": "Plan",
+        "modeOptionDontAsk": "Don't ask",
+        "modeOptionBypassPermissions": "Bypass permissions",
+        "modeOptionAuto": "Auto",
+        "modeOptionYolo": "Bypass permissions",
+        "pluginsGroup": "Plugins",
+        "bypassConfirmTitle": "Bypass permissions",
+        "bypassConfirm": "The agent will run everything without asking for permission. Continue?",
+        "bypassConfirmCancel": "Cancel",
+        "bypassConfirmAccept": "Continue"
       },
       "messageQueue": {
         "addToQueue": "إضافة للقائمة",

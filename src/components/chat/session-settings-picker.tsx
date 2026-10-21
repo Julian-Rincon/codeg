@@ -2,12 +2,15 @@
 
 import {
   Fragment,
+  useEffect,
   useId,
+  useMemo,
+  useRef,
   useState,
   type FocusEvent,
   type KeyboardEvent,
 } from "react"
-import { Check, ChevronDown, Cog } from "lucide-react"
+import { Check, ChevronDown, Cog, ShieldAlert } from "lucide-react"
 import { useTranslations } from "next-intl"
 import { AgentIcon } from "@/components/agent-icon"
 import { Badge } from "@/components/ui/badge"
@@ -23,7 +26,6 @@ import { Switch } from "@/components/ui/switch"
 import { ModelOptionList } from "@/components/chat/model-option-list"
 import { SelectorTooltip } from "@/components/chat/selector-tooltip"
 import { useScrollbarSafeDismiss } from "@/hooks/use-scrollbar-safe-dismiss"
-import { flattenModelGroups } from "@/lib/model-config-groups"
 import {
   findModelScore,
   isModelLimited,
@@ -36,6 +38,12 @@ import type {
   SessionSettingTarget,
   SessionSwitchSetting,
 } from "@/lib/session-settings"
+import {
+  hasPluginAgentOptions,
+  isDangerousSettingValue,
+  localizeSessionSettings,
+  pluginAwareOptionRows,
+} from "@/lib/phantom-setting-labels"
 import type { AgentType } from "@/lib/types"
 import { cn } from "@/lib/utils"
 
@@ -69,11 +77,17 @@ interface SessionSettingsPickerProps {
  */
 export function SessionSettingsPicker({
   agentType,
-  settings,
+  settings: rawSettings,
   loadingLabel,
   onChange,
 }: SessionSettingsPickerProps) {
   const t = useTranslations("Folder.chat.messageInput")
+  // Phantom: ACP ships English labels; map the well-known ids onto the UI
+  // locale (display only — the values sent to the agent never change).
+  const settings = useMemo(
+    () => localizeSessionSettings(rawSettings, t),
+    [rawSettings, t]
+  )
   const [open, setOpen] = useState(false)
   const { scorecard } = useModelScorecard()
   // Keep the popover open while one of its scrollbars is dragged — see
@@ -235,7 +249,8 @@ export function SessionSettingsPicker({
                   ) : null}
                   {setting.kind === "switch" ? (
                     <SwitchSetting setting={setting} onChange={onChange} />
-                  ) : setting.kind === "segmented" ? (
+                  ) : setting.kind === "segmented" &&
+                    !hasPluginAgentOptions(setting) ? (
                     <SegmentedSetting setting={setting} onChange={onChange} />
                   ) : (
                     <ListSetting
@@ -369,6 +384,79 @@ function arrowStep(
   }
 }
 
+// Phantom: a value that disables the agent's permission prompts is confirmed
+// once, inline. A second Radix layer inside this popover drops selections on
+// WKWebView (see the component doc), so the confirmation is plain markup.
+// Switching AWAY from such a value never asks.
+function useDangerConfirm(
+  currentValue: string,
+  commit: (value: string) => void
+) {
+  const [pending, setPending] = useState<string | null>(null)
+  return {
+    pending,
+    request: (value: string, name?: string | null, legacyMode = false) => {
+      if (value === currentValue) return
+      if (isDangerousSettingValue(value, name, legacyMode)) {
+        setPending(value)
+        return
+      }
+      setPending(null)
+      commit(value)
+    },
+    confirm: () => {
+      if (pending !== null) commit(pending)
+      setPending(null)
+    },
+    cancel: () => setPending(null),
+  }
+}
+
+function DangerConfirm({
+  onConfirm,
+  onCancel,
+}: {
+  onConfirm: () => void
+  onCancel: () => void
+}) {
+  const t = useTranslations("Folder.chat.messageInput")
+  const cancelRef = useRef<HTMLButtonElement>(null)
+  useEffect(() => {
+    // The safe choice keeps focus: Enter cancels unless the user moves on.
+    cancelRef.current?.focus()
+  }, [])
+  return (
+    <div
+      role="alertdialog"
+      aria-label={t("bypassConfirmTitle")}
+      className="mx-1 mt-1 flex flex-col gap-2 rounded-md border border-destructive/40 bg-destructive/5 p-2"
+    >
+      <p role="alert" className="text-xs leading-snug text-destructive">
+        {t("bypassConfirm")}
+      </p>
+      <div className="flex justify-end gap-1.5">
+        <Button
+          ref={cancelRef}
+          type="button"
+          size="xs"
+          variant="ghost"
+          onClick={onCancel}
+        >
+          {t("bypassConfirmCancel")}
+        </Button>
+        <Button
+          type="button"
+          size="xs"
+          variant="destructive"
+          onClick={onConfirm}
+        >
+          {t("bypassConfirmAccept")}
+        </Button>
+      </div>
+    </div>
+  )
+}
+
 function SettingHeader({
   id,
   title,
@@ -414,6 +502,10 @@ function SegmentedSetting({
   const recommended = entries.find(
     (entry) => entry.option.value === setting.recommendedValue
   )?.option
+  // Phantom: a value that turns the permission prompts off is confirmed first.
+  const danger = useDangerConfirm(setting.currentValue, (value) =>
+    onChange(setting.target, value)
+  )
   return (
     <div className="flex shrink-0 flex-col pb-1">
       <SettingHeader
@@ -434,6 +526,11 @@ function SegmentedSetting({
       >
         {entries.map(({ key, option }) => {
           const pressed = option.value === setting.currentValue
+          const dangerous = isDangerousSettingValue(
+            option.value,
+            option.name,
+            setting.target.type === "mode"
+          )
           return (
             <button
               key={key}
@@ -442,15 +539,33 @@ function SegmentedSetting({
               title={option.description || option.name}
               {...roving.itemProps(key)}
               onClick={() => {
-                if (!pressed) onChange(setting.target, option.value)
+                if (!pressed)
+                  danger.request(
+                    option.value,
+                    option.name,
+                    setting.target.type === "mode"
+                  )
               }}
               className="h-6 min-w-0 flex-auto truncate rounded-md px-2 text-xs font-medium text-muted-foreground transition-colors outline-none hover:text-foreground focus-visible:ring-[3px] focus-visible:ring-ring/50 aria-pressed:bg-background aria-pressed:text-foreground aria-pressed:shadow-sm dark:aria-pressed:bg-input/60"
             >
-              {option.name}
+              <span
+                className={cn(
+                  "flex min-w-0 items-center justify-center gap-1",
+                  dangerous && "text-destructive"
+                )}
+              >
+                {dangerous ? (
+                  <ShieldAlert aria-hidden className="size-3 shrink-0" />
+                ) : null}
+                <span className="truncate">{option.name}</span>
+              </span>
             </button>
           )
         })}
       </div>
+      {danger.pending !== null ? (
+        <DangerConfirm onConfirm={danger.confirm} onCancel={danger.cancel} />
+      ) : null}
       {setting.currentDescription ? (
         <p className="mt-1 px-2 text-xs leading-snug text-muted-foreground">
           {setting.currentDescription}
@@ -478,7 +593,7 @@ function ListSetting({
   const commit = (value: string) => {
     if (value !== setting.currentValue) onChange(setting.target, value)
   }
-  if (setting.searchable) {
+  if (setting.searchable && !hasPluginAgentOptions(setting)) {
     return (
       <div className="flex min-h-0 shrink-0 flex-col">
         <SettingHeader
@@ -528,13 +643,18 @@ function PlainList({
   recommendedLabel: string
   onPick: (value: string) => void
 }) {
-  const rows = flattenModelGroups(setting.groups)
+  const t = useTranslations("Folder.chat.messageInput")
+  // Phantom: plugin subagents move under a trailing "Plugins" header with the
+  // plugin as a muted suffix. Model lists pass through unchanged.
+  const rows = pluginAwareOptionRows(setting, t("pluginsGroup"))
   const options = rows.flatMap((row) => (row.kind === "option" ? [row] : []))
   const roving = useRovingFocus(
     options.map((row) => row.key),
     options.find((row) => row.option.value === setting.currentValue)?.key ??
       null
   )
+  // Phantom: picking a no-permission mode asks first.
+  const danger = useDangerConfirm(setting.currentValue, onPick)
   return (
     <div className="flex min-h-0 shrink-0 flex-col">
       <SettingHeader
@@ -568,6 +688,14 @@ function PlainList({
             }
             const { option } = row
             const selected = option.value === setting.currentValue
+            const dangerous = isDangerousSettingValue(
+              option.value,
+              option.name,
+              setting.target.type === "mode"
+            )
+            const fullName = row.plugin
+              ? `${row.plugin}:${option.name}`
+              : option.name
             return (
               <button
                 key={row.key}
@@ -575,11 +703,17 @@ function PlainList({
                 aria-current={selected ? "true" : undefined}
                 title={
                   option.description
-                    ? `${option.name} — ${option.description}`
-                    : option.name
+                    ? `${fullName} — ${option.description}`
+                    : fullName
                 }
                 {...roving.itemProps(row.key)}
-                onClick={() => onPick(option.value)}
+                onClick={() =>
+                  danger.request(
+                    option.value,
+                    option.name,
+                    setting.target.type === "mode"
+                  )
+                }
                 className={cn(
                   "flex w-full shrink-0 items-start gap-2 rounded-md px-2 py-1 text-left text-sm transition-colors outline-none hover:bg-accent hover:text-accent-foreground focus-visible:bg-accent focus-visible:text-accent-foreground",
                   selected && "bg-accent/60"
@@ -590,7 +724,28 @@ function PlainList({
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="flex min-w-0 items-center gap-1.5">
-                    <span className="min-w-0 truncate">{option.name}</span>
+                    {dangerous ? (
+                      <ShieldAlert
+                        aria-hidden
+                        className="size-3.5 shrink-0 text-destructive"
+                      />
+                    ) : null}
+                    <span
+                      className={cn(
+                        "min-w-0 truncate",
+                        dangerous && "text-destructive"
+                      )}
+                    >
+                      {option.name}
+                    </span>
+                    {row.plugin ? (
+                      <span
+                        aria-hidden
+                        className="shrink-0 text-xs font-normal text-muted-foreground/70"
+                      >
+                        {row.plugin}
+                      </span>
+                    ) : null}
                     {option.value === setting.recommendedValue ? (
                       <Badge
                         variant="outline"
@@ -611,6 +766,9 @@ function PlainList({
           })}
         </div>
       </ScrollArea>
+      {danger.pending !== null ? (
+        <DangerConfirm onConfirm={danger.confirm} onCancel={danger.cancel} />
+      ) : null}
     </div>
   )
 }
