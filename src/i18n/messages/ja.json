@@ -7463,5 +7463,15 @@
     "mentionHint": "{agent} · {model} — {category}が得意（{metric}、n={sample}）",
     "limited": "トークンなし",
     "limitedUntil": "{value}までトークンなし"
+  },
+  "Phantom": {
+    "attention": {
+      "waiting": "Waiting for your reply",
+      "waitingCount": "{count} waiting",
+      "statusBarAria": "{count, plural, one {# conversation is waiting for you} other {# conversations are waiting for you}}. Go to the next one",
+      "activeSection": "Active",
+      "running": "Running",
+      "more": "+{count} more"
+    }
   }
 }

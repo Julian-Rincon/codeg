@@ -65,6 +65,7 @@ import {
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ConversationStatusDot } from "./conversation-status-dot"
+import { PhantomConversationAttentionBadge } from "@/components/phantom/attention-badges"
 import { SessionDetailsDialog } from "./session-details-dialog"
 import { SidebarConversationHoverDetails } from "./sidebar-conversation-hover-details"
 import { ConversationTagChips } from "./conversation-tag-chip"
@@ -462,6 +463,9 @@ export const SidebarConversationCard = memo(function SidebarConversationCard({
                       {formatConversationTitle(conversation.title) ||
                         t("untitledConversation")}
                     </span>
+                    <PhantomConversationAttentionBadge
+                      conversationId={conversation.id}
+                    />
                     {/* Inline, inside the row's fixed 2rem height: the list's
                     virtualizer and rail geometry assume one line per row. The
                     full set of tags is in the hover bubble. Capped so the

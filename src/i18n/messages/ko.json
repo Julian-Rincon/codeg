@@ -7463,5 +7463,15 @@
     "mentionHint": "{agent} · {model} — {category}에 최적 ({metric}, n={sample})",
     "limited": "토큰 없음",
     "limitedUntil": "{value}까지 토큰 없음"
+  },
+  "Phantom": {
+    "attention": {
+      "waiting": "Waiting for your reply",
+      "waitingCount": "{count} waiting",
+      "statusBarAria": "{count, plural, one {# conversation is waiting for you} other {# conversations are waiting for you}}. Go to the next one",
+      "activeSection": "Active",
+      "running": "Running",
+      "more": "+{count} more"
+    }
   }
 }

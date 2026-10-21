@@ -7463,5 +7463,15 @@
     "mentionHint": "{agent} · {model} — 最擅长{category}（{metric}，n={sample}）",
     "limited": "无可用 token",
     "limitedUntil": "无可用 token，至 {value} 恢复"
+  },
+  "Phantom": {
+    "attention": {
+      "waiting": "Waiting for your reply",
+      "waitingCount": "{count} waiting",
+      "statusBarAria": "{count, plural, one {# conversation is waiting for you} other {# conversations are waiting for you}}. Go to the next one",
+      "activeSection": "Active",
+      "running": "Running",
+      "more": "+{count} more"
+    }
   }
 }

@@ -7463,5 +7463,15 @@
     "mentionHint": "{agent} · {model} — am besten bei {category} ({metric}, n={sample})",
     "limited": "Keine Tokens",
     "limitedUntil": "Keine Tokens bis {value}"
+  },
+  "Phantom": {
+    "attention": {
+      "waiting": "Waiting for your reply",
+      "waitingCount": "{count} waiting",
+      "statusBarAria": "{count, plural, one {# conversation is waiting for you} other {# conversations are waiting for you}}. Go to the next one",
+      "activeSection": "Active",
+      "running": "Running",
+      "more": "+{count} more"
+    }
   }
 }

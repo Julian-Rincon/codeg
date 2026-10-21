@@ -92,6 +92,7 @@ import {
   SidebarTagFilterSubmenu,
 } from "@/components/conversations/sidebar-tag-filter"
 import { SidebarSectionOrderControl } from "./sidebar-section-order-control"
+import { PhantomActiveSection } from "@/components/phantom/attention-sidebar-section"
 import { cn } from "@/lib/utils"
 
 // Keyboard-shortcut hint at the trailing edge of the New chat row.
@@ -658,6 +659,7 @@ export function Sidebar() {
             : undefined
         }
       >
+        <PhantomActiveSection />
         <SidebarTagFilterBar filter={tagFilter} onChange={handleSetTagFilter} />
         <SidebarConversationList
           ref={listRef}

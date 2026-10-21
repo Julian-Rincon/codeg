@@ -12,6 +12,7 @@ import {
 } from "@/lib/drag-selection-guard"
 import type { ConversationStatus } from "@/lib/types"
 import { ConversationStatusDot } from "@/components/conversations/conversation-status-dot"
+import { PhantomTabAttentionBadge } from "@/components/phantom/attention-badges"
 import {
   ContextMenu,
   ContextMenuContent,
@@ -329,6 +330,7 @@ export const TabItem = memo(function TabItem({
             <ConversationStatusDot
               status={tab.status as ConversationStatus | undefined}
             />
+            <PhantomTabAttentionBadge tabId={tab.id} />
             <span
               className={cn(
                 // Embedded: grow + shrink as the tab tightens, but instead of an

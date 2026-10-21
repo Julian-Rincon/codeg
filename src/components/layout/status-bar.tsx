@@ -7,6 +7,7 @@ import { StatusBarAlerts } from "@/components/layout/status-bar-alerts"
 import { StatusBarMcp } from "@/components/layout/status-bar-mcp"
 import { StatusBarComputer } from "@/components/layout/status-bar-computer"
 import { StatusBarUpdate } from "@/components/layout/status-bar-update"
+import { PhantomAttentionStatusBar } from "@/components/phantom/attention-status-bar"
 import { CommandDropdown } from "@/components/layout/command-dropdown"
 import { QuickActionsDropdown } from "@/components/layout/quick-actions-dropdown"
 import { useIsMobile } from "@/hooks/use-mobile"
@@ -26,6 +27,7 @@ export function StatusBar() {
           <StatusBarStats />
         </div>
         <div className="flex items-center gap-3">
+          <PhantomAttentionStatusBar />
           <StatusBarUpdate />
           <StatusBarUsage />
           <CommandDropdown />
@@ -62,6 +64,7 @@ export function StatusBar() {
         <StatusBarStats />
       </div>
       <div className="flex items-center gap-4">
+        <PhantomAttentionStatusBar />
         <StatusBarUpdate />
         <StatusBarUsage />
         <StatusBarTasks />

@@ -106,6 +106,7 @@ import { usePlatform } from "@/hooks/use-platform"
 import { Drawer, DrawerContent, DrawerTitle } from "@/components/ui/drawer"
 import { OverlayHostHiddenProvider } from "@/components/ui/overlay-host-hidden"
 import { PhantomModelAccentBridge } from "@/components/phantom-model-accent-bridge"
+import { PhantomAttentionTitle } from "@/components/phantom/attention-title"
 import { PHANTOM_UI_NAME } from "@/lib/phantom-ui"
 
 function WorkspaceDocumentTitle() {
@@ -1533,6 +1534,7 @@ function WorkspaceLayoutInner({ children }: { children: React.ReactNode }) {
                   <WorkspaceProvider>
                     <TabProvider>
                       <PhantomModelAccentBridge />
+                      <PhantomAttentionTitle />
                       <WorkspaceDocumentTitle />
                       <TabKeysSync />
                       <BrowserEventsBridge />
