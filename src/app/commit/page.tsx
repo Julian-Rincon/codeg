@@ -117,6 +117,7 @@ function CommitPageInner() {
             <CommitWorkspace
               folderPath={folder.path}
               folderId={folder.id}
+              projectFolderId={folder.parent_id ?? folder.id}
               onCommitted={closeWindow}
               onCancel={closeWindow}
             />

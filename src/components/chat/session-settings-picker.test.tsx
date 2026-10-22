@@ -777,7 +777,7 @@ describe("SessionSettingsPicker — bypass permissions", () => {
     ).toHaveFocus()
     await user.keyboard("{ArrowRight}")
     const bypass = within(mode).getByRole("button", {
-      name: "Bypass permissions",
+      name: /^bypass permissions$/i,
     })
     expect(bypass).toHaveFocus()
     expect(onChange).not.toHaveBeenCalled()

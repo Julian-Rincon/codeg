@@ -11,7 +11,7 @@ import {
   type KeyboardEvent,
 } from "react"
 import { Check, ChevronDown, Cog, ShieldAlert } from "lucide-react"
-import { useTranslations } from "next-intl"
+import { useLocale, useTranslations } from "next-intl"
 import { AgentIcon } from "@/components/agent-icon"
 import { Badge } from "@/components/ui/badge"
 import { Button } from "@/components/ui/button"
@@ -83,10 +83,15 @@ export function SessionSettingsPicker({
 }: SessionSettingsPickerProps) {
   const t = useTranslations("Folder.chat.messageInput")
   // Phantom: ACP ships English labels; map the well-known ids onto the UI
-  // locale (display only — the values sent to the agent never change).
+  // locale (display only — the values sent to the agent never change). In
+  // English the agent's own wording is kept as-is.
+  const locale = useLocale()
   const settings = useMemo(
-    () => localizeSessionSettings(rawSettings, t),
-    [rawSettings, t]
+    () =>
+      locale.startsWith("en")
+        ? rawSettings
+        : localizeSessionSettings(rawSettings, t),
+    [rawSettings, t, locale]
   )
   const [open, setOpen] = useState(false)
   const { scorecard } = useModelScorecard()

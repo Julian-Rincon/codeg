@@ -17,10 +17,16 @@ const LOGIN_AGENTS: ReadonlyArray<{ type: AgentType; name: string }> = [
   { type: "claude_code" as AgentType, name: "Claude Code" },
   { type: "hermes" as AgentType, name: "Hermes" },
 ]
+import {
+  codegAuthHeaders,
+  probeProxyAuthentication,
+  unauthorizedSource,
+} from "@/lib/transport/web-auth"
 
 export default function LoginPage() {
   const router = useRouter()
   const t = useTranslations("LoginPage")
+  const tConnection = useTranslations("WebConnection")
   const [token, setToken] = useState("")
   const [reveal, setReveal] = useState(false)
   const [error, setError] = useState("")
@@ -31,6 +37,19 @@ export default function LoginPage() {
   useEffect(() => {
     document.title = t("documentTitle")
   }, [t])
+
+  // Signed in through a proxy in front of Codeg (CODEG_AUTH=proxy-jwt), there
+  // is no token to ask for.
+  useEffect(() => {
+    if (isDesktop()) return
+    let cancelled = false
+    void probeProxyAuthentication().then((result) => {
+      if (!cancelled && result === "proxy") router.replace("/workspace")
+    })
+    return () => {
+      cancelled = true
+    }
+  }, [router])
 
   // Desktop users skip login entirely
   if (isDesktop()) {
@@ -49,7 +68,7 @@ export default function LoginPage() {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
-          Authorization: `Bearer ${token.trim()}`,
+          ...codegAuthHeaders(token),
         },
         body: "{}",
       })
@@ -57,6 +76,12 @@ export default function LoginPage() {
       if (res.ok) {
         localStorage.setItem("codeg_token", token.trim())
         router.replace("/workspace")
+      } else if (
+        res.status === 401 &&
+        unauthorizedSource(res.headers.get("www-authenticate")) === "proxy"
+      ) {
+        // The proxy in front of Codeg refused before the token was checked.
+        setError(tConnection("proxySignInDescription"))
       } else if (res.status === 401) {
         setError(t("invalidToken"))
       } else {
