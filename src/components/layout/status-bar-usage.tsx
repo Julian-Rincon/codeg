@@ -9,7 +9,9 @@
  * Read-only apart from the profile switch, and best-effort: the fetch returns
  * `null` on any failure (old server, no OAuth credentials), and the whole
  * segment hides rather than showing a broken indicator. Refreshes every two
- * minutes.
+ * minutes. When the backend's Claude read fails (e.g. HTTP 429) it serves the
+ * last good quota flagged `claude_stale`; the bars stay, dimmed, with when
+ * they were read and why they are not fresh.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react"
@@ -25,6 +27,7 @@ import { formatLimitResetTime } from "@/lib/model-scorecard"
 import {
   asRouterProfile,
   fetchUsageMeter,
+  formatRelativeTime,
   formatTokens,
   setRouterProfile,
   usageLevel,
@@ -57,7 +60,11 @@ const LEVEL_BAR: Record<UsageLevel, string> = {
 
 export function StatusBarUsage() {
   const t = useTranslations("Folder.statusBar.usage")
+  const locale = useLocale()
   const [meter, setMeter] = useState<UsageMeterResponse | null>(null)
+  // Reference instant for the relative "updated" / "retry" times; set on each
+  // read and when the popover opens so render stays pure.
+  const [now, setNow] = useState(0)
   // Guards against a slow poll landing after unmount or overwriting a fresher
   // result (same shape as `status-bar-mcp.tsx`).
   const seqRef = useRef(0)
@@ -68,6 +75,7 @@ export function StatusBarUsage() {
     const next = await fetchUsageMeter()
     if (!aliveRef.current || seq !== seqRef.current) return
     setMeter(next)
+    setNow(Date.now())
   }, [])
 
   /** Apply the profile locally first, then persist and refetch. A rejected
@@ -123,6 +131,13 @@ export function StatusBarUsage() {
 
   if (!meter || (!claude && today.length === 0)) return null
 
+  // A stale `claude` is the backend's last good read: still shown, dimmed.
+  const stale = Boolean(meter.claude_stale) && claude !== null
+  const updatedAgo = stale
+    ? formatRelativeTime(claude?.fetched_at, now, locale)
+    : null
+  const status = claudeStatus(meter, claude !== null, now, locale, t)
+
   const level: UsageLevel = fiveHour ? usageLevel(fiveHour.percent) : "ok"
   const compact =
     claude && fiveHour
@@ -141,14 +156,15 @@ export function StatusBarUsage() {
         })
 
   return (
-    <Popover>
+    <Popover onOpenChange={(open) => open && setNow(Date.now())}>
       <PopoverTrigger asChild>
         <button
           aria-label={t("ariaLabel")}
           title={t("title")}
           className={cn(
             "flex items-center gap-1 tabular-nums transition-colors hover:opacity-80",
-            claude ? LEVEL_TEXT[level] : "text-muted-foreground"
+            claude ? LEVEL_TEXT[level] : "text-muted-foreground",
+            stale && "opacity-70"
           )}
         >
           {compact}
@@ -165,9 +181,39 @@ export function StatusBarUsage() {
         </div>
 
         {claude && (fiveHour || week) && (
-          <div className="space-y-3">
-            {fiveHour && <QuotaBar label={t("fiveHour")} window={fiveHour} />}
-            {week && <QuotaBar label={t("week")} window={week} />}
+          <div className="space-y-1.5">
+            <div
+              data-testid="usage-quota-bars"
+              className={cn("space-y-3", stale && "opacity-50")}
+            >
+              {fiveHour && <QuotaBar label={t("fiveHour")} window={fiveHour} />}
+              {week && <QuotaBar label={t("week")} window={week} />}
+            </div>
+            {updatedAgo && (
+              <p className="text-3xs text-muted-foreground">
+                {t("updatedAgo", { ago: updatedAgo })}
+              </p>
+            )}
+          </div>
+        )}
+
+        {status && (
+          <div className="flex items-start justify-between gap-2">
+            <p
+              className={cn(
+                "text-2xs break-words",
+                status.tone === "error" ? "text-destructive" : "text-amber-500"
+              )}
+            >
+              {status.text}
+            </p>
+            <button
+              type="button"
+              onClick={() => void refresh()}
+              className="shrink-0 text-2xs text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+            >
+              {t("retry")}
+            </button>
           </div>
         )}
 
@@ -176,12 +222,6 @@ export function StatusBarUsage() {
           autoSwitch={quotaForcesEquilibrado}
           onChange={changeProfile}
         />
-
-        {meter.claude_error && (
-          <p className="text-2xs break-words text-destructive">
-            {t("claudeError", { message: meter.claude_error })}
-          </p>
-        )}
 
         {today.length > 0 ? (
           <div className="space-y-1">
@@ -215,6 +255,37 @@ export function StatusBarUsage() {
       </PopoverContent>
     </Popover>
   )
+}
+
+/**
+ * The Claude-read status line, or `null` when the last read succeeded.
+ * Amber whenever there is something to show (stale data, or a transient
+ * failure); red only for an auth failure with no quota data at all.
+ */
+function claudeStatus(
+  meter: UsageMeterResponse,
+  hasData: boolean,
+  now: number,
+  locale: string,
+  t: ReturnType<typeof useTranslations<"Folder.statusBar.usage">>
+): { tone: "error" | "warn"; text: string } | null {
+  if (!meter.claude_error) return null
+  const kind = meter.claude_error_kind ?? "other"
+  if (kind === "rate_limited") {
+    const time =
+      formatRelativeTime(meter.claude_retry_at, now, locale) ?? t("retrySoon")
+    return { tone: "warn", text: t("staleRateLimited", { time }) }
+  }
+  if (!hasData) {
+    return {
+      tone: kind === "auth" ? "error" : "warn",
+      text: t("claudeError", { message: meter.claude_error }),
+    }
+  }
+  return {
+    tone: "warn",
+    text: t(kind === "network" ? "staleNetwork" : "staleOther"),
+  }
 }
 
 /**

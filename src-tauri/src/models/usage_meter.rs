@@ -3,8 +3,9 @@
 //! Two halves with different natures:
 //!   * `claude` — the subscription's *live* quota, read from Anthropic's
 //!     OAuth usage endpoint using the token Claude Code already stored in
-//!     `~/.claude/.credentials.json`. Read-only, cached, and absent whenever
-//!     it could not be read (see `claude_error`).
+//!     `~/.claude/.credentials.json`. Read-only, cached; on a failed read it
+//!     is the last good value flagged `claude_stale`, or absent if there is
+//!     none (see `claude_error`).
 //!   * `today` / `week_tokens` — codeg's own accounting, folded from
 //!     `token_usage_turn`. Always present, because codeg's own DB always
 //!     answers.
@@ -20,10 +21,19 @@ use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct UsageMeter {
-    /// Live Anthropic quota. `None` whenever it could not be read; the reason
-    /// is in `claude_error` (never the token — see that module).
+    /// Anthropic quota. The fresh read when it succeeded; otherwise the last
+    /// successful read (`claude_stale: true`), or `None` if there never was
+    /// one. The failure reason is in `claude_error` (never the token — see
+    /// that module).
     pub claude: Option<ClaudeUsage>,
     pub claude_error: Option<String>,
+    /// `true` when `claude` is the last good read rather than a fresh one.
+    pub claude_stale: bool,
+    /// Class of `claude_error`: `rate_limited`, `auth`, `network` or `other`.
+    pub claude_error_kind: Option<String>,
+    /// RFC 3339 instant before which the endpoint is not called again (set
+    /// only while backing off after HTTP 429).
+    pub claude_retry_at: Option<String>,
     /// Today's tokens per `(agent_type, model)`, heaviest first.
     pub today: Vec<TodayUsageEntry>,
     /// Total input + output tokens over the last 7 days, all agents.
@@ -41,7 +51,7 @@ pub struct RouterProfileSet {
     pub profile: String,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, PartialEq, Serialize)]
 pub struct ClaudeUsage {
     /// `subscriptionType` from the credentials file (`pro`, `max`, …).
     pub plan: String,
@@ -52,7 +62,7 @@ pub struct ClaudeUsage {
 }
 
 /// One quota window: how much of it is spent, and when it resets.
-#[derive(Debug, Clone, Default, Serialize)]
+#[derive(Debug, Clone, Default, PartialEq, Serialize)]
 pub struct ClaudeUsageWindow {
     /// Percent of the window consumed, as reported (`77.0` = 77%). Defaults
     /// to `0.0` when the window is missing from the response — a fresh

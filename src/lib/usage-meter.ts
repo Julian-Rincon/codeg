@@ -66,11 +66,22 @@ export interface UsageMeterTodayEntry {
   turns: number
 }
 
+/** Class of a failed Claude read (`claude_error_kind`). */
+export type ClaudeErrorKind = "rate_limited" | "auth" | "network" | "other"
+
 export interface UsageMeterResponse {
-  /** `null` when the quota could not be read (`claude_error` says why). */
+  /** The fresh quota, or the last good one when `claude_stale`; `null` when
+   *  it was never read (`claude_error` says why). */
   claude: UsageMeterClaude | null
   /** Why `claude` is `null` / stale, or `null`. */
   claude_error: string | null
+  /** `claude` is the last good read, not a fresh one. Optional: a server that
+   *  predates the field leaves it undefined. */
+  claude_stale?: boolean
+  /** Class of `claude_error`, or `null` / undefined (older server). */
+  claude_error_kind?: ClaudeErrorKind | null
+  /** ISO instant the backend calls Anthropic again (429 backoff only). */
+  claude_retry_at?: string | null
   /** Today's measured tokens, one row per agent/model. */
   today: UsageMeterTodayEntry[]
   /** The rolling week's total token count. */
@@ -192,6 +203,30 @@ export function formatTokens(n: number): string {
   if (n >= 1_000_000) return `${oneDecimal(n / 1_000_000)}M`
   if (n >= 1_000) return `${oneDecimal(n / 1_000)}k`
   return String(Math.round(n))
+}
+
+/**
+ * `iso` relative to `now`, in the locale's short wording ("5 min ago",
+ * "in 3 min"): seconds under a minute, minutes under an hour, then hours.
+ * `null` for a missing or unparseable stamp.
+ */
+export function formatRelativeTime(
+  iso: string | null | undefined,
+  now: number,
+  locale: string
+): string | null {
+  if (!iso) return null
+  const at = Date.parse(iso)
+  if (!Number.isFinite(at)) return null
+  const diffSec = Math.round((at - now) / 1000)
+  const abs = Math.abs(diffSec)
+  const rtf = new Intl.RelativeTimeFormat(locale, {
+    numeric: "auto",
+    style: "short",
+  })
+  if (abs < 60) return rtf.format(diffSec, "second")
+  if (abs < 3600) return rtf.format(Math.round(diffSec / 60), "minute")
+  return rtf.format(Math.round(diffSec / 3600), "hour")
 }
 
 function oneDecimal(value: number): string {

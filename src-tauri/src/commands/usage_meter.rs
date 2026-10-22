@@ -6,8 +6,11 @@
 //!     `GET https://api.anthropic.com/api/oauth/usage` using the OAuth token
 //!     Claude Code already stored in `~/.claude/.credentials.json`. Read-only.
 //!     Any failure (no credentials, unreadable file, HTTP error, timeout,
-//!     unparseable body) becomes `claude: None` plus a short `claude_error`
-//!     string — the meter still answers with the token half.
+//!     unparseable body) becomes a short `claude_error` string plus its
+//!     `claude_error_kind`; the meter answers with the last good read flagged
+//!     `claude_stale` (or `claude: None` if there never was one) and still
+//!     answers with the token half. HTTP 429 starts a process-wide backoff
+//!     ([`ClaudeUsageState`]) during which the endpoint is not called.
 //!   * **Token spend** — codeg's own accounting, folded from
 //!     `token_usage_turn` via `db::service::token_usage_service::fetch_facts`,
 //!     exactly like `commands::model_scorecard` reads them.
@@ -97,14 +100,22 @@ pub async fn usage_meter_core(conn: &DatabaseConnection) -> Result<UsageMeter, A
 
     let (today, week_tokens) = aggregate_usage(&rows, today_start, week_start);
 
-    let (claude, claude_error) = match claude_usage_cached().await {
-        Some(usage) => (Some(usage), None),
-        None => (None, Some(last_claude_error())),
+    let fresh = claude_usage_cached().await;
+    let view = match claude_state().lock() {
+        Ok(state) => state.meter_view(fresh, Instant::now(), Utc::now()),
+        Err(_) => ClaudeMeterView {
+            error: fresh.is_none().then(last_claude_error),
+            claude: fresh,
+            ..Default::default()
+        },
     };
 
     Ok(UsageMeter {
-        claude,
-        claude_error,
+        claude: view.claude,
+        claude_error: view.error,
+        claude_stale: view.stale,
+        claude_error_kind: view.error_kind.map(|k| k.as_str().to_string()),
+        claude_retry_at: view.retry_at.map(|at| at.to_rfc3339()),
         today,
         week_tokens,
         router_profile: router_profile(conn).await,
@@ -169,45 +180,52 @@ fn parse_router_profile(profile: &str) -> Result<Profile, AppCommandError> {
 /// The one entry point the Claude half goes through, shared by every caller
 /// (the Tauri command, the Axum handler, and the router's quota-aware
 /// routing) so the 60-second window is genuinely process-wide rather than
-/// per-call-site. Returns `None` on any failure; the reason is left in the
-/// error slot for [`last_claude_error`] so the caller can report it.
+/// per-call-site. Returns `None` on any failure and while backing off after a
+/// 429 — only a fresh read is ever returned, never the last good one (that is
+/// the meter's business, see [`usage_meter_core`]). The reason is left in the
+/// state for [`last_claude_error`] so the caller can report it.
 pub async fn claude_usage_cached() -> Option<ClaudeUsage> {
     {
-        let cache = claude_cache();
-        if let Ok(guard) = cache.lock() {
-            if let Some((fetched_at, usage)) = guard.as_ref() {
-                if fetched_at.elapsed() < CLAUDE_CACHE_TTL {
-                    return Some(usage.clone());
-                }
+        let now = Instant::now();
+        if let Ok(state) = claude_state().lock() {
+            if let Some(usage) = state.fresh(now) {
+                return Some(usage);
+            }
+            if state.in_backoff(now) {
+                return None;
             }
         }
     }
 
-    let usage = match fetch_claude_usage().await {
-        Ok(usage) => usage,
-        Err(msg) => {
-            // A failure is NOT cached: the token may simply not be written
-            // yet on a fresh install, and a one-minute-long "no Claude" after
-            // the user just logged in would be its own bug report.
-            record_claude_error(msg);
-            return None;
+    let result = fetch_claude_usage().await;
+    let now = Instant::now();
+    match result {
+        Ok(usage) => {
+            if let Ok(mut state) = claude_state().lock() {
+                state.record_success(usage.clone(), now);
+            }
+            Some(usage)
         }
-    };
-
-    if let Ok(mut guard) = claude_cache().lock() {
-        *guard = Some((Instant::now(), usage.clone()));
+        Err(err) => {
+            // Only a 429 suppresses the next call. Any other failure is
+            // retried on the next caller: the token may simply not be written
+            // yet on a fresh install, and a long "no Claude" after the user
+            // just logged in would be its own bug report.
+            if let Ok(mut state) = claude_state().lock() {
+                state.record_failure(err, now);
+            }
+            None
+        }
     }
-    Some(usage)
 }
 
 /// The most recent Claude-half failure message, or a generic one. Kept so
-/// `usage_meter_core` can report *why* `claude` is `null` even though
-/// [`claude_usage_cached`] only returns the value.
+/// callers can report *why* [`claude_usage_cached`] returned `None`.
 pub fn last_claude_error() -> String {
-    claude_error_slot()
+    claude_state()
         .lock()
         .ok()
-        .and_then(|guard| guard.clone())
+        .and_then(|state| state.last_error.as_ref().map(|e| e.message.clone()))
         .unwrap_or_else(|| "claude usage unavailable".to_string())
 }
 
@@ -240,7 +258,11 @@ struct ClaudeOauth {
 /// This is the only place the token is ever materialised. Nothing is logged,
 /// returned upward, or written into an error message: the token leaves here
 /// inside a request header and is dropped with the struct.
-fn read_credentials() -> Result<(String, String), String> {
+fn read_credentials() -> Result<(String, String), ClaudeFetchError> {
+    read_credentials_raw().map_err(|msg| ClaudeFetchError::new(ClaudeErrorKind::Auth, msg))
+}
+
+fn read_credentials_raw() -> Result<(String, String), String> {
     let path = credentials_path();
     let raw = std::fs::read_to_string(&path).map_err(|e| {
         // Only the error kind and the path — never the file's contents.
@@ -317,20 +339,14 @@ pub(crate) fn parse_claude_usage(
         serde_json::from_str(body).map_err(|_| "claude usage response malformed".to_string())?;
     Ok(ClaudeUsage {
         plan: plan.to_string(),
-        five_hour: parsed
-            .five_hour
-            .unwrap_or_default()
-            .into(),
-        seven_day: parsed
-            .seven_day
-            .unwrap_or_default()
-            .into(),
+        five_hour: parsed.five_hour.unwrap_or_default().into(),
+        seven_day: parsed.seven_day.unwrap_or_default().into(),
         fetched_at: fetched_at.to_rfc3339(),
     })
 }
 
 /// The live read: credentials in, quota out.
-async fn fetch_claude_usage() -> Result<ClaudeUsage, String> {
+async fn fetch_claude_usage() -> Result<ClaudeUsage, ClaudeFetchError> {
     let (token, plan) = read_credentials()?;
     let client = match reqwest::Client::builder()
         .timeout(CLAUDE_HTTP_TIMEOUT)
@@ -339,7 +355,12 @@ async fn fetch_claude_usage() -> Result<ClaudeUsage, String> {
         .build()
     {
         Ok(c) => c,
-        Err(_) => return Err("claude usage http client failed".to_string()),
+        Err(_) => {
+            return Err(ClaudeFetchError::new(
+                ClaudeErrorKind::Other,
+                "claude usage http client failed",
+            ))
+        }
     };
 
     let response = client
@@ -349,41 +370,219 @@ async fn fetch_claude_usage() -> Result<ClaudeUsage, String> {
         .header("anthropic-beta", ANTHROPIC_OAUTH_BETA)
         .send()
         .await
-        .map_err(|_| "claude usage request failed".to_string())?;
+        .map_err(|e| {
+            ClaudeFetchError::new(request_error_kind(&e), "claude usage request failed")
+        })?;
 
     let status = response.status();
     if !status.is_success() {
+        let retry_after = response
+            .headers()
+            .get(reqwest::header::RETRY_AFTER)
+            .and_then(|v| v.to_str().ok())
+            .and_then(parse_retry_after);
         // Status only. The body may echo request context, and this string is
         // shipped to the frontend and the logs.
-        return Err(format!("claude usage http {}", status.as_u16()));
+        let mut err = ClaudeFetchError::new(
+            classify_http_status(status.as_u16()),
+            format!("claude usage http {}", status.as_u16()),
+        );
+        err.retry_after = retry_after;
+        return Err(err);
     }
 
-    let body = response
-        .text()
-        .await
-        .map_err(|_| "claude usage response unreadable".to_string())?;
+    let body = response.text().await.map_err(|e| {
+        ClaudeFetchError::new(request_error_kind(&e), "claude usage response unreadable")
+    })?;
     parse_claude_usage(&body, &plan, Utc::now())
+        .map_err(|msg| ClaudeFetchError::new(ClaudeErrorKind::Other, msg))
 }
 
-// ─── Caching ────────────────────────────────────────────────────────────
-
-/// Last successful read plus the instant it landed.
-type ClaudeCache = Mutex<Option<(Instant, ClaudeUsage)>>;
-
-fn claude_cache() -> &'static ClaudeCache {
-    static CACHE: OnceLock<ClaudeCache> = OnceLock::new();
-    CACHE.get_or_init(|| Mutex::new(None))
-}
-
-fn claude_error_slot() -> &'static Mutex<Option<String>> {
-    static SLOT: OnceLock<Mutex<Option<String>>> = OnceLock::new();
-    SLOT.get_or_init(|| Mutex::new(None))
-}
-
-fn record_claude_error(msg: String) {
-    if let Ok(mut guard) = claude_error_slot().lock() {
-        *guard = Some(msg);
+/// Timeouts and connection failures are "network"; anything else reqwest
+/// reports is "other".
+fn request_error_kind(e: &reqwest::Error) -> ClaudeErrorKind {
+    if e.is_timeout() || e.is_connect() {
+        ClaudeErrorKind::Network
+    } else {
+        ClaudeErrorKind::Other
     }
+}
+
+// ─── Failure classification and backoff (pure) ──────────────────────────
+
+/// First 429 backoff when the response carries no usable `Retry-After`.
+const CLAUDE_BACKOFF_BASE: Duration = Duration::from_secs(60);
+
+/// Ceiling for the doubling backoff and for an honoured `Retry-After`, so a
+/// bogus header cannot freeze the meter for hours.
+const CLAUDE_BACKOFF_MAX: Duration = Duration::from_secs(15 * 60);
+
+/// Coarse class of a failed Claude read, shipped as `claude_error_kind` so
+/// the UI can pick its wording without parsing the message.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum ClaudeErrorKind {
+    RateLimited,
+    Auth,
+    Network,
+    Other,
+}
+
+impl ClaudeErrorKind {
+    pub(crate) fn as_str(self) -> &'static str {
+        match self {
+            ClaudeErrorKind::RateLimited => "rate_limited",
+            ClaudeErrorKind::Auth => "auth",
+            ClaudeErrorKind::Network => "network",
+            ClaudeErrorKind::Other => "other",
+        }
+    }
+}
+
+/// A failed read: its class, a token-free message, and the server's
+/// `Retry-After` when it sent one.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct ClaudeFetchError {
+    pub kind: ClaudeErrorKind,
+    pub message: String,
+    pub retry_after: Option<Duration>,
+}
+
+impl ClaudeFetchError {
+    pub(crate) fn new(kind: ClaudeErrorKind, message: impl Into<String>) -> Self {
+        Self {
+            kind,
+            message: message.into(),
+            retry_after: None,
+        }
+    }
+}
+
+pub(crate) fn classify_http_status(status: u16) -> ClaudeErrorKind {
+    match status {
+        429 => ClaudeErrorKind::RateLimited,
+        401 | 403 => ClaudeErrorKind::Auth,
+        _ => ClaudeErrorKind::Other,
+    }
+}
+
+/// `Retry-After` in its delta-seconds form. The HTTP-date form is ignored
+/// (falls back to the doubling backoff).
+pub(crate) fn parse_retry_after(value: &str) -> Option<Duration> {
+    value.trim().parse::<u64>().ok().map(Duration::from_secs)
+}
+
+/// What the meter shows for the Claude half.
+#[derive(Debug, Default, PartialEq)]
+pub(crate) struct ClaudeMeterView {
+    pub claude: Option<ClaudeUsage>,
+    pub stale: bool,
+    pub error: Option<String>,
+    pub error_kind: Option<ClaudeErrorKind>,
+    pub retry_at: Option<DateTime<Utc>>,
+}
+
+/// Process-wide Claude read state: the TTL cache, the last good read, the
+/// last failure and the 429 backoff. Pure — every method takes `now`, so the
+/// tests drive it with synthetic instants and no network.
+#[derive(Debug, Default)]
+pub(crate) struct ClaudeUsageState {
+    /// Most recent success and when it landed; reused for [`CLAUDE_CACHE_TTL`].
+    cached: Option<(Instant, ClaudeUsage)>,
+    /// Most recent success, kept indefinitely for the stale display.
+    last_good: Option<ClaudeUsage>,
+    /// Failure of the most recent attempt; cleared by a success.
+    last_error: Option<ClaudeFetchError>,
+    /// Consecutive 429s since the last success; drives the doubling.
+    rate_limit_streak: u32,
+    /// No network call before this instant.
+    retry_at: Option<Instant>,
+}
+
+impl ClaudeUsageState {
+    /// The cached read if it is still within the TTL.
+    pub(crate) fn fresh(&self, now: Instant) -> Option<ClaudeUsage> {
+        self.cached
+            .as_ref()
+            .filter(|(at, _)| now.saturating_duration_since(*at) < CLAUDE_CACHE_TTL)
+            .map(|(_, usage)| usage.clone())
+    }
+
+    pub(crate) fn in_backoff(&self, now: Instant) -> bool {
+        self.retry_at.is_some_and(|at| now < at)
+    }
+
+    pub(crate) fn record_success(&mut self, usage: ClaudeUsage, now: Instant) {
+        self.cached = Some((now, usage.clone()));
+        self.last_good = Some(usage);
+        self.last_error = None;
+        self.rate_limit_streak = 0;
+        self.retry_at = None;
+    }
+
+    pub(crate) fn record_failure(&mut self, err: ClaudeFetchError, now: Instant) {
+        if err.kind == ClaudeErrorKind::RateLimited {
+            self.rate_limit_streak = self.rate_limit_streak.saturating_add(1);
+            let delay = err
+                .retry_after
+                .unwrap_or_else(|| doubling_backoff(self.rate_limit_streak))
+                .min(CLAUDE_BACKOFF_MAX);
+            self.retry_at = Some(now + delay);
+        } else {
+            self.retry_at = None;
+        }
+        self.last_error = Some(err);
+    }
+
+    /// The meter's answer given this round's `fresh` read (`None` when it
+    /// failed or was skipped by the backoff). `wall_now` pairs with `now` to
+    /// turn the monotonic retry instant into a wall-clock stamp.
+    pub(crate) fn meter_view(
+        &self,
+        fresh: Option<ClaudeUsage>,
+        now: Instant,
+        wall_now: DateTime<Utc>,
+    ) -> ClaudeMeterView {
+        if let Some(usage) = fresh {
+            return ClaudeMeterView {
+                claude: Some(usage),
+                ..Default::default()
+            };
+        }
+        let retry_at = self
+            .retry_at
+            .filter(|at| now < *at)
+            .and_then(|at| chrono::Duration::from_std(at - now).ok())
+            .map(|left| wall_now + left);
+        ClaudeMeterView {
+            stale: self.last_good.is_some(),
+            claude: self.last_good.clone(),
+            error: Some(
+                self.last_error
+                    .as_ref()
+                    .map(|e| e.message.clone())
+                    .unwrap_or_else(|| "claude usage unavailable".to_string()),
+            ),
+            error_kind: Some(
+                self.last_error
+                    .as_ref()
+                    .map_or(ClaudeErrorKind::Other, |e| e.kind),
+            ),
+            retry_at,
+        }
+    }
+}
+
+/// `60s · 2^(streak-1)`, capped at [`CLAUDE_BACKOFF_MAX`].
+fn doubling_backoff(streak: u32) -> Duration {
+    let exp = streak.saturating_sub(1).min(16);
+    CLAUDE_BACKOFF_BASE
+        .saturating_mul(1u32 << exp)
+        .min(CLAUDE_BACKOFF_MAX)
+}
+
+fn claude_state() -> &'static Mutex<ClaudeUsageState> {
+    static STATE: OnceLock<Mutex<ClaudeUsageState>> = OnceLock::new();
+    STATE.get_or_init(|| Mutex::new(ClaudeUsageState::default()))
 }
 
 // ─── Token aggregation (pure) ───────────────────────────────────────────
@@ -523,8 +722,7 @@ mod tests {
 
     #[test]
     fn parses_both_windows_from_a_real_payload() {
-        let usage =
-            parse_claude_usage(SAMPLE, "pro", ts("2026-10-10T09:00:00Z")).expect("parse");
+        let usage = parse_claude_usage(SAMPLE, "pro", ts("2026-10-10T09:00:00Z")).expect("parse");
         assert_eq!(usage.plan, "pro");
         assert_eq!(usage.five_hour.percent, 77.0);
         assert_eq!(
@@ -579,6 +777,157 @@ mod tests {
         assert!(!err.contains(secret));
     }
 
+    // ─── Failure classification and backoff ──────────────────────────────
+
+    fn usage(percent: f64) -> ClaudeUsage {
+        ClaudeUsage {
+            plan: "pro".to_string(),
+            five_hour: ClaudeUsageWindow {
+                percent,
+                resets_at: None,
+            },
+            seven_day: ClaudeUsageWindow::default(),
+            fetched_at: "2026-10-10T09:00:00+00:00".to_string(),
+        }
+    }
+
+    fn rate_limited(retry_after: Option<u64>) -> ClaudeFetchError {
+        let mut err = ClaudeFetchError::new(ClaudeErrorKind::RateLimited, "claude usage http 429");
+        err.retry_after = retry_after.map(Duration::from_secs);
+        err
+    }
+
+    #[test]
+    fn http_statuses_are_classified() {
+        assert_eq!(classify_http_status(429), ClaudeErrorKind::RateLimited);
+        assert_eq!(classify_http_status(401), ClaudeErrorKind::Auth);
+        assert_eq!(classify_http_status(403), ClaudeErrorKind::Auth);
+        assert_eq!(classify_http_status(500), ClaudeErrorKind::Other);
+        assert_eq!(classify_http_status(404), ClaudeErrorKind::Other);
+        assert_eq!(ClaudeErrorKind::RateLimited.as_str(), "rate_limited");
+        assert_eq!(ClaudeErrorKind::Network.as_str(), "network");
+    }
+
+    #[test]
+    fn retry_after_accepts_delta_seconds_only() {
+        assert_eq!(parse_retry_after(" 120 "), Some(Duration::from_secs(120)));
+        assert_eq!(parse_retry_after("Wed, 21 Oct 2026 07:28:00 GMT"), None);
+        assert_eq!(parse_retry_after("-5"), None);
+    }
+
+    #[test]
+    fn a_success_is_cached_for_the_ttl_only() {
+        let t0 = Instant::now();
+        let mut state = ClaudeUsageState::default();
+        state.record_success(usage(10.0), t0);
+        assert_eq!(state.fresh(t0 + Duration::from_secs(30)), Some(usage(10.0)));
+        assert_eq!(state.fresh(t0 + CLAUDE_CACHE_TTL), None);
+    }
+
+    #[test]
+    fn a_429_without_retry_after_doubles_from_60s_to_15min() {
+        let t0 = Instant::now();
+        let mut state = ClaudeUsageState::default();
+        let mut expected = Vec::new();
+        for _ in 0..7 {
+            state.record_failure(rate_limited(None), t0);
+            expected.push(state.retry_at.unwrap() - t0);
+        }
+        let secs: Vec<u64> = expected.iter().map(Duration::as_secs).collect();
+        assert_eq!(secs, vec![60, 120, 240, 480, 900, 900, 900]);
+        assert!(state.in_backoff(t0 + Duration::from_secs(899)));
+        assert!(!state.in_backoff(t0 + Duration::from_secs(900)));
+    }
+
+    #[test]
+    fn a_429_honours_retry_after_capped_at_the_ceiling() {
+        let t0 = Instant::now();
+        let mut state = ClaudeUsageState::default();
+        state.record_failure(rate_limited(Some(30)), t0);
+        assert_eq!(state.retry_at, Some(t0 + Duration::from_secs(30)));
+        state.record_failure(rate_limited(Some(86_400)), t0);
+        assert_eq!(state.retry_at, Some(t0 + CLAUDE_BACKOFF_MAX));
+    }
+
+    #[test]
+    fn a_success_resets_the_backoff_and_the_error() {
+        let t0 = Instant::now();
+        let mut state = ClaudeUsageState::default();
+        state.record_failure(rate_limited(None), t0);
+        state.record_failure(rate_limited(None), t0);
+        state.record_success(usage(5.0), t0 + Duration::from_secs(300));
+        assert!(!state.in_backoff(t0 + Duration::from_secs(300)));
+        assert!(state.last_error.is_none());
+        // The streak restarted: the next 429 is back to 60 s.
+        let t1 = t0 + Duration::from_secs(400);
+        state.record_failure(rate_limited(None), t1);
+        assert_eq!(state.retry_at, Some(t1 + CLAUDE_BACKOFF_BASE));
+    }
+
+    #[test]
+    fn non_rate_limit_failures_do_not_back_off() {
+        let t0 = Instant::now();
+        let mut state = ClaudeUsageState::default();
+        state.record_failure(
+            ClaudeFetchError::new(ClaudeErrorKind::Network, "claude usage request failed"),
+            t0,
+        );
+        assert!(!state.in_backoff(t0));
+    }
+
+    #[test]
+    fn meter_view_serves_fresh_data_unflagged() {
+        let t0 = Instant::now();
+        let mut state = ClaudeUsageState::default();
+        state.record_success(usage(10.0), t0);
+        let view = state.meter_view(Some(usage(10.0)), t0, ts("2026-10-10T09:00:00Z"));
+        assert_eq!(
+            view,
+            ClaudeMeterView {
+                claude: Some(usage(10.0)),
+                ..Default::default()
+            }
+        );
+    }
+
+    #[test]
+    fn meter_view_serves_last_good_with_the_error_while_backing_off() {
+        let t0 = Instant::now();
+        let wall = ts("2026-10-10T09:00:00Z");
+        let mut state = ClaudeUsageState::default();
+        state.record_success(usage(42.0), t0);
+        state.record_failure(rate_limited(Some(120)), t0 + Duration::from_secs(90));
+
+        let now = t0 + Duration::from_secs(100);
+        let view = state.meter_view(None, now, wall);
+        assert_eq!(view.claude, Some(usage(42.0)));
+        assert!(view.stale);
+        assert_eq!(view.error.as_deref(), Some("claude usage http 429"));
+        assert_eq!(view.error_kind, Some(ClaudeErrorKind::RateLimited));
+        // 90 s + 120 s backoff, seen from t0 + 100 s: 110 s from now.
+        assert_eq!(view.retry_at, Some(ts("2026-10-10T09:01:50Z")));
+
+        // Once the backoff is over the retry stamp disappears, the data stays.
+        let later = state.meter_view(None, t0 + Duration::from_secs(300), wall);
+        assert!(later.stale);
+        assert_eq!(later.retry_at, None);
+    }
+
+    #[test]
+    fn meter_view_without_any_good_read_is_an_error_only() {
+        let t0 = Instant::now();
+        let mut state = ClaudeUsageState::default();
+        state.record_failure(
+            ClaudeFetchError::new(ClaudeErrorKind::Auth, "claude access token absent"),
+            t0,
+        );
+        let view = state.meter_view(None, t0, ts("2026-10-10T09:00:00Z"));
+        assert_eq!(view.claude, None);
+        assert!(!view.stale);
+        assert_eq!(view.error_kind, Some(ClaudeErrorKind::Auth));
+        assert_eq!(view.retry_at, None);
+    }
+
     // ─── Router profile validation ───────────────────────────────────────
 
     #[test]
@@ -590,12 +939,22 @@ mod tests {
         );
         // `Profile::parse` trims and lowercases, so the command is forgiving
         // about casing and padding but not about the value itself.
-        assert_eq!(parse_router_profile(" Equilibrado ").unwrap(), Profile::Equilibrado);
+        assert_eq!(
+            parse_router_profile(" Equilibrado ").unwrap(),
+            Profile::Equilibrado
+        );
     }
 
     #[test]
     fn an_unknown_profile_is_rejected_and_lists_the_valid_ones() {
-        for bad in ["", "  ", "rapido", "quality", "calidad barato", "calidad\tx"] {
+        for bad in [
+            "",
+            "  ",
+            "rapido",
+            "quality",
+            "calidad barato",
+            "calidad\tx",
+        ] {
             let err = parse_router_profile(bad).expect_err("must reject");
             assert!(
                 matches!(err.code, crate::app_error::AppErrorCode::InvalidInput),
@@ -623,16 +982,27 @@ mod tests {
         let today_start = ts("2026-10-10T00:00:00Z");
         let week_start = ts("2026-10-03T00:00:00Z");
 
-        let mut a1 = row("claude_code", Some("claude-sonnet-5"), "2026-10-10T10:00:00Z");
+        let mut a1 = row(
+            "claude_code",
+            Some("claude-sonnet-5"),
+            "2026-10-10T10:00:00Z",
+        );
         a1.input_tokens = 1000;
         a1.output_tokens = 100;
-        let a2 = row("claude_code", Some("claude-sonnet-5"), "2026-10-10T11:00:00Z");
-        let mut b1 = row("open_code", Some("space-bunny-free"), "2026-10-10T12:00:00Z");
+        let a2 = row(
+            "claude_code",
+            Some("claude-sonnet-5"),
+            "2026-10-10T11:00:00Z",
+        );
+        let mut b1 = row(
+            "open_code",
+            Some("space-bunny-free"),
+            "2026-10-10T12:00:00Z",
+        );
         b1.input_tokens = 50;
         b1.output_tokens = 25;
 
-        let (today, _) =
-            aggregate_usage(&[a1, a2, b1], today_start, week_start);
+        let (today, _) = aggregate_usage(&[a1, a2, b1], today_start, week_start);
 
         assert_eq!(today.len(), 2);
         // Heaviest first.
@@ -692,24 +1062,23 @@ mod tests {
 
     #[test]
     fn an_empty_history_produces_an_empty_meter_not_an_error() {
-        let (today, week) = aggregate_usage(
-            &[],
-            ts("2026-10-10T00:00:00Z"),
-            ts("2026-10-03T00:00:00Z"),
-        );
+        let (today, week) =
+            aggregate_usage(&[], ts("2026-10-10T00:00:00Z"), ts("2026-10-03T00:00:00Z"));
         assert!(today.is_empty());
         assert_eq!(week, 0);
     }
 
     #[test]
     fn start_of_local_day_is_midnight_local() {
-        let now = Local.with_ymd_and_hms(2026, 10, 10, 15, 30, 0)
+        let now = Local
+            .with_ymd_and_hms(2026, 10, 10, 15, 30, 0)
             .earliest()
             .expect("valid local time");
         let start = start_of_local_day(now).with_timezone(&Local);
         assert_eq!(
             start,
-            Local.with_ymd_and_hms(2026, 10, 10, 0, 0, 0)
+            Local
+                .with_ymd_and_hms(2026, 10, 10, 0, 0, 0)
                 .earliest()
                 .expect("valid local midnight")
         );
