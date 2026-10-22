@@ -105,6 +105,113 @@ describe("StatusBarUsage", () => {
   })
 })
 
+describe("StatusBarUsage stale Claude quota", () => {
+  const minutesFromNow = (minutes: number) =>
+    new Date(Date.now() + minutes * 60_000).toISOString()
+
+  async function openPopover() {
+    const trigger = await screen.findByRole("button", { name: "Token usage" })
+    fireEvent.click(trigger)
+    return trigger
+  }
+
+  it("keeps the last good bars, dimmed, when rate limited", async () => {
+    mocks.transportCall.mockResolvedValue({
+      ...meter,
+      claude: { ...meter.claude!, fetched_at: minutesFromNow(-5) },
+      claude_error: "claude usage http 429",
+      claude_stale: true,
+      claude_error_kind: "rate_limited",
+      claude_retry_at: minutesFromNow(3),
+    })
+    mount()
+    const trigger = await openPopover()
+    // The compact line keeps the last good numbers, not the tokens fallback.
+    expect(trigger).toHaveTextContent("Claude 77% · wk 62%")
+    expect(trigger.className).toContain("opacity-70")
+
+    expect(await screen.findByText("5 h")).toBeVisible()
+    expect(screen.getByTestId("usage-quota-bars").className).toContain(
+      "opacity-50"
+    )
+    expect(screen.getByText(/^Updated 5 min\. ago$/)).toBeVisible()
+    const status = screen.getByText(
+      /^Claude rate-limited the request; retrying in 3 min\.$/
+    )
+    expect(status.className).toContain("text-amber-500")
+    expect(status.className).not.toContain("text-destructive")
+    expect(screen.queryByText(/claude usage http 429/)).not.toBeInTheDocument()
+  })
+
+  it("says the data is the last reading on a network failure", async () => {
+    mocks.transportCall.mockResolvedValue({
+      ...meter,
+      claude_error: "claude usage request failed",
+      claude_stale: true,
+      claude_error_kind: "network",
+      claude_retry_at: null,
+    })
+    mount()
+    await openPopover()
+    const status = await screen.findByText(
+      "Can't reach Claude; showing the last reading"
+    )
+    expect(status.className).toContain("text-amber-500")
+  })
+
+  it("refreshes when Retry is pressed", async () => {
+    mocks.transportCall.mockResolvedValue({
+      ...meter,
+      claude_error: "claude usage http 500",
+      claude_stale: true,
+      claude_error_kind: "other",
+    })
+    mount()
+    await openPopover()
+    expect(
+      await screen.findByText("Couldn't refresh; showing the last reading")
+    ).toBeVisible()
+    expect(transportCalls("usage_meter")).toHaveLength(1)
+    fireEvent.click(screen.getByRole("button", { name: "Retry" }))
+    await waitFor(() => expect(transportCalls("usage_meter")).toHaveLength(2))
+  })
+
+  it("shows a red error only for an auth failure with no data", async () => {
+    mocks.transportCall.mockResolvedValue({
+      ...meter,
+      claude: null,
+      claude_error: "claude access token absent",
+      claude_stale: false,
+      claude_error_kind: "auth",
+    })
+    mount()
+    const trigger = await openPopover()
+    expect(trigger).toHaveTextContent("4.6k today")
+    const status = await screen.findByText(
+      "Couldn't read Claude usage: claude access token absent"
+    )
+    expect(status.className).toContain("text-destructive")
+    expect(screen.queryByText("5 h")).not.toBeInTheDocument()
+    expect(screen.queryByText(/^Updated/)).not.toBeInTheDocument()
+  })
+
+  it("keeps a no-data rate limit amber", async () => {
+    mocks.transportCall.mockResolvedValue({
+      ...meter,
+      claude: null,
+      claude_error: "claude usage http 429",
+      claude_error_kind: "rate_limited",
+      claude_retry_at: minutesFromNow(10),
+    })
+    mount()
+    await openPopover()
+    const status = await screen.findByText(
+      /^Claude rate-limited the request; retrying in 10 min\.$/
+    )
+    expect(status.className).toContain("text-amber-500")
+  })
+})
+
 describe("StatusBarUsage router profile switch", () => {
   /** The popover trigger, opened so the switch is on screen. */
   async function open() {
