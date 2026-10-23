@@ -7562,6 +7562,13 @@
       "activeSection": "Active",
       "running": "Running",
       "more": "+{count} more"
+    },
+    "promptHistory": {
+      "title": "Historique des prompts",
+      "placeholder": "Rechercher des prompts précédents…",
+      "hint": "↑↓ · Entrée · Échap",
+      "empty": "Aucun prompt envoyé pour l'instant",
+      "noMatches": "Aucun prompt correspondant"
     }
   }
 }

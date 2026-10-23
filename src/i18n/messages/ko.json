@@ -7562,6 +7562,13 @@
       "activeSection": "Active",
       "running": "Running",
       "more": "+{count} more"
+    },
+    "promptHistory": {
+      "title": "프롬프트 기록",
+      "placeholder": "이전 프롬프트 검색…",
+      "hint": "↑↓ · Enter · Esc",
+      "empty": "아직 보낸 프롬프트가 없습니다",
+      "noMatches": "일치하는 프롬프트가 없습니다"
     }
   }
 }

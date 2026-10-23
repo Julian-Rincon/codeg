@@ -50,6 +50,13 @@ import {
   stepComposerHistory,
   type HistoryDirection,
 } from "@/lib/composer-history"
+import {
+  canOpenPromptSearch,
+  isPromptSearchShortcut,
+  loadRecallHistory,
+  recordPrompt,
+} from "@/lib/phantom-prompt-history"
+import { PromptHistorySearch } from "@/components/phantom/prompt-history-search"
 import { ServerFileBrowserDialog } from "@/components/shared/server-file-browser-dialog"
 import { toast } from "sonner"
 import type {
@@ -914,7 +921,12 @@ export function MessageInput({
       if (direction === "older" && historyIndexRef.current === null) {
         // Fresh navigation: seed here so a prompt sent since the last one is
         // included, then stash the box before the first recall replaces it.
-        historyRef.current = getSentHistory?.() ?? []
+        // Phantom: the session's own prompts, then every other prompt sent
+        // from this device (see `phantom-prompt-history.ts`).
+        historyRef.current = loadRecallHistory(
+          getSentHistory?.() ?? [],
+          defaultPath ?? null
+        )
       }
       const step = stepComposerHistory(
         historyRef.current,
@@ -955,7 +967,7 @@ export function MessageInput({
       historyIndexRef.current = step.index
       return true
     },
-    [flushDraftSave, getSentHistory, isEditingQueueItem]
+    [flushDraftSave, getSentHistory, isEditingQueueItem, defaultPath]
   )
 
   const handleComposerReady = useCallback(() => {
@@ -1656,6 +1668,7 @@ export function MessageInput({
     // Prompting mode: enqueue instead of sending
     if (isPrompting && onEnqueue) {
       onEnqueue(draft, showModeSelector ? effectiveModeId : null)
+      recordPrompt(draft.displayText, defaultPath ?? null)
       resetComposer()
       return
     }
@@ -1671,6 +1684,7 @@ export function MessageInput({
     }
 
     onSend(draft, showModeSelector ? effectiveModeId : null)
+    recordPrompt(draft.displayText, defaultPath ?? null)
     if (effectiveDraftStorageKey) {
       clearMessageInputDraftV2(effectiveDraftStorageKey)
     }
@@ -1690,6 +1704,7 @@ export function MessageInput({
     showModeSelector,
     effectiveDraftStorageKey,
     resetComposer,
+    defaultPath,
   ])
 
   // Mid-turn send over the session's live-feedback channel: a native push
@@ -1830,9 +1845,39 @@ export function MessageInput({
   // Escape cancels a queue edit. ProseMirror doesn't consume Escape, so it
   // bubbles up to this container handler. Skipped while the slash menu is open
   // (the editor handles that Escape to close the menu first).
+  // Phantom: Ctrl+R prompt-history search (cross-conversation, like Claude
+  // Code's). The search box owns its keys; picking a prompt replaces the box.
+  const [promptSearchOpen, setPromptSearchOpen] = useState(false)
+  const closePromptSearch = useCallback(() => {
+    setPromptSearchOpen(false)
+    editorRef.current?.getEditor()?.commands.focus("end")
+  }, [])
+  const pickPromptFromSearch = useCallback(
+    (text: string) => {
+      historyIndexRef.current = null
+      historyDraftRef.current = null
+      editorRef.current?.setText(text)
+      closePromptSearch()
+    },
+    [closePromptSearch]
+  )
+
   const handleContainerKeyDown = useCallback(
     (e: React.KeyboardEvent) => {
       if (isImeCompositionKey(e)) return
+      if (
+        !promptSearchOpen &&
+        isPromptSearchShortcut(e) &&
+        canOpenPromptSearch({
+          slashMenuOpen: slashMenuVisible,
+          mentionMenuOpen: false,
+          editingQueueItem: isEditingQueueItem,
+        })
+      ) {
+        e.preventDefault()
+        setPromptSearchOpen(true)
+        return
+      }
       if (
         isEditingQueueItem &&
         e.key === "Escape" &&
@@ -1843,7 +1888,7 @@ export function MessageInput({
         onCancelQueueEdit()
       }
     },
-    [isEditingQueueItem, slashMenuVisible, onCancelQueueEdit]
+    [isEditingQueueItem, slashMenuVisible, onCancelQueueEdit, promptSearchOpen]
   )
 
   // Clicking (or tapping) the input's empty chrome — its padding, the blank
@@ -2007,6 +2052,14 @@ export function MessageInput({
       onKeyDown={handleContainerKeyDown}
       {...attach.containerDragProps}
     >
+      {promptSearchOpen && (
+        <PromptHistorySearch
+          folder={defaultPath ?? null}
+          getSessionHistory={getSentHistory}
+          onPick={pickPromptFromSearch}
+          onClose={closePromptSearch}
+        />
+      )}
       {slashMenuVisible && (
         <div
           data-testid="slash-menu"

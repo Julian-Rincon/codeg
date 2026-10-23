@@ -7562,6 +7562,13 @@
       "activeSection": "Active",
       "running": "Running",
       "more": "+{count} more"
+    },
+    "promptHistory": {
+      "title": "プロンプト履歴",
+      "placeholder": "以前のプロンプトを検索…",
+      "hint": "↑↓ · Enter · Esc",
+      "empty": "送信したプロンプトはまだありません",
+      "noMatches": "一致するプロンプトはありません"
     }
   }
 }

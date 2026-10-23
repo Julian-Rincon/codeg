@@ -7562,6 +7562,13 @@
       "activeSection": "Active",
       "running": "Running",
       "more": "+{count} more"
+    },
+    "promptHistory": {
+      "title": "سجل الطلبات",
+      "placeholder": "ابحث في الطلبات السابقة…",
+      "hint": "↑↓ · Enter · Esc",
+      "empty": "لم تُرسل أي طلبات بعد",
+      "noMatches": "لا توجد طلبات مطابقة"
     }
   }
 }

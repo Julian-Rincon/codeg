@@ -7562,6 +7562,13 @@
       "activeSection": "Active",
       "running": "Running",
       "more": "+{count} more"
+    },
+    "promptHistory": {
+      "title": "Prompt-Verlauf",
+      "placeholder": "Frühere Prompts durchsuchen…",
+      "hint": "↑↓ · Enter · Esc",
+      "empty": "Noch keine Prompts gesendet",
+      "noMatches": "Keine passenden Prompts"
     }
   }
 }

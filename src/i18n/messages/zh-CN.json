@@ -7562,6 +7562,13 @@
       "activeSection": "Active",
       "running": "Running",
       "more": "+{count} more"
+    },
+    "promptHistory": {
+      "title": "提示词历史",
+      "placeholder": "搜索以前的提示词…",
+      "hint": "↑↓ · Enter · Esc",
+      "empty": "还没有发送过提示词",
+      "noMatches": "没有匹配的提示词"
     }
   }
 }

@@ -7562,6 +7562,13 @@
       "activeSection": "Active",
       "running": "Running",
       "more": "+{count} more"
+    },
+    "promptHistory": {
+      "title": "提示詞歷史",
+      "placeholder": "搜尋先前的提示詞…",
+      "hint": "↑↓ · Enter · Esc",
+      "empty": "尚未傳送過提示詞",
+      "noMatches": "沒有符合的提示詞"
     }
   }
 }

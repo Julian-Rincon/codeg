@@ -2820,6 +2820,10 @@ describe("MessageInput right-click token selection", () => {
 })
 
 describe("MessageInput prompt history", () => {
+  // Phantom keeps a device-wide prompt history in localStorage; other tests in
+  // this file send prompts, so start each case from an empty store.
+  beforeEach(() => localStorage.removeItem("phantom:prompt-history:v1"))
+
   async function mountWithHistory(
     history: string[],
     props: Partial<React.ComponentProps<typeof MessageInput>> = {}
@@ -2926,6 +2930,45 @@ describe("MessageInput prompt history", () => {
     act(() => editor.commands.focus("start"))
     press(editor, "ArrowUp")
     expect(handle.getText()).toBe("my draft")
+  })
+
+  it("recalls prompts sent from other conversations after the session's own", async () => {
+    localStorage.setItem(
+      "phantom:prompt-history:v1",
+      JSON.stringify([{ text: "from another chat", folder: null, at: 1 }])
+    )
+    const { handle, editor } = await mountWithHistory(["mine"])
+
+    act(() => editor.commands.focus("start"))
+    press(editor, "ArrowUp")
+    expect(handle.getText()).toBe("mine")
+    press(editor, "ArrowUp")
+    expect(handle.getText()).toBe("from another chat")
+  })
+
+  it("opens the Ctrl+R search and puts the picked prompt in the box", async () => {
+    localStorage.setItem(
+      "phantom:prompt-history:v1",
+      JSON.stringify([{ text: "deploy the api", folder: null, at: 1 }])
+    )
+    const { handle, editor } = await mountWithHistory(["fix tests"])
+
+    const ctrlR = new KeyboardEvent("keydown", {
+      key: "r",
+      ctrlKey: true,
+      bubbles: true,
+      cancelable: true,
+    })
+    act(() => {
+      ;(editor.view.dom as HTMLElement).dispatchEvent(ctrlR)
+    })
+    expect(ctrlR.defaultPrevented).toBe(true)
+    const box = screen.getByTestId("prompt-history-search")
+    const input = within(box).getByRole("combobox")
+    fireEvent.change(input, { target: { value: "deploy" } })
+    fireEvent.keyDown(input, { key: "Enter" })
+    expect(handle.getText()).toBe("deploy the api")
+    expect(screen.queryByTestId("prompt-history-search")).toBeNull()
   })
 
   it("steps on the edge and lands on the edge it travelled from", async () => {
