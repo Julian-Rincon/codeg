@@ -34,6 +34,10 @@ pub struct UsageMeter {
     /// RFC 3339 instant before which the endpoint is not called again (set
     /// only while backing off after HTTP 429).
     pub claude_retry_at: Option<String>,
+    /// RFC 3339 receipt time of the newest live rate-limit reading
+    /// (claude-agent-acp's `_claude/rateLimit` on `usage_update`) folded into
+    /// `claude`, or `None` when no live reading applies.
+    pub claude_live_at: Option<String>,
     /// Today's tokens per `(agent_type, model)`, heaviest first.
     pub today: Vec<TodayUsageEntry>,
     /// Total input + output tokens over the last 7 days, all agents.

@@ -82,6 +82,10 @@ export interface UsageMeterResponse {
   claude_error_kind?: ClaudeErrorKind | null
   /** ISO instant the backend calls Anthropic again (429 backoff only). */
   claude_retry_at?: string | null
+  /** ISO receipt time of the newest live rate-limit reading folded into
+   *  `claude` (from a Claude session's `usage_update`). Optional: older
+   *  servers omit it. */
+  claude_live_at?: string | null
   /** Today's measured tokens, one row per agent/model. */
   today: UsageMeterTodayEntry[]
   /** The rolling week's total token count. */

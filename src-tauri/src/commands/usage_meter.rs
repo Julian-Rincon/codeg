@@ -11,6 +11,10 @@
 //!     `claude_stale` (or `claude: None` if there never was one) and still
 //!     answers with the token half. HTTP 429 starts a process-wide backoff
 //!     ([`ClaudeUsageState`]) during which the endpoint is not called.
+//!     Live rate-limit readings that claude-agent-acp attaches to
+//!     `usage_update` ([`record_live_rate_limit`]) are overlaid on top of it
+//!     when newer ([`overlay_live`]), so the meter stays current while the
+//!     endpoint is failing.
 //!   * **Token spend** — codeg's own accounting, folded from
 //!     `token_usage_turn` via `db::service::token_usage_service::fetch_facts`,
 //!     exactly like `commands::model_scorecard` reads them.
@@ -101,14 +105,28 @@ pub async fn usage_meter_core(conn: &DatabaseConnection) -> Result<UsageMeter, A
     let (today, week_tokens) = aggregate_usage(&rows, today_start, week_start);
 
     let fresh = claude_usage_cached().await;
-    let view = match claude_state().lock() {
-        Ok(state) => state.meter_view(fresh, Instant::now(), Utc::now()),
-        Err(_) => ClaudeMeterView {
-            error: fresh.is_none().then(last_claude_error),
-            claude: fresh,
-            ..Default::default()
-        },
+    let (now, wall_now) = (Instant::now(), Utc::now());
+    let (view, failed_at, plan) = match claude_state().lock() {
+        Ok(state) => (
+            state.meter_view(fresh, now, wall_now),
+            state.failed_at_wall(now, wall_now),
+            state.last_good.as_ref().map(|u| u.plan.clone()),
+        ),
+        Err(_) => (
+            ClaudeMeterView {
+                error: fresh.is_none().then(last_claude_error),
+                claude: fresh,
+                ..Default::default()
+            },
+            None,
+            None,
+        ),
     };
+    let live = live_rate_limits()
+        .lock()
+        .map(|live| live.clone())
+        .unwrap_or_default();
+    let (view, live_at) = overlay_live(view, &live, failed_at, plan, wall_now);
 
     Ok(UsageMeter {
         claude: view.claude,
@@ -116,6 +134,7 @@ pub async fn usage_meter_core(conn: &DatabaseConnection) -> Result<UsageMeter, A
         claude_stale: view.stale,
         claude_error_kind: view.error_kind.map(|k| k.as_str().to_string()),
         claude_retry_at: view.retry_at.map(|at| at.to_rfc3339()),
+        claude_live_at: live_at.map(|at| at.to_rfc3339()),
         today,
         week_tokens,
         router_profile: router_profile(conn).await,
@@ -492,6 +511,8 @@ pub(crate) struct ClaudeUsageState {
     last_good: Option<ClaudeUsage>,
     /// Failure of the most recent attempt; cleared by a success.
     last_error: Option<ClaudeFetchError>,
+    /// When `last_error` happened; cleared by a success.
+    failed_at: Option<Instant>,
     /// Consecutive 429s since the last success; drives the doubling.
     rate_limit_streak: u32,
     /// No network call before this instant.
@@ -515,6 +536,7 @@ impl ClaudeUsageState {
         self.cached = Some((now, usage.clone()));
         self.last_good = Some(usage);
         self.last_error = None;
+        self.failed_at = None;
         self.rate_limit_streak = 0;
         self.retry_at = None;
     }
@@ -531,6 +553,19 @@ impl ClaudeUsageState {
             self.retry_at = None;
         }
         self.last_error = Some(err);
+        self.failed_at = Some(now);
+    }
+
+    /// Wall-clock instant of the most recent failure, if the last attempt
+    /// failed. Same monotonic-to-wall mapping as `meter_view`'s `retry_at`.
+    pub(crate) fn failed_at_wall(
+        &self,
+        now: Instant,
+        wall_now: DateTime<Utc>,
+    ) -> Option<DateTime<Utc>> {
+        let ago =
+            chrono::Duration::from_std(now.saturating_duration_since(self.failed_at?)).ok()?;
+        Some(wall_now - ago)
     }
 
     /// The meter's answer given this round's `fresh` read (`None` when it
@@ -583,6 +618,197 @@ fn doubling_backoff(streak: u32) -> Duration {
 fn claude_state() -> &'static Mutex<ClaudeUsageState> {
     static STATE: OnceLock<Mutex<ClaudeUsageState>> = OnceLock::new();
     STATE.get_or_init(|| Mutex::new(ClaudeUsageState::default()))
+}
+
+// ─── Live rate-limit feed ────────────────────────────────────────────────
+
+/// `usage_update._meta` key under which claude-agent-acp forwards the Agent
+/// SDK's `rate_limit_event` payload (`SDKRateLimitInfo`).
+pub const CLAUDE_RATE_LIMIT_META_KEY: &str = "_claude/rateLimit";
+
+/// The meter's two windows; every other `rateLimitType` is ignored.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LiveWindowKind {
+    FiveHour,
+    SevenDay,
+}
+
+/// One live reading of a window, as received from a Claude session.
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct LiveWindow {
+    /// `utilization` (a 0..1 fraction) as a 0..100 percent.
+    pub percent: f64,
+    /// RFC 3339 form of `resetsAt` (epoch seconds).
+    pub resets_at: Option<String>,
+    pub received_at: DateTime<Utc>,
+    /// `allowed` / `allowed_warning` / `rejected`.
+    pub status: String,
+}
+
+impl LiveWindow {
+    fn reset_passed(&self, wall_now: DateTime<Utc>) -> bool {
+        self.resets_at
+            .as_deref()
+            .and_then(|s| DateTime::parse_from_rfc3339(s).ok())
+            .is_some_and(|at| at <= wall_now)
+    }
+
+    fn to_window(&self) -> ClaudeUsageWindow {
+        // A rejected request means the window is spent, whatever fraction
+        // the SDK last rounded it to.
+        let percent = if self.status == "rejected" {
+            self.percent.max(100.0)
+        } else {
+            self.percent
+        };
+        ClaudeUsageWindow {
+            percent,
+            resets_at: self.resets_at.clone(),
+        }
+    }
+}
+
+/// Newest live reading per window, process-wide.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub(crate) struct LiveRateLimits {
+    pub five_hour: Option<LiveWindow>,
+    pub seven_day: Option<LiveWindow>,
+}
+
+impl LiveRateLimits {
+    /// Store `window` unless an already-newer reading holds the slot.
+    pub(crate) fn record(&mut self, kind: LiveWindowKind, window: LiveWindow) {
+        let slot = match kind {
+            LiveWindowKind::FiveHour => &mut self.five_hour,
+            LiveWindowKind::SevenDay => &mut self.seven_day,
+        };
+        if slot
+            .as_ref()
+            .is_none_or(|held| held.received_at <= window.received_at)
+        {
+            *slot = Some(window);
+        }
+    }
+}
+
+/// Parse one `SDKRateLimitInfo` object. `None` for any other window type,
+/// a missing or non-numeric `utilization`, or a non-object value.
+pub(crate) fn parse_live_rate_limit(
+    info: &serde_json::Value,
+    received_at: DateTime<Utc>,
+) -> Option<(LiveWindowKind, LiveWindow)> {
+    let kind = match info.get("rateLimitType")?.as_str()? {
+        "five_hour" => LiveWindowKind::FiveHour,
+        "seven_day" => LiveWindowKind::SevenDay,
+        _ => return None,
+    };
+    let utilization = info
+        .get("utilization")?
+        .as_f64()
+        .filter(|u| u.is_finite())?;
+    let resets_at = info
+        .get("resetsAt")
+        .and_then(serde_json::Value::as_f64)
+        .filter(|secs| secs.is_finite() && *secs > 0.0)
+        .and_then(|secs| DateTime::from_timestamp_millis((secs * 1000.0) as i64))
+        .map(|at| at.to_rfc3339());
+    let status = info
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or_default()
+        .to_string();
+    Some((
+        kind,
+        LiveWindow {
+            percent: (utilization * 100.0).clamp(0.0, 100.0),
+            resets_at,
+            received_at,
+            status,
+        },
+    ))
+}
+
+/// Record a live rate-limit reading (the `_claude/rateLimit` meta value of a
+/// Claude Code `usage_update`). Malformed or irrelevant values are dropped.
+pub fn record_live_rate_limit(info: &serde_json::Value) {
+    let Some((kind, window)) = parse_live_rate_limit(info, Utc::now()) else {
+        return;
+    };
+    if let Ok(mut live) = live_rate_limits().lock() {
+        live.record(kind, window);
+    }
+}
+
+/// Fold live readings into the meter view. Pure.
+///
+/// Per window, a live reading newer than `claude.fetched_at` replaces the
+/// fetched numbers; with no `claude` at all, one is synthesized from the live
+/// readings (`plan` = last known plan, `fetched_at` = newest reading). A
+/// stale view stops being stale once a reading newer than the failed fetch
+/// (`failed_at`) is shown. Readings whose `resets_at` has passed describe a
+/// finished window and are skipped. Returns the view and the receipt time of
+/// the newest applicable reading.
+pub(crate) fn overlay_live(
+    mut view: ClaudeMeterView,
+    live: &LiveRateLimits,
+    failed_at: Option<DateTime<Utc>>,
+    plan: Option<String>,
+    wall_now: DateTime<Utc>,
+) -> (ClaudeMeterView, Option<DateTime<Utc>>) {
+    let current = |w: &Option<LiveWindow>| w.clone().filter(|w| !w.reset_passed(wall_now));
+    let five_hour = current(&live.five_hour);
+    let seven_day = current(&live.seven_day);
+    let Some(newest) = [&five_hour, &seven_day]
+        .into_iter()
+        .flatten()
+        .map(|w| w.received_at)
+        .max()
+    else {
+        return (view, None);
+    };
+
+    match view.claude.as_mut() {
+        Some(usage) => {
+            // An unparseable stamp cannot be proven newer than live data.
+            let fetched_at = DateTime::parse_from_rfc3339(&usage.fetched_at)
+                .ok()
+                .map(|at| at.with_timezone(&Utc));
+            for (slot, reading) in [
+                (&mut usage.five_hour, &five_hour),
+                (&mut usage.seven_day, &seven_day),
+            ] {
+                if let Some(reading) = reading {
+                    if fetched_at.is_none_or(|at| reading.received_at > at) {
+                        *slot = reading.to_window();
+                    }
+                }
+            }
+        }
+        None => {
+            view.claude = Some(ClaudeUsage {
+                plan: plan.unwrap_or_default(),
+                five_hour: five_hour
+                    .as_ref()
+                    .map(LiveWindow::to_window)
+                    .unwrap_or_default(),
+                seven_day: seven_day
+                    .as_ref()
+                    .map(LiveWindow::to_window)
+                    .unwrap_or_default(),
+                fetched_at: newest.to_rfc3339(),
+            });
+        }
+    }
+
+    if view.stale && failed_at.is_none_or(|at| newest > at) {
+        view.stale = false;
+    }
+    (view, Some(newest))
+}
+
+fn live_rate_limits() -> &'static Mutex<LiveRateLimits> {
+    static LIVE: OnceLock<Mutex<LiveRateLimits>> = OnceLock::new();
+    LIVE.get_or_init(|| Mutex::new(LiveRateLimits::default()))
 }
 
 // ─── Token aggregation (pure) ───────────────────────────────────────────
@@ -926,6 +1152,253 @@ mod tests {
         assert!(!view.stale);
         assert_eq!(view.error_kind, Some(ClaudeErrorKind::Auth));
         assert_eq!(view.retry_at, None);
+    }
+
+    // ─── Live rate-limit feed ────────────────────────────────────────────
+
+    fn live(percent: f64, received: &str) -> LiveWindow {
+        LiveWindow {
+            percent,
+            resets_at: Some("2026-10-10T14:00:00+00:00".to_string()),
+            received_at: ts(received),
+            status: "allowed".to_string(),
+        }
+    }
+
+    fn live_five_hour(percent: f64, received: &str) -> LiveRateLimits {
+        LiveRateLimits {
+            five_hour: Some(live(percent, received)),
+            seven_day: None,
+        }
+    }
+
+    #[test]
+    fn live_info_converts_fraction_and_epoch_seconds() {
+        let info = serde_json::json!({
+            "status": "allowed_warning",
+            "resetsAt": 1_791_640_800u64,
+            "rateLimitType": "five_hour",
+            "utilization": 0.9,
+            "surpassedThreshold": 0.75,
+        });
+        let (kind, window) =
+            parse_live_rate_limit(&info, ts("2026-10-10T09:00:00Z")).expect("parse");
+        assert_eq!(kind, LiveWindowKind::FiveHour);
+        assert!((window.percent - 90.0).abs() < 1e-9);
+        assert_eq!(
+            window.resets_at.as_deref(),
+            Some("2026-10-10T14:00:00+00:00")
+        );
+        assert_eq!(window.received_at, ts("2026-10-10T09:00:00Z"));
+        assert_eq!(window.status, "allowed_warning");
+
+        let (kind, window) = parse_live_rate_limit(
+            &serde_json::json!({"rateLimitType": "seven_day", "utilization": 1.7}),
+            ts("2026-10-10T09:00:00Z"),
+        )
+        .expect("parse");
+        assert_eq!(kind, LiveWindowKind::SevenDay);
+        assert_eq!(window.percent, 100.0);
+        assert_eq!(window.resets_at, None);
+    }
+
+    #[test]
+    fn live_info_ignores_other_windows_and_malformed_values() {
+        let at = ts("2026-10-10T09:00:00Z");
+        for info in [
+            serde_json::json!({"rateLimitType": "seven_day_opus", "utilization": 0.5}),
+            serde_json::json!({"rateLimitType": "overage", "utilization": 0.5}),
+            serde_json::json!({"rateLimitType": "five_hour"}),
+            serde_json::json!({"rateLimitType": "five_hour", "utilization": "0.5"}),
+            serde_json::json!({"utilization": 0.5}),
+            serde_json::json!("five_hour"),
+            serde_json::Value::Null,
+        ] {
+            assert_eq!(parse_live_rate_limit(&info, at), None, "{info}");
+        }
+    }
+
+    #[test]
+    fn an_older_live_reading_does_not_replace_a_newer_one() {
+        let mut limits = LiveRateLimits::default();
+        limits.record(LiveWindowKind::FiveHour, live(50.0, "2026-10-10T09:05:00Z"));
+        limits.record(LiveWindowKind::FiveHour, live(40.0, "2026-10-10T09:01:00Z"));
+        assert_eq!(limits.five_hour.as_ref().map(|w| w.percent), Some(50.0));
+        limits.record(LiveWindowKind::FiveHour, live(55.0, "2026-10-10T09:06:00Z"));
+        assert_eq!(limits.five_hour.as_ref().map(|w| w.percent), Some(55.0));
+        assert_eq!(limits.seven_day, None);
+    }
+
+    #[test]
+    fn newer_live_overrides_its_window_only() {
+        // `usage()` was fetched at 09:00.
+        let view = ClaudeMeterView {
+            claude: Some(usage(10.0)),
+            ..Default::default()
+        };
+        let (view, live_at) = overlay_live(
+            view,
+            &live_five_hour(64.0, "2026-10-10T09:02:00Z"),
+            None,
+            None,
+            ts("2026-10-10T09:03:00Z"),
+        );
+        let claude = view.claude.expect("claude");
+        assert_eq!(claude.five_hour.percent, 64.0);
+        assert_eq!(
+            claude.five_hour.resets_at.as_deref(),
+            Some("2026-10-10T14:00:00+00:00")
+        );
+        assert_eq!(claude.seven_day, ClaudeUsageWindow::default());
+        assert_eq!(claude.fetched_at, "2026-10-10T09:00:00+00:00");
+        assert_eq!(live_at, Some(ts("2026-10-10T09:02:00Z")));
+    }
+
+    #[test]
+    fn older_live_is_ignored() {
+        let view = ClaudeMeterView {
+            claude: Some(usage(10.0)),
+            ..Default::default()
+        };
+        let (view, _) = overlay_live(
+            view,
+            &live_five_hour(64.0, "2026-10-10T08:59:00Z"),
+            None,
+            None,
+            ts("2026-10-10T09:03:00Z"),
+        );
+        assert_eq!(view.claude.expect("claude").five_hour.percent, 10.0);
+    }
+
+    #[test]
+    fn live_from_a_finished_window_is_ignored() {
+        let view = ClaudeMeterView {
+            claude: Some(usage(10.0)),
+            ..Default::default()
+        };
+        let (view, live_at) = overlay_live(
+            view,
+            &live_five_hour(64.0, "2026-10-10T09:02:00Z"),
+            None,
+            None,
+            ts("2026-10-10T14:00:01Z"),
+        );
+        assert_eq!(view.claude.expect("claude").five_hour.percent, 10.0);
+        assert_eq!(live_at, None);
+    }
+
+    #[test]
+    fn a_rejected_live_reading_reads_as_spent() {
+        let mut limits = live_five_hour(98.0, "2026-10-10T09:02:00Z");
+        limits.five_hour.as_mut().unwrap().status = "rejected".to_string();
+        let (view, _) = overlay_live(
+            ClaudeMeterView::default(),
+            &limits,
+            None,
+            None,
+            ts("2026-10-10T09:03:00Z"),
+        );
+        assert_eq!(view.claude.expect("claude").five_hour.percent, 100.0);
+    }
+
+    #[test]
+    fn live_without_any_fetch_synthesizes_the_quota() {
+        let limits = LiveRateLimits {
+            five_hour: Some(live(30.0, "2026-10-10T09:01:00Z")),
+            seven_day: Some(live(70.0, "2026-10-10T09:02:00Z")),
+        };
+        let view = ClaudeMeterView {
+            error: Some("claude usage http 429".to_string()),
+            error_kind: Some(ClaudeErrorKind::RateLimited),
+            ..Default::default()
+        };
+        let (view, live_at) = overlay_live(view, &limits, None, None, ts("2026-10-10T09:03:00Z"));
+        let claude = view.claude.expect("synthesized");
+        assert_eq!(claude.plan, "");
+        assert_eq!(claude.five_hour.percent, 30.0);
+        assert_eq!(claude.seven_day.percent, 70.0);
+        assert_eq!(claude.fetched_at, ts("2026-10-10T09:02:00Z").to_rfc3339());
+        assert!(!view.stale);
+        assert_eq!(live_at, Some(ts("2026-10-10T09:02:00Z")));
+
+        let (view, _) = overlay_live(
+            ClaudeMeterView::default(),
+            &limits,
+            None,
+            Some("max".to_string()),
+            ts("2026-10-10T09:03:00Z"),
+        );
+        assert_eq!(view.claude.expect("synthesized").plan, "max");
+    }
+
+    #[test]
+    fn no_live_data_leaves_the_view_untouched() {
+        let view = ClaudeMeterView {
+            claude: Some(usage(10.0)),
+            stale: true,
+            ..Default::default()
+        };
+        let (out, live_at) = overlay_live(
+            ClaudeMeterView {
+                claude: Some(usage(10.0)),
+                stale: true,
+                ..Default::default()
+            },
+            &LiveRateLimits::default(),
+            None,
+            None,
+            ts("2026-10-10T09:03:00Z"),
+        );
+        assert_eq!(out, view);
+        assert_eq!(live_at, None);
+    }
+
+    #[test]
+    fn live_newer_than_the_failed_fetch_clears_stale() {
+        let t0 = Instant::now();
+        let wall0 = ts("2026-10-10T09:00:00Z");
+        let mut state = ClaudeUsageState::default();
+        state.record_success(usage(42.0), t0);
+        // 429 at 09:05.
+        state.record_failure(rate_limited(Some(600)), t0 + Duration::from_secs(300));
+        let now = t0 + Duration::from_secs(420);
+        let wall_now = wall0 + chrono::Duration::seconds(420);
+        let failed_at = state.failed_at_wall(now, wall_now);
+        assert_eq!(failed_at, Some(ts("2026-10-10T09:05:00Z")));
+
+        // A reading between the last good fetch and the 429: shown, still stale.
+        let (view, _) = overlay_live(
+            state.meter_view(None, now, wall_now),
+            &live_five_hour(50.0, "2026-10-10T09:04:00Z"),
+            failed_at,
+            None,
+            wall_now,
+        );
+        assert_eq!(view.claude.as_ref().unwrap().five_hour.percent, 50.0);
+        assert!(view.stale);
+
+        // A reading after the 429: current numbers, no longer stale.
+        let (view, _) = overlay_live(
+            state.meter_view(None, now, wall_now),
+            &live_five_hour(55.0, "2026-10-10T09:06:00Z"),
+            failed_at,
+            None,
+            wall_now,
+        );
+        assert_eq!(view.claude.as_ref().unwrap().five_hour.percent, 55.0);
+        assert!(!view.stale);
+        assert_eq!(view.error_kind, Some(ClaudeErrorKind::RateLimited));
+    }
+
+    #[test]
+    fn a_success_clears_the_failure_instant() {
+        let t0 = Instant::now();
+        let wall = ts("2026-10-10T09:00:00Z");
+        let mut state = ClaudeUsageState::default();
+        state.record_failure(rate_limited(None), t0);
+        assert!(state.failed_at_wall(t0, wall).is_some());
+        state.record_success(usage(1.0), t0);
+        assert_eq!(state.failed_at_wall(t0, wall), None);
     }
 
     // ─── Router profile validation ───────────────────────────────────────

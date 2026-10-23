@@ -22124,6 +22124,14 @@ async fn emit_conversation_update(
             emit_with_state(state, emitter, AcpEvent::AvailableCommands { commands }).await;
         }
         SessionUpdate::UsageUpdate(update) => {
+            // Phantom: live quota for the usage meter.
+            if agent_type == AgentType::ClaudeCode {
+                if let Some(info) = update.meta.as_ref().and_then(|m| {
+                    m.get(crate::commands::usage_meter::CLAUDE_RATE_LIMIT_META_KEY)
+                }) {
+                    crate::commands::usage_meter::record_live_rate_limit(info);
+                }
+            }
             // A codex request that ran a hosted web search reports its
             // provider's whole search loop: the ring keeps the reading before
             // it (see `crate::acp::codex_context`) — on the window this report

@@ -1,4 +1,4 @@
-import { fireEvent, render, screen, waitFor } from "@testing-library/react"
+import { act, fireEvent, render, screen, waitFor } from "@testing-library/react"
 import { NextIntlClientProvider } from "next-intl"
 import { beforeEach, describe, expect, it, vi } from "vitest"
 
@@ -8,6 +8,17 @@ const mocks = vi.hoisted(() => ({ transportCall: vi.fn() }))
 
 vi.mock("@/lib/transport", () => ({
   getTransport: () => ({ call: mocks.transportCall }),
+}))
+
+/** The component's latest `useAcpEvent` handler, so a test can emit events. */
+const acp = vi.hoisted(() => ({
+  handler: null as ((envelope: unknown) => void) | null,
+}))
+
+vi.mock("@/contexts/acp-connections-context", () => ({
+  useAcpEvent: (handler: (envelope: unknown) => void) => {
+    acp.handler = handler
+  },
 }))
 
 import { StatusBarUsage } from "./status-bar-usage"
@@ -49,6 +60,7 @@ function mount() {
 
 beforeEach(() => {
   mocks.transportCall.mockReset()
+  acp.handler = null
 })
 
 describe("StatusBarUsage", () => {
@@ -335,5 +347,93 @@ describe("StatusBarUsage router profile switch", () => {
     expect(
       screen.queryByText(/the router uses Balanced automatically/)
     ).not.toBeInTheDocument()
+  })
+})
+
+describe("StatusBarUsage live rate-limit readings", () => {
+  const minutesFromNow = (minutes: number) =>
+    new Date(Date.now() + minutes * 60_000).toISOString()
+
+  function emit(type = "usage_update") {
+    act(() => {
+      acp.handler?.({ seq: 1, connection_id: "c1", type, used: 1, size: 2 })
+    })
+  }
+
+  it("refreshes on usage_update at most once per 15 s, with a trailing call", async () => {
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "Date"] })
+    try {
+      mocks.transportCall.mockResolvedValue(meter)
+      mount()
+      await act(async () => {})
+      expect(transportCalls("usage_meter")).toHaveLength(1)
+
+      // The first update refreshes at once.
+      emit()
+      expect(transportCalls("usage_meter")).toHaveLength(2)
+
+      // A burst inside the gap collapses into one trailing refresh.
+      emit()
+      emit()
+      emit("agent_message_chunk")
+      await act(async () => {
+        vi.advanceTimersByTime(14_999)
+      })
+      expect(transportCalls("usage_meter")).toHaveLength(2)
+      await act(async () => {
+        vi.advanceTimersByTime(1)
+      })
+      expect(transportCalls("usage_meter")).toHaveLength(3)
+
+      // The trailing call restarts the gap.
+      emit()
+      expect(transportCalls("usage_meter")).toHaveLength(3)
+      await act(async () => {
+        vi.advanceTimersByTime(15_000)
+      })
+      expect(transportCalls("usage_meter")).toHaveLength(4)
+
+      // Other event types never refresh.
+      await act(async () => {
+        vi.advanceTimersByTime(60_000)
+      })
+      emit("agent_message_chunk")
+      expect(transportCalls("usage_meter")).toHaveLength(4)
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it("dates the bars by the live reading and drops the stale notice", async () => {
+    mocks.transportCall.mockResolvedValue({
+      ...meter,
+      claude: { ...meter.claude!, fetched_at: minutesFromNow(-10) },
+      claude_error: "claude usage http 429",
+      claude_stale: false,
+      claude_error_kind: "rate_limited",
+      claude_retry_at: minutesFromNow(5),
+      claude_live_at: minutesFromNow(-1),
+    })
+    mount()
+    fireEvent.click(await screen.findByRole("button", { name: "Token usage" }))
+    expect(await screen.findByText(/^Updated 1 min\. ago$/)).toBeVisible()
+    expect(screen.getByTestId("usage-quota-bars").className).not.toContain(
+      "opacity-50"
+    )
+    expect(screen.queryByText(/rate-limited/)).not.toBeInTheDocument()
+  })
+
+  it("keeps the fetch time when the live reading is older", async () => {
+    mocks.transportCall.mockResolvedValue({
+      ...meter,
+      claude: { ...meter.claude!, fetched_at: minutesFromNow(-5) },
+      claude_error: "claude usage request failed",
+      claude_stale: true,
+      claude_error_kind: "network",
+      claude_live_at: minutesFromNow(-30),
+    })
+    mount()
+    fireEvent.click(await screen.findByRole("button", { name: "Token usage" }))
+    expect(await screen.findByText(/^Updated 5 min\. ago$/)).toBeVisible()
   })
 })

@@ -9,9 +9,11 @@
  * Read-only apart from the profile switch, and best-effort: the fetch returns
  * `null` on any failure (old server, no OAuth credentials), and the whole
  * segment hides rather than showing a broken indicator. Refreshes every two
- * minutes. When the backend's Claude read fails (e.g. HTTP 429) it serves the
- * last good quota flagged `claude_stale`; the bars stay, dimmed, with when
- * they were read and why they are not fresh.
+ * minutes, and sooner (throttled) whenever a session reports `usage_update`,
+ * which is how Claude sessions deliver live rate-limit readings the backend
+ * overlays on the quota. When the backend's Claude read fails (e.g. HTTP 429)
+ * it serves the last good quota flagged `claude_stale`; the bars stay, dimmed,
+ * with when they were read and why they are not fresh.
  */
 
 import { useCallback, useEffect, useRef, useState } from "react"
@@ -22,6 +24,7 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
+import { useAcpEvent } from "@/contexts/acp-connections-context"
 import { getAgentLabel } from "@/lib/custom-agents"
 import { formatLimitResetTime } from "@/lib/model-scorecard"
 import {
@@ -41,6 +44,10 @@ import { cn } from "@/lib/utils"
 
 /** Background refresh cadence — the meter is a plan quota, not a live stream. */
 const POLL_MS = 2 * 60 * 1000
+
+/** Minimum gap between `usage_update`-driven refreshes; a burst inside the gap
+ *  collapses into one trailing refresh. */
+const LIVE_REFRESH_MIN_MS = 15 * 1000
 
 /** At or above this quota percent the router drops to `equilibrado` on its own
  *  (`routing::QUOTA_HIGH_PCT`), which the popover states rather than hides. */
@@ -69,6 +76,9 @@ export function StatusBarUsage() {
   // result (same shape as `status-bar-mcp.tsx`).
   const seqRef = useRef(0)
   const aliveRef = useRef(true)
+  // Throttle state of the `usage_update`-driven refresh (see `useAcpEvent`).
+  const lastLiveRef = useRef(0)
+  const trailingRef = useRef<ReturnType<typeof setTimeout> | null>(null)
 
   const refresh = useCallback(async () => {
     const seq = ++seqRef.current
@@ -112,8 +122,26 @@ export function StatusBarUsage() {
     return () => {
       aliveRef.current = false
       clearInterval(id)
+      if (trailingRef.current) clearTimeout(trailingRef.current)
+      trailingRef.current = null
     }
   }, [refresh])
+
+  // Live refresh: at most one per LIVE_REFRESH_MIN_MS, with a trailing call so
+  // the last reading of a burst is not lost. The envelope carries no agent
+  // type; the backend only records Claude readings, so other agents' updates
+  // cost a throttled re-read and nothing more.
+  useAcpEvent((envelope) => {
+    if (envelope.type !== "usage_update" || trailingRef.current) return
+    const wait = lastLiveRef.current + LIVE_REFRESH_MIN_MS - Date.now()
+    const run = () => {
+      trailingRef.current = null
+      lastLiveRef.current = Date.now()
+      void refresh()
+    }
+    if (wait <= 0) run()
+    else trailingRef.current = setTimeout(run, wait)
+  })
 
   const claude = meter?.claude ?? null
   const today = meter?.today ?? []
@@ -133,10 +161,17 @@ export function StatusBarUsage() {
 
   // A stale `claude` is the backend's last good read: still shown, dimmed.
   const stale = Boolean(meter.claude_stale) && claude !== null
-  const updatedAgo = stale
-    ? formatRelativeTime(claude?.fetched_at, now, locale)
-    : null
-  const status = claudeStatus(meter, claude !== null, now, locale, t)
+  // A live reading newer than the fetch is when the numbers were last current.
+  const liveAt = newerIso(meter.claude_live_at, claude?.fetched_at)
+  const updatedAgo =
+    stale || liveAt
+      ? formatRelativeTime(liveAt ?? claude?.fetched_at, now, locale)
+      : null
+  // Data that is not stale despite a failed read is live data: nothing to warn.
+  const status =
+    stale || claude === null
+      ? claudeStatus(meter, claude !== null, now, locale, t)
+      : null
 
   const level: UsageLevel = fiveHour ? usageLevel(fiveHour.percent) : "ok"
   const compact =
@@ -255,6 +290,18 @@ export function StatusBarUsage() {
       </PopoverContent>
     </Popover>
   )
+}
+
+/** `candidate` when it is a valid ISO instant later than `base` (or `base` is
+ *  absent/invalid), else `null`. */
+function newerIso(
+  candidate: string | null | undefined,
+  base: string | null | undefined
+): string | null {
+  const at = candidate ? Date.parse(candidate) : NaN
+  if (Number.isNaN(at)) return null
+  const baseAt = base ? Date.parse(base) : NaN
+  return Number.isNaN(baseAt) || at > baseAt ? (candidate ?? null) : null
 }
 
 /**
