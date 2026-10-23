@@ -690,7 +690,7 @@ impl DbRouting {
         };
         let stats: RouterStats = self.load(STATS_KEY).await;
         let pool = candidates_from_scorecard(&entries, &stats);
-        let claude = crate::commands::usage_meter::claude_usage_cached().await;
+        let claude = crate::commands::usage_meter::claude_usage_effective().await;
         let claude = claude.map(|u| (u.five_hour.percent, u.seven_day.percent));
         let (profile, _) = effective_profile(self.profile().await, claude);
         plan_lead_chat_with(agent, pool, &stats, profile)
@@ -711,7 +711,7 @@ impl DbRouting {
         let stats: RouterStats = self.load(STATS_KEY).await;
         let pool = candidates_from_scorecard(&entries, &stats);
         // Spend the paid models only while Claude's quota holds up.
-        let claude = crate::commands::usage_meter::claude_usage_cached().await;
+        let claude = crate::commands::usage_meter::claude_usage_effective().await;
         let claude = claude.map(|u| (u.five_hour.percent, u.seven_day.percent));
         let (profile, note) = effective_profile(profile, claude);
         let mut rng = || rand::random::<f64>();

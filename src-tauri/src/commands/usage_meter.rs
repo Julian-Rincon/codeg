@@ -691,52 +691,135 @@ impl LiveRateLimits {
     }
 }
 
-/// Parse one `SDKRateLimitInfo` object. `None` for any other window type,
-/// a missing or non-numeric `utilization`, or a non-object value.
+/// Parse one `SDKRateLimitInfo` object into the readings it carries.
+///
+/// The CLI sends one on every turn, normally as `status: "allowed"` with no
+/// top-level `utilization` and both windows under `unifiedWindows`
+/// (`{"five_hour": {"utilization": 0.61, "resetsAt": <epoch s>}, ...}`). The
+/// top-level `rateLimitType`/`utilization` pair, when present, names the
+/// window the status is about and wins for it; a `rejected` status with no
+/// fraction at all still marks that window spent. Other window types,
+/// non-numeric fractions and non-object values yield nothing.
 pub(crate) fn parse_live_rate_limit(
     info: &serde_json::Value,
     received_at: DateTime<Utc>,
-) -> Option<(LiveWindowKind, LiveWindow)> {
-    let kind = match info.get("rateLimitType")?.as_str()? {
-        "five_hour" => LiveWindowKind::FiveHour,
-        "seven_day" => LiveWindowKind::SevenDay,
-        _ => return None,
+) -> Vec<(LiveWindowKind, LiveWindow)> {
+    fn kind_of(name: &str) -> Option<LiveWindowKind> {
+        match name {
+            "five_hour" => Some(LiveWindowKind::FiveHour),
+            "seven_day" => Some(LiveWindowKind::SevenDay),
+            _ => None,
+        }
+    }
+    fn percent_of(v: &serde_json::Value) -> Option<f64> {
+        v.get("utilization")?
+            .as_f64()
+            .filter(|u| u.is_finite())
+            .map(|u| (u * 100.0).clamp(0.0, 100.0))
+    }
+    fn resets_of(v: &serde_json::Value) -> Option<String> {
+        v.get("resetsAt")
+            .and_then(serde_json::Value::as_f64)
+            .filter(|secs| secs.is_finite() && *secs > 0.0)
+            .and_then(|secs| DateTime::from_timestamp_millis((secs * 1000.0) as i64))
+            .map(|at| at.to_rfc3339())
+    }
+
+    let mut out: Vec<(LiveWindowKind, LiveWindow)> = Vec::new();
+    if let Some(windows) = info.get("unifiedWindows").and_then(|w| w.as_object()) {
+        for (name, window) in windows {
+            if let (Some(kind), Some(percent)) = (kind_of(name), percent_of(window)) {
+                out.push((
+                    kind,
+                    LiveWindow {
+                        percent,
+                        resets_at: resets_of(window),
+                        received_at,
+                        status: "allowed".to_string(),
+                    },
+                ));
+            }
+        }
+    }
+
+    let Some(kind) = info
+        .get("rateLimitType")
+        .and_then(serde_json::Value::as_str)
+        .and_then(kind_of)
+    else {
+        return out;
     };
-    let utilization = info
-        .get("utilization")?
-        .as_f64()
-        .filter(|u| u.is_finite())?;
-    let resets_at = info
-        .get("resetsAt")
-        .and_then(serde_json::Value::as_f64)
-        .filter(|secs| secs.is_finite() && *secs > 0.0)
-        .and_then(|secs| DateTime::from_timestamp_millis((secs * 1000.0) as i64))
-        .map(|at| at.to_rfc3339());
     let status = info
         .get("status")
         .and_then(serde_json::Value::as_str)
         .unwrap_or_default()
         .to_string();
-    Some((
-        kind,
-        LiveWindow {
-            percent: (utilization * 100.0).clamp(0.0, 100.0),
-            resets_at,
-            received_at,
-            status,
-        },
-    ))
+    let percent = percent_of(info);
+    let resets_at = resets_of(info);
+    match out.iter_mut().find(|(k, _)| *k == kind) {
+        Some((_, window)) => {
+            if let Some(percent) = percent {
+                window.percent = percent;
+            }
+            if resets_at.is_some() {
+                window.resets_at = resets_at;
+            }
+            window.status = status;
+        }
+        None => {
+            let percent = match percent {
+                Some(p) => p,
+                None if status == "rejected" => 100.0,
+                None => return out,
+            };
+            out.push((
+                kind,
+                LiveWindow {
+                    percent,
+                    resets_at,
+                    received_at,
+                    status,
+                },
+            ));
+        }
+    }
+    out
 }
 
 /// Record a live rate-limit reading (the `_claude/rateLimit` meta value of a
 /// Claude Code `usage_update`). Malformed or irrelevant values are dropped.
 pub fn record_live_rate_limit(info: &serde_json::Value) {
-    let Some((kind, window)) = parse_live_rate_limit(info, Utc::now()) else {
+    let readings = parse_live_rate_limit(info, Utc::now());
+    if readings.is_empty() {
         return;
-    };
-    if let Ok(mut live) = live_rate_limits().lock() {
-        live.record(kind, window);
     }
+    if let Ok(mut live) = live_rate_limits().lock() {
+        for (kind, window) in readings {
+            live.record(kind, window);
+        }
+    }
+}
+
+/// Claude's quota as the rest of Phantom should act on it: the endpoint read
+/// ([`claude_usage_cached`]) with the live readings overlaid, so the router
+/// and the quota-resume scheduler see the same numbers as the status bar —
+/// including while the endpoint is in backoff. `None` only when neither
+/// source has anything.
+pub async fn claude_usage_effective() -> Option<ClaudeUsage> {
+    let fetched = claude_usage_cached().await;
+    let plan = claude_state()
+        .lock()
+        .ok()
+        .and_then(|state| state.last_good.as_ref().map(|u| u.plan.clone()));
+    let live = live_rate_limits()
+        .lock()
+        .map(|live| live.clone())
+        .unwrap_or_default();
+    let view = ClaudeMeterView {
+        claude: fetched,
+        ..Default::default()
+    };
+    overlay_live(view, &live, None, plan, Utc::now()).0.claude
 }
 
 /// Fold live readings into the meter view. Pure.
@@ -1181,8 +1264,9 @@ mod tests {
             "utilization": 0.9,
             "surpassedThreshold": 0.75,
         });
-        let (kind, window) =
-            parse_live_rate_limit(&info, ts("2026-10-10T09:00:00Z")).expect("parse");
+        let [(kind, window)] =
+            <[_; 1]>::try_from(parse_live_rate_limit(&info, ts("2026-10-10T09:00:00Z")))
+                .expect("one reading");
         assert_eq!(kind, LiveWindowKind::FiveHour);
         assert!((window.percent - 90.0).abs() < 1e-9);
         assert_eq!(
@@ -1192,11 +1276,11 @@ mod tests {
         assert_eq!(window.received_at, ts("2026-10-10T09:00:00Z"));
         assert_eq!(window.status, "allowed_warning");
 
-        let (kind, window) = parse_live_rate_limit(
+        let [(kind, window)] = <[_; 1]>::try_from(parse_live_rate_limit(
             &serde_json::json!({"rateLimitType": "seven_day", "utilization": 1.7}),
             ts("2026-10-10T09:00:00Z"),
-        )
-        .expect("parse");
+        ))
+        .expect("one reading");
         assert_eq!(kind, LiveWindowKind::SevenDay);
         assert_eq!(window.percent, 100.0);
         assert_eq!(window.resets_at, None);
@@ -1209,13 +1293,59 @@ mod tests {
             serde_json::json!({"rateLimitType": "seven_day_opus", "utilization": 0.5}),
             serde_json::json!({"rateLimitType": "overage", "utilization": 0.5}),
             serde_json::json!({"rateLimitType": "five_hour"}),
+            serde_json::json!({"rateLimitType": "five_hour", "status": "allowed"}),
             serde_json::json!({"rateLimitType": "five_hour", "utilization": "0.5"}),
+            serde_json::json!({"unifiedWindows": {"five_hour": {"utilization": "x"}}}),
             serde_json::json!({"utilization": 0.5}),
             serde_json::json!("five_hour"),
             serde_json::Value::Null,
         ] {
-            assert_eq!(parse_live_rate_limit(&info, at), None, "{info}");
+            assert_eq!(parse_live_rate_limit(&info, at), vec![], "{info}");
         }
+    }
+
+    #[test]
+    fn live_info_reads_unified_windows_from_a_plain_allowed_event() {
+        // Shape captured from claude 2.1.x `rate_limit_event` (stream-json).
+        let info = serde_json::json!({
+            "status": "allowed",
+            "resetsAt": 1_792_736_400u64,
+            "rateLimitType": "five_hour",
+            "overageStatus": "rejected",
+            "isUsingOverage": false,
+            "unifiedWindows": {
+                "five_hour": {"utilization": 0.61, "resetsAt": 1_792_736_400u64},
+                "seven_day": {"utilization": 0.25, "resetsAt": 1_793_196_000u64},
+            },
+        });
+        let mut readings = parse_live_rate_limit(&info, ts("2026-10-23T03:40:00Z"));
+        readings.sort_by_key(|(k, _)| *k == LiveWindowKind::SevenDay);
+        let [(k5, w5), (k7, w7)] = <[_; 2]>::try_from(readings).expect("two readings");
+        assert_eq!(
+            (k5, k7),
+            (LiveWindowKind::FiveHour, LiveWindowKind::SevenDay)
+        );
+        assert!((w5.percent - 61.0).abs() < 1e-9);
+        assert!((w7.percent - 25.0).abs() < 1e-9);
+        assert_eq!(w5.status, "allowed");
+        assert!(w7.resets_at.is_some());
+    }
+
+    #[test]
+    fn a_rejected_event_without_a_fraction_marks_its_window_spent() {
+        // Shape recorded in Claude Code transcripts on a 429.
+        let info = serde_json::json!({
+            "status": "rejected",
+            "resetsAt": 1_791_697_800u64,
+            "rateLimitType": "five_hour",
+            "overageStatus": "rejected",
+            "isUsingOverage": false,
+        });
+        let [(kind, window)] =
+            <[_; 1]>::try_from(parse_live_rate_limit(&info, ts("2026-10-10T09:00:00Z")))
+                .expect("one reading");
+        assert_eq!(kind, LiveWindowKind::FiveHour);
+        assert_eq!(window.to_window().percent, 100.0);
     }
 
     #[test]

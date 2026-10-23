@@ -24,7 +24,7 @@
 //! ## Which reset time wins
 //!
 //! For `claude_code` the authoritative source is Claude's own quota endpoint
-//! (via `commands::usage_meter::claude_usage_cached`), read only when a window
+//! (via `commands::usage_meter::claude_usage_effective`), read only when a window
 //! is actually saturated — a half-empty window's reset time says nothing about
 //! when the *limit* lifts. Otherwise the reset time recorded by
 //! [`acp::model_limits`] for that agent is used. With neither, the schedule
@@ -535,9 +535,10 @@ pub async fn schedule_core(
     let wire = agent_type.as_wire().into_owned();
 
     // Claude's live quota first: it is the only source that knows when the
-    // *subscription* frees up. Cached for 60 s, and absent when the read
-    // failed — in which case the recorded limit hit is the fallback.
-    let claude = crate::commands::usage_meter::claude_usage_cached().await;
+    // *subscription* frees up. The endpoint read (cached for 60 s) with the
+    // per-turn live readings on top; absent only when neither has anything —
+    // in which case the recorded limit hit is the fallback.
+    let claude = crate::commands::usage_meter::claude_usage_effective().await;
     let limits = model_limits::load_all(conn).await;
     let limit_resets_at = limits.get(&wire).and_then(|l| l.resets_at);
 
