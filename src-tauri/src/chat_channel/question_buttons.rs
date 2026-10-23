@@ -76,6 +76,15 @@ pub fn is_live(data: &str) -> bool {
         .is_some_and(|e| e.created.elapsed() < TTL)
 }
 
+/// Whether a live question on this connection still waits for a tap.
+pub fn has_pending(connection_id: &str) -> bool {
+    PENDING
+        .lock()
+        .unwrap_or_else(|e| e.into_inner())
+        .values()
+        .any(|e| e.connection_id == connection_id && e.created.elapsed() < TTL)
+}
+
 pub fn is_question_callback(data: &str) -> bool {
     data.starts_with(PREFIX)
 }
@@ -172,6 +181,16 @@ mod tests {
                 .collect(),
             is_secret: false,
         }
+    }
+
+    #[test]
+    fn has_pending_tracks_the_connection_until_forgotten() {
+        assert!(!has_pending("conn-hp"));
+        register("conn-hp", "q-hp", &spec(false, 2));
+        assert!(has_pending("conn-hp"));
+        assert!(!has_pending("conn-other"));
+        forget_question("q-hp");
+        assert!(!has_pending("conn-hp"));
     }
 
     #[test]
