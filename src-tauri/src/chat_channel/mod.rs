@@ -7,6 +7,7 @@ pub mod compact;
 pub mod directives;
 pub mod error;
 pub mod event_subscriber;
+pub mod forge_tap;
 pub mod i18n;
 pub mod manager;
 pub mod menu;
