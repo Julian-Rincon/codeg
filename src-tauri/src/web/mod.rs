@@ -4,6 +4,7 @@ pub mod browser_tunnel;
 pub mod compression;
 pub mod event_bridge;
 pub mod handlers;
+pub(crate) mod phantom_desktop;
 pub mod port_probe;
 pub mod proxy_auth;
 pub mod router;
@@ -319,6 +320,14 @@ fn classify_bind_error(err: std::io::Error) -> AppCommandError {
 #[cfg(feature = "tauri-runtime")]
 pub(crate) fn find_static_dir_tauri(app: &tauri::AppHandle) -> PathBuf {
     use tauri::Manager;
+    // Phantom: the same web build codeg-server serves (CODEG_STATIC_DIR).
+    if let Some(dir) = phantom_desktop::static_dir_from_env() {
+        tracing::info!(
+            "[WEB] Serving static files from CODEG_STATIC_DIR: {}",
+            dir.display()
+        );
+        return dir;
+    }
     // 1. Production: bundle.resources copies out/ → web/ inside the resource directory.
     let resource = app.path().resource_dir().ok();
     if let Some(ref dir) = resource {
@@ -776,7 +785,10 @@ pub(crate) async fn do_start_web_server_tauri(
 
     let db = app.state::<crate::db::AppDatabase>();
     let port_val = resolve_web_service_port(&db.conn, port).await?;
-    let host_val = host.unwrap_or_else(|| "0.0.0.0".to_string());
+    // Phantom: CODEG_HOST (127.0.0.1) before upstream's 0.0.0.0.
+    let host_val = host
+        .or_else(phantom_desktop::host_from_env)
+        .unwrap_or_else(|| "0.0.0.0".to_string());
     let token = resolve_web_service_token(&db.conn, token).await?;
 
     // Same strict-mode validation as `do_start_web_server_with_state`:
