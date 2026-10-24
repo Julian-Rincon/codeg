@@ -264,6 +264,8 @@ pub fn spawn_command_dispatcher(
     })
 }
 
+static FORGE_PHOTO_SLOT: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(1);
+
 /// `nexus forge foto` runs local vision, so it runs off the loop; a caption
 /// FORGE turns down comes back through the command queue as plain text.
 fn spawn_forge_photo(
@@ -273,6 +275,8 @@ fn spawn_forge_photo(
     db: DatabaseConnection,
 ) {
     tokio::spawn(async move {
+        // One photo at a time: an album must not start N vision models on the GPU.
+        let _slot = FORGE_PHOTO_SLOT.acquire().await;
         match forge_tap::intercept_photo(&cmd, &photo).await {
             forge_tap::Outcome::Reply(reply) => {
                 let reply = DispatchMessage::Rich(RichMessage::info(reply));
@@ -285,7 +289,6 @@ fn spawn_forge_photo(
                     tracing::error!("[ForgeTap] caption not forwarded: {e}");
                 }
             }
-            forge_tap::Outcome::Drop => {}
         }
     });
 }
@@ -976,10 +979,11 @@ mod tests {
             forge_photo(channel_id, None),
         ];
         // Text and caption take the old route (help card each); a captionless
-        // photo FORGE says nothing about gets no reply (as before the tap).
-        let out = outbound_after(&db, channel_id, commands, 2).await;
+        // photo FORGE says nothing about is never dropped in silence.
+        let out = outbound_after(&db, channel_id, commands, 3).await;
         clear_forge_env();
-        assert_eq!(out.len(), 2, "{out:?}");
+        assert_eq!(out.len(), 3, "{out:?}");
+        assert!(out.iter().any(|m| m.contains(forge_tap::PHOTO_FAILED)), "{out:?}");
         assert!(forge_tap::tests::recorded_args(dir.path()).is_some());
     }
 

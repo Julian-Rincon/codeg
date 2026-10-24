@@ -30,8 +30,6 @@ pub enum Outcome {
     Reply(String),
     /// Carry on exactly as without the tap.
     Forward,
-    /// A captionless photo FORGE didn't take: nothing to forward.
-    Drop,
 }
 
 pub fn enabled() -> bool {
@@ -108,9 +106,12 @@ fn id_args(meta: &MessageMeta) -> [String; 6] {
     ]
 }
 
+/// The text goes last, after `--`: «--help» or «-h» from Telegram is text for
+/// FORGE, never an option of the CLI.
 fn ingest_args(text: &str, meta: &MessageMeta) -> Vec<String> {
-    let mut args = vec!["forge".to_string(), "ingest".to_string(), capped(text)];
+    let mut args = vec!["forge".to_string(), "ingest".to_string()];
     args.extend(id_args(meta));
+    args.extend(["--".to_string(), capped(text)]);
     args
 }
 
@@ -123,7 +124,8 @@ fn foto_args(photo: &Photo, meta: &MessageMeta) -> Vec<String> {
     ];
     args.extend(id_args(meta));
     if let Some(caption) = &photo.caption {
-        args.extend(["--pie".to_string(), capped(caption)]);
+        // `--pie=…` in one argument: a caption starting with "-" stays the caption.
+        args.push(format!("--pie={}", capped(caption)));
     }
     args
 }
@@ -172,6 +174,7 @@ enum Run {
     Exited(Option<i32>, String),
     Timeout,
     SpawnError(String),
+    BadOutput,
 }
 
 async fn run_raw(bin: &Path, args: &[String], timeout: Duration) -> Run {
@@ -180,10 +183,10 @@ async fn run_raw(bin: &Path, args: &[String], timeout: Duration) -> Run {
         .stdin(std::process::Stdio::null())
         .kill_on_drop(true);
     match tokio::time::timeout(timeout, cmd.output()).await {
-        Ok(Ok(out)) => Run::Exited(
-            out.status.code(),
-            String::from_utf8_lossy(&out.stdout).trim().to_string(),
-        ),
+        Ok(Ok(out)) => match String::from_utf8(out.stdout) {
+            Ok(stdout) => Run::Exited(out.status.code(), stdout.trim().to_string()),
+            Err(_) => Run::BadOutput,
+        },
         Ok(Err(e)) => Run::SpawnError(format!("spawn error ({})", e.kind())),
         Err(_) => Run::Timeout,
     }
@@ -198,6 +201,7 @@ async fn run_cli(bin: &Path, args: &[String], timeout: Duration) -> Result<Strin
         Run::Exited(None, _) => Err("killed by signal".to_string()),
         Run::Timeout => Err("timeout".to_string()),
         Run::SpawnError(why) => Err(why),
+        Run::BadOutput => Err("stdout is not UTF-8".to_string()),
     }
 }
 
@@ -205,6 +209,11 @@ async fn run_cli(bin: &Path, args: &[String], timeout: Duration) -> Result<Strin
 /// the photo has nowhere else to go, so Julian hears about it.
 pub const PHOTO_TOO_SLOW: &str =
     "📷 No alcancé a leer la foto a tiempo; no registré nada. Mándala otra vez o escríbeme la comida.";
+
+/// Said when FORGE couldn't take a photo without caption (not installed,
+/// crashed, no answer): a photo is never dropped in silence.
+pub const PHOTO_FAILED: &str =
+    "📷 No pude procesar la foto (FORGE no respondió); no registré nada. Mándala otra vez más tarde o escríbeme la comida.";
 
 /// Whether Phantom is waiting on this chat to answer a permission or question.
 async fn awaiting_answer(bridge: &Mutex<SessionBridge>, cmd: &IncomingCommand) -> bool {
@@ -289,7 +298,11 @@ async fn photo_with(
     photo: &Photo,
 ) -> Outcome {
     let Some(meta) = message_meta(&cmd.metadata) else {
-        return if photo.caption.is_some() { Outcome::Forward } else { Outcome::Drop };
+        return if photo.caption.is_some() {
+            Outcome::Forward
+        } else {
+            Outcome::Reply(PHOTO_FAILED.to_string())
+        };
     };
     match run_raw(bin, &foto_args(photo, &meta), timeout).await {
         Run::Exited(Some(0), reply) if !reply.is_empty() => {
@@ -306,10 +319,10 @@ async fn photo_with(
         Run::Timeout => Outcome::Reply(PHOTO_TOO_SLOW.to_string()),
         _ => {
             tracing::info!(
-                "[ForgeTap] foto channel={}: FORGE unavailable, no caption, no reply",
+                "[ForgeTap] foto channel={}: FORGE unavailable, no caption",
                 cmd.channel_id
             );
-            Outcome::Drop
+            Outcome::Reply(PHOTO_FAILED.to_string())
         }
     }
 }
@@ -488,13 +501,14 @@ pub(crate) mod tests {
             [
                 "forge",
                 "ingest",
-                "press \"banca\"; rm -rf ~",
                 "--chat-id",
                 "42",
                 "--message-id",
                 "555",
                 "--date",
                 "1760389200",
+                "--",
+                "press \"banca\"; rm -rf ~",
             ]
         );
     }
@@ -503,7 +517,22 @@ pub(crate) mod tests {
     fn ingest_args_cap_the_text() {
         let meta = message_meta(&text_cmd("x").metadata).unwrap();
         let long = "ñ".repeat(MAX_TEXT_CHARS + 50);
-        assert_eq!(ingest_args(&long, &meta)[2].chars().count(), MAX_TEXT_CHARS);
+        let args = ingest_args(&long, &meta);
+        assert_eq!(args.last().unwrap().chars().count(), MAX_TEXT_CHARS);
+    }
+
+    #[test]
+    fn text_that_looks_like_an_option_stays_text() {
+        let meta = message_meta(&text_cmd("x").metadata).unwrap();
+        for text in ["--help", "-h", "--he"] {
+            let args = ingest_args(text, &meta);
+            assert_eq!(args[args.len() - 2..], ["--", text]);
+        }
+        let photo = Photo {
+            file_id: "big".to_string(),
+            caption: Some("-200 g de arroz".to_string()),
+        };
+        assert_eq!(foto_args(&photo, &meta).last().unwrap(), "--pie=-200 g de arroz");
     }
 
     #[test]
@@ -533,7 +562,7 @@ pub(crate) mod tests {
             ..photo
         };
         let args = foto_args(&photo, &meta);
-        assert_eq!(&args[args.len() - 2..], ["--pie", "cena"]);
+        assert_eq!(args.last().unwrap(), "--pie=cena");
     }
 
     // ── which messages are tapped ──
@@ -609,10 +638,9 @@ pub(crate) mod tests {
         let bin = fake_nexus(dir.path(), "\n  ✅ Banca 80x5 anotado \n", 0);
         let out = text_with(&bin, SHORT, &text_cmd("press banca 80x5"), "/", false).await;
         assert_eq!(out, Outcome::Reply("✅ Banca 80x5 anotado".to_string()));
-        assert_eq!(
-            recorded_args(dir.path()).unwrap()[..3],
-            ["forge", "ingest", "press banca 80x5"]
-        );
+        let args = recorded_args(dir.path()).unwrap();
+        assert_eq!(args[..2], ["forge", "ingest"]);
+        assert_eq!(args[args.len() - 2..], ["--", "press banca 80x5"]);
     }
 
     #[tokio::test]
@@ -769,7 +797,7 @@ pub(crate) mod tests {
         assert_eq!(out, Outcome::Reply("🍽 Cena registrada".to_string()));
         let args = recorded_args(dir.path()).unwrap();
         assert_eq!(args[..4], ["forge", "foto", "--file-id", "big"]);
-        assert_eq!(args[args.len() - 2..], ["--pie", "cena"]);
+        assert_eq!(args.last().unwrap(), "--pie=cena");
     }
 
     #[tokio::test]
@@ -792,12 +820,23 @@ pub(crate) mod tests {
     }
 
     #[tokio::test]
-    async fn photo_without_caption_and_without_forge_is_dropped() {
+    async fn photo_without_caption_and_without_forge_says_so() {
         let dir = tempfile::tempdir().unwrap();
         let bin = fake_nexus(dir.path(), "", 3);
         let out = photo_out(&bin, &photo_cmd(None)).await;
-        assert_eq!(out, Outcome::Drop);
+        assert_eq!(out, Outcome::Reply(PHOTO_FAILED.to_string()));
         let out = photo_out(Path::new("/nonexistent/forge-tap/nexus"), &photo_cmd(None)).await;
-        assert_eq!(out, Outcome::Drop);
+        assert_eq!(out, Outcome::Reply(PHOTO_FAILED.to_string()));
+    }
+
+    #[tokio::test]
+    async fn invalid_utf8_from_forge_forwards_the_text() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = dir.path().join("nexus");
+        std::fs::write(&bin, "#!/bin/sh\nprintf '\\377\\376'\nexit 0\n").unwrap();
+        std::fs::set_permissions(&bin, std::os::unix::fs::PermissionsExt::from_mode(0o755))
+            .unwrap();
+        let out = text_with(&bin, Duration::from_secs(5), &text_cmd("hola"), "/", false).await;
+        assert_eq!(out, Outcome::Forward);
     }
 }
