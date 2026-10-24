@@ -571,6 +571,51 @@ impl ChatChannelBackend for TelegramBackend {
                                                     "[Telegram] command_tx.send failed: {e}"
                                                 );
                                             }
+                                        } else if let Some(caption) = telegram_forge_photo_caption(
+                                            message,
+                                            crate::chat_channel::forge_tap::enabled(),
+                                            &bot_username,
+                                        ) {
+                                            // Phantom FORGE tap: photos only reach the
+                                            // dispatcher with PHANTOM_FORGE_TAP=1.
+                                            let chat_type = message
+                                                .pointer("/chat/type")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("private");
+                                            if !telegram_should_process_voice_message(
+                                                chat_type, topic_mode,
+                                            ) {
+                                                tracing::debug!(
+                                                    "[Telegram] skipped photo in unbound group"
+                                                );
+                                                continue;
+                                            }
+                                            let sender_id = message
+                                                .pointer("/from/id")
+                                                .and_then(json_scalar_to_string)
+                                                .unwrap_or_default();
+                                            let target = telegram_message_target(
+                                                channel_id,
+                                                &configured_chat_id,
+                                                topic_mode,
+                                                message,
+                                            );
+                                            let send_result = command_tx
+                                                .send(IncomingCommand {
+                                                    channel_id,
+                                                    sender_id,
+                                                    command_text: caption,
+                                                    callback_data: None,
+                                                    target,
+                                                    metadata: update.clone(),
+                                                    voice_reply_lang: None,
+                                                })
+                                                .await;
+                                            if let Err(e) = send_result {
+                                                tracing::error!(
+                                                    "[Telegram] command_tx.send failed: {e}"
+                                                );
+                                            }
                                         } else {
                                             tracing::info!(
                                                 "[Telegram] message update without text or voice"
@@ -1204,6 +1249,26 @@ fn extract_voice_file(message: &serde_json::Value) -> Option<TelegramVoiceRef> {
     None
 }
 
+/// With the FORGE tap on, a photo becomes a command whose text is its caption
+/// (`""` without one; the dispatcher reads the photo from the metadata).
+/// Off, photos are dropped as before. Nothing is downloaded here.
+fn telegram_forge_photo_caption(
+    message: &serde_json::Value,
+    forge_enabled: bool,
+    bot_username: &str,
+) -> Option<String> {
+    if !forge_enabled {
+        return None;
+    }
+    let photo = crate::chat_channel::forge_tap::extract_photo(message)?;
+    Some(
+        photo
+            .caption
+            .map(|c| strip_bot_mention(&c, bot_username))
+            .unwrap_or_default(),
+    )
+}
+
 fn json_scalar_to_string(value: &serde_json::Value) -> Option<String> {
     if let Some(s) = value.as_str() {
         Some(s.to_string())
@@ -1684,5 +1749,27 @@ mod tests {
     fn should_skip_voice_in_a_plain_group_without_topic_mode() {
         assert!(!telegram_should_process_voice_message("group", false));
         assert!(!telegram_should_process_voice_message("supergroup", false));
+    }
+
+    #[test]
+    fn forge_photo_is_dropped_with_the_tap_off() {
+        let message = serde_json::json!({ "photo": [{ "file_id": "p" }], "caption": "cena" });
+        assert_eq!(telegram_forge_photo_caption(&message, false, "bot"), None);
+    }
+
+    #[test]
+    fn forge_photo_becomes_its_caption_with_the_tap_on() {
+        let photo = serde_json::json!({ "photo": [{ "file_id": "p" }] });
+        assert_eq!(
+            telegram_forge_photo_caption(&photo, true, "bot").as_deref(),
+            Some("")
+        );
+        let captioned = serde_json::json!({ "photo": [{ "file_id": "p" }], "caption": "@bot cena" });
+        assert_eq!(
+            telegram_forge_photo_caption(&captioned, true, "bot").as_deref(),
+            Some("cena")
+        );
+        let text = serde_json::json!({ "text": "hola" });
+        assert_eq!(telegram_forge_photo_caption(&text, true, "bot"), None);
     }
 }

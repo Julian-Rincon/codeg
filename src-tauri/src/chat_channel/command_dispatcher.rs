@@ -8,6 +8,7 @@ use tokio::task::JoinHandle;
 
 use super::agenda_tap;
 use super::command_handlers;
+use super::forge_tap;
 use super::i18n::{self, Lang};
 use super::manager::ChatChannelManager;
 use super::menu;
@@ -170,6 +171,20 @@ pub fn spawn_command_dispatcher(
                 }
             }
 
+            // Phantom FORGE tap, off unless PHANTOM_FORGE_TAP=1 (see forge_tap.rs).
+            if let Some(photo) = forge_tap::photo(&cmd) {
+                spawn_forge_photo(cmd, photo, manager.clone_ref(), db_conn.clone());
+                continue;
+            }
+            if let forge_tap::Outcome::Reply(reply) =
+                forge_tap::intercept_text(&cmd, &config.prefix, &bridge).await
+            {
+                let reply = DispatchMessage::Rich(RichMessage::info(reply));
+                send_dispatch_message(&db_conn, &manager, cmd.channel_id, text, reply, cmd.target)
+                    .await;
+                continue;
+            }
+
             let response = dispatch_command(
                 text,
                 &config.prefix,
@@ -247,6 +262,32 @@ pub fn spawn_command_dispatcher(
             }
         }
     })
+}
+
+/// `nexus forge foto` runs local vision, so it runs off the loop; a caption
+/// FORGE turns down comes back through the command queue as plain text.
+fn spawn_forge_photo(
+    cmd: IncomingCommand,
+    photo: forge_tap::Photo,
+    manager: ChatChannelManager,
+    db: DatabaseConnection,
+) {
+    tokio::spawn(async move {
+        match forge_tap::intercept_photo(&cmd, &photo).await {
+            forge_tap::Outcome::Reply(reply) => {
+                let reply = DispatchMessage::Rich(RichMessage::info(reply));
+                send_dispatch_message(&db, &manager, cmd.channel_id, "[photo]", reply, cmd.target)
+                    .await;
+            }
+            forge_tap::Outcome::Forward => {
+                let caption = forge_tap::caption_forward(&cmd);
+                if let Err(e) = manager.command_sender().send(caption).await {
+                    tracing::error!("[ForgeTap] caption not forwarded: {e}");
+                }
+            }
+            forge_tap::Outcome::Drop => {}
+        }
+    });
 }
 
 async fn send_dispatch_message(
@@ -771,6 +812,201 @@ mod tests {
             }
             _ => panic!("expected the interactive menu"),
         }
+    }
+
+    async fn outbound_log(db: &crate::db::AppDatabase, channel_id: i32) -> Vec<String> {
+        let mut logs =
+            chat_channel_message_log_service::list_by_channel(&db.conn, channel_id, 100, 0)
+                .await
+                .expect("logs");
+        logs.sort_by_key(|l| l.id);
+        logs.into_iter()
+            .filter(|l| l.direction == "outbound")
+            .map(|l| l.content_preview)
+            .collect()
+    }
+
+    /// Runs the real dispatch loop, fed through the manager's own queue as in
+    /// the app, until `expected` replies are logged (plus a grace period for
+    /// strays), and returns their previews. No backend is registered, so the
+    /// sends themselves are logged as failed.
+    async fn outbound_after(
+        db: &crate::db::AppDatabase,
+        channel_id: i32,
+        commands: Vec<IncomingCommand>,
+        expected: usize,
+    ) -> Vec<String> {
+        let manager = ChatChannelManager::new();
+        let rx = manager.take_command_receiver().await.expect("receiver");
+        let tx = manager.command_sender();
+        let handle = spawn_command_dispatcher(
+            rx,
+            manager,
+            db.conn.clone(),
+            PathBuf::from("/tmp/codeg-dispatch-data"),
+            ConnectionManager::new(),
+            EventEmitter::Noop,
+            Arc::new(Mutex::new(SessionBridge::new())),
+        );
+        for cmd in commands {
+            tx.send(cmd).await.expect("dispatcher alive");
+        }
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while outbound_log(db, channel_id).await.len() < expected && Instant::now() < deadline {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        handle.abort();
+        outbound_log(db, channel_id).await
+    }
+
+    /// A private Telegram chat without general chat: plain text with no
+    /// session gets the help card, which is how "forwarded" shows up here.
+    async fn seed_private_channel(db: &crate::db::AppDatabase) -> i32 {
+        chat_channel_service::create(
+            &db.conn,
+            "Telegram test".to_string(),
+            "telegram".to_string(),
+            serde_json::json!({ "chat_id": "42", "general_chat": false }).to_string(),
+            true,
+            false,
+            None,
+        )
+        .await
+        .expect("seed chat channel")
+        .id
+    }
+
+    fn forge_cmd(channel_id: i32, message: serde_json::Value) -> IncomingCommand {
+        IncomingCommand {
+            channel_id,
+            sender_id: "42".to_string(),
+            command_text: message
+                .get("text")
+                .or_else(|| message.get("caption"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_default()
+                .to_string(),
+            callback_data: None,
+            target: ChannelMessageTarget::channel(channel_id),
+            metadata: serde_json::json!({ "update_id": 1, "message": message }),
+            voice_reply_lang: None,
+        }
+    }
+
+    fn forge_text(channel_id: i32, text: &str) -> IncomingCommand {
+        forge_cmd(
+            channel_id,
+            serde_json::json!({
+                "message_id": 555, "date": 1760389200,
+                "chat": { "id": 42, "type": "private" }, "text": text,
+            }),
+        )
+    }
+
+    fn forge_photo(channel_id: i32, caption: Option<&str>) -> IncomingCommand {
+        let mut message = serde_json::json!({
+            "message_id": 556, "date": 1760389300,
+            "chat": { "id": 42, "type": "private" },
+            "photo": [{ "file_id": "big", "width": 10, "height": 10 }],
+        });
+        if let Some(c) = caption {
+            message["caption"] = serde_json::json!(c);
+        }
+        forge_cmd(channel_id, message)
+    }
+
+    /// Sets the env for one FORGE test (callers hold `TEST_ENV_LOCK`).
+    fn forge_env(dir: &Path, stdout: &str, code: i32, flag: bool) {
+        let bin = forge_tap::tests::fake_nexus(dir, stdout, code);
+        std::env::set_var("NEXUS_BIN", &bin);
+        if flag {
+            std::env::set_var(forge_tap::FLAG, "1");
+        } else {
+            std::env::remove_var(forge_tap::FLAG);
+        }
+    }
+
+    fn clear_forge_env() {
+        std::env::remove_var(forge_tap::FLAG);
+        std::env::remove_var("NEXUS_BIN");
+    }
+
+    #[tokio::test]
+    async fn forge_tap_off_leaves_plain_text_alone() {
+        let _env = forge_tap::TEST_ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        forge_env(dir.path(), "anotado", 0, false);
+        let db = fresh_in_memory_db().await;
+        let channel_id = seed_private_channel(&db).await;
+        let out = outbound_after(&db, channel_id, vec![forge_text(channel_id, "press banca")], 1)
+            .await;
+        clear_forge_env();
+        assert_eq!(out.len(), 1);
+        assert_ne!(out[0], "anotado");
+        assert_eq!(forge_tap::tests::recorded_args(dir.path()), None);
+    }
+
+    #[tokio::test]
+    async fn forge_tap_exit_zero_replies_for_text_and_photo_instead_of_forwarding() {
+        let _env = forge_tap::TEST_ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        forge_env(dir.path(), "anotado", 0, true);
+        let db = fresh_in_memory_db().await;
+        let channel_id = seed_private_channel(&db).await;
+        let commands = vec![
+            forge_text(channel_id, "press banca 80x5"),
+            forge_photo(channel_id, None),
+        ];
+        let out = outbound_after(&db, channel_id, commands, 2).await;
+        clear_forge_env();
+        assert_eq!(out, ["anotado", "anotado"]);
+    }
+
+    #[tokio::test]
+    async fn forge_tap_declined_text_and_captioned_photo_are_forwarded() {
+        let _env = forge_tap::TEST_ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        forge_env(dir.path(), "", 3, true);
+        let db = fresh_in_memory_db().await;
+        let channel_id = seed_private_channel(&db).await;
+        let commands = vec![
+            forge_text(channel_id, "hola"),
+            forge_photo(channel_id, Some("mira esto")),
+            forge_photo(channel_id, None),
+        ];
+        // Text and caption take the old route (help card each); a captionless
+        // photo FORGE says nothing about gets no reply (as before the tap).
+        let out = outbound_after(&db, channel_id, commands, 2).await;
+        clear_forge_env();
+        assert_eq!(out.len(), 2, "{out:?}");
+        assert!(forge_tap::tests::recorded_args(dir.path()).is_some());
+    }
+
+    #[tokio::test]
+    async fn forge_tap_unreachable_nexus_forwards_the_text() {
+        let _env = forge_tap::TEST_ENV_LOCK.lock().await;
+        std::env::set_var("NEXUS_BIN", "/nonexistent/forge-tap/nexus");
+        std::env::set_var(forge_tap::FLAG, "1");
+        let db = fresh_in_memory_db().await;
+        let channel_id = seed_private_channel(&db).await;
+        let out = outbound_after(&db, channel_id, vec![forge_text(channel_id, "hola")], 1).await;
+        clear_forge_env();
+        assert_eq!(out.len(), 1);
+    }
+
+    #[tokio::test]
+    async fn forge_tap_never_sees_slash_commands() {
+        let _env = forge_tap::TEST_ENV_LOCK.lock().await;
+        let dir = tempfile::tempdir().unwrap();
+        forge_env(dir.path(), "anotado", 0, true);
+        let db = fresh_in_memory_db().await;
+        let channel_id = seed_private_channel(&db).await;
+        let out = outbound_after(&db, channel_id, vec![forge_text(channel_id, "/help")], 1).await;
+        clear_forge_env();
+        assert_eq!(out.len(), 1);
+        assert_ne!(out[0], "anotado");
+        assert_eq!(forge_tap::tests::recorded_args(dir.path()), None);
     }
 
     #[tokio::test]
