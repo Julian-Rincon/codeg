@@ -712,7 +712,13 @@ pub fn spawn_resume_loop(
     if STARTED.set(()).is_err() {
         return;
     }
-    tokio::spawn(run_resume_loop(conn, manager, emitter, data_dir));
+    let task = run_resume_loop(conn, manager, emitter, data_dir);
+    // The desktop app calls this from Tauri's setup hook, which runs outside any
+    // Tokio runtime context: a bare `tokio::spawn` panics there at startup.
+    #[cfg(feature = "tauri-runtime")]
+    tauri::async_runtime::spawn(task);
+    #[cfg(not(feature = "tauri-runtime"))]
+    tokio::spawn(task);
 }
 
 // ─── Desktop commands ───────────────────────────────────────────────────
