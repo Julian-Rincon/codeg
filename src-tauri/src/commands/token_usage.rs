@@ -1680,6 +1680,7 @@ mod tests {
             is_error,
             agent_stats: None,
             images: vec![],
+            exit_code: None,
         }
     }
 
