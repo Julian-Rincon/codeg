@@ -14,7 +14,7 @@ interface DropdownRadioItemContentProps {
    *  leaf renders arrives the same way, and the callers all hold a translator
    *  already. */
   recommendedLabel?: string | null
-/** Localized short category chips ("Edit", "Fast", …) for the categories this
+  /** Localized short category chips ("Edit", "Fast", …) for the categories this
    *  model measurably wins at (`ModelScorecardEntry.strengths`), or absent when
    *  there's no scorecard data for this row. Rendered the same way as
    *  `recommendedLabel` — a claim about the model, not about selection state. */

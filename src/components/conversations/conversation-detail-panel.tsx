@@ -777,7 +777,7 @@ const ConversationTabView = memo(function ConversationTabView({
     () => effectiveConfigOptions ?? [],
     [effectiveConfigOptions]
   )
-// `null` until this tab's agent has advertised (no connection, one still
+  // `null` until this tab's agent has advertised (no connection, one still
   // coming up, or one still bound to another agent), never `[]`, which is an
   // answer: the agent offers no commands. The composers read the two alike;
   // the transcript tells them apart, badging from what this agent last

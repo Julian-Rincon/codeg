@@ -164,7 +164,7 @@ interface ConversationShellProps {
    *  once the composer has taken it. */
   injectContent?: ComposerInjectContent | null
   onInjectConsumed?: () => void
-/** Pass-through: see `MessageInput.conversationId`. */
+  /** Pass-through: see `MessageInput.conversationId`. */
   conversationId?: number | null
   /** Pass-through: see `MessageInput.awaitingUserAction`. */
   awaitingUserAction?: boolean
@@ -240,7 +240,7 @@ export function ConversationShell({
   topBanner,
   injectContent,
   onInjectConsumed,
-conversationId,
+  conversationId,
   awaitingUserAction,
   resizableWidth = false,
 }: ConversationShellProps) {

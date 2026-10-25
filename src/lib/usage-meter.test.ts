@@ -60,7 +60,10 @@ describe("scheduleQuotaResume", () => {
     // command arguments from camelCase: snake_case keys were rejected with a
     // 422 ("missing field `connectionId`"), so "Esperar y continuar solo" never
     // saved a schedule.
-    mocks.transportCall.mockResolvedValue({ id: "qr-1", resume_at: "2026-10-11T18:11:00Z" })
+    mocks.transportCall.mockResolvedValue({
+      id: "qr-1",
+      resume_at: "2026-10-11T18:11:00Z",
+    })
     const result = await scheduleQuotaResume({
       connection_id: "conn-1",
       conversation_id: 42,
@@ -77,7 +80,11 @@ describe("scheduleQuotaResume", () => {
   it("rejects when the backend refuses, so the card can show the error", async () => {
     mocks.transportCall.mockRejectedValue(new Error("422"))
     await expect(
-      scheduleQuotaResume({ connection_id: "c", conversation_id: 1, agent_type: "claude_code" })
+      scheduleQuotaResume({
+        connection_id: "c",
+        conversation_id: 1,
+        agent_type: "claude_code",
+      })
     ).rejects.toThrow("422")
   })
 })
