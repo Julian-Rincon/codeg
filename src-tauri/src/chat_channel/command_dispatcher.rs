@@ -640,6 +640,19 @@ async fn dispatch_command(
                 target,
             )
         }
+        "auto" | "autoapprove" | "auto_approve" => DispatchResponse::from_session_message(
+            session_commands::SessionCommandMessage::Interactive(
+                menu::handle_auto(db, channel_id, sender_id, args, lang).await,
+            ),
+            target,
+        ),
+        "approve_always" | "approvealways" => DispatchResponse::current(
+            session_commands::handle_permission_response(
+                true, true, db, channel_id, sender_id, target, conn_mgr, bridge, lang,
+            )
+            .await,
+            target,
+        ),
         "deny" => DispatchResponse::current(
             session_commands::handle_permission_response(
                 false, false, db, channel_id, sender_id, target, conn_mgr, bridge, lang,
@@ -811,7 +824,9 @@ mod tests {
 
         match response.message {
             Some(DispatchMessage::Interactive(m)) => {
-                assert_eq!(m.buttons.last().map(|b| b.id.as_str()), Some("nav:new"));
+                let ids: Vec<&str> = m.buttons.iter().map(|b| b.id.as_str()).collect();
+                assert!(ids.contains(&"nav:new"), "{ids:?}");
+                assert_eq!(ids.last(), Some(&"nav:auto:on"));
             }
             _ => panic!("expected the interactive menu"),
         }

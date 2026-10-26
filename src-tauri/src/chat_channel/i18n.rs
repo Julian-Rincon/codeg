@@ -598,6 +598,7 @@ pub fn help_body(lang: Lang, prefix: &str) -> String {
              {prefix}cancel - 取消当前任务\n\
              {prefix}endchat - 结束对话，下一条消息开始新对话\n\
              {prefix}approve [always] - 批准权限请求\n\
+             {prefix}auto [on|off] - Auto-approve permissions (on/off)\n\
              {prefix}deny - 拒绝权限请求\n\
              \n\
              {prefix}search <关键词> - 搜索会话\n\
@@ -616,6 +617,7 @@ pub fn help_body(lang: Lang, prefix: &str) -> String {
              {prefix}cancel - 取消當前任務\n\
              {prefix}endchat - 結束對話，下一則訊息開始新對話\n\
              {prefix}approve [always] - 批准權限請求\n\
+             {prefix}auto [on|off] - Auto-approve permissions (on/off)\n\
              {prefix}deny - 拒絕權限請求\n\
              \n\
              {prefix}search <關鍵字> - 搜尋對話\n\
@@ -634,6 +636,7 @@ pub fn help_body(lang: Lang, prefix: &str) -> String {
              {prefix}cancel - 現在のタスクをキャンセル\n\
              {prefix}endchat - 会話を終了し、次のメッセージで新しい会話を開始\n\
              {prefix}approve [always] - 権限を承認\n\
+             {prefix}auto [on|off] - Auto-approve permissions (on/off)\n\
              {prefix}deny - 権限を拒否\n\
              \n\
              {prefix}search <キーワード> - セッション検索\n\
@@ -652,6 +655,7 @@ pub fn help_body(lang: Lang, prefix: &str) -> String {
              {prefix}cancel - 현재 작업 취소\n\
              {prefix}endchat - 대화를 끝내고 다음 메시지로 새 대화 시작\n\
              {prefix}approve [always] - 권한 승인\n\
+             {prefix}auto [on|off] - Auto-approve permissions (on/off)\n\
              {prefix}deny - 권한 거부\n\
              \n\
              {prefix}search <키워드> - 대화 검색\n\
@@ -670,6 +674,7 @@ pub fn help_body(lang: Lang, prefix: &str) -> String {
              {prefix}cancel - Cancelar tarea actual\n\
              {prefix}endchat - Cerrar el chat; el próximo mensaje empieza uno nuevo\n\
              {prefix}approve [always] - Aprobar permiso\n\
+             {prefix}auto [on|off] - Permisos automáticos (on/off)\n\
              {prefix}deny - Denegar permiso\n\
              \n\
              {prefix}search <palabra> - Buscar conversaciones\n\
@@ -688,6 +693,7 @@ pub fn help_body(lang: Lang, prefix: &str) -> String {
              {prefix}cancel - Aktuelle Aufgabe abbrechen\n\
              {prefix}endchat - Chat beenden; die nächste Nachricht startet einen neuen\n\
              {prefix}approve [always] - Berechtigung genehmigen\n\
+             {prefix}auto [on|off] - Auto-approve permissions (on/off)\n\
              {prefix}deny - Berechtigung verweigern\n\
              \n\
              {prefix}search <Stichwort> - Sitzungen suchen\n\
@@ -706,6 +712,7 @@ pub fn help_body(lang: Lang, prefix: &str) -> String {
              {prefix}cancel - Annuler la tache en cours\n\
              {prefix}endchat - Fermer le chat ; le prochain message en ouvre un nouveau\n\
              {prefix}approve [always] - Approuver la permission\n\
+             {prefix}auto [on|off] - Auto-approve permissions (on/off)\n\
              {prefix}deny - Refuser la permission\n\
              \n\
              {prefix}search <mot-cle> - Rechercher des sessions\n\
@@ -724,6 +731,7 @@ pub fn help_body(lang: Lang, prefix: &str) -> String {
              {prefix}cancel - Cancelar tarefa atual\n\
              {prefix}endchat - Encerrar o chat; a próxima mensagem inicia outro\n\
              {prefix}approve [always] - Aprovar permissao\n\
+             {prefix}auto [on|off] - Auto-approve permissions (on/off)\n\
              {prefix}deny - Negar permissao\n\
              \n\
              {prefix}search <palavra> - Buscar sessoes\n\
@@ -742,6 +750,7 @@ pub fn help_body(lang: Lang, prefix: &str) -> String {
              {prefix}cancel - الغاء المهمة الحالية\n\
              {prefix}endchat - انهاء المحادثة؛ الرسالة التالية تبدأ محادثة جديدة\n\
              {prefix}approve [always] - الموافقة على الاذن\n\
+             {prefix}auto [on|off] - Auto-approve permissions (on/off)\n\
              {prefix}deny - رفض الاذن\n\
              \n\
              {prefix}search <كلمة> - البحث في الجلسات\n\
@@ -760,6 +769,7 @@ pub fn help_body(lang: Lang, prefix: &str) -> String {
              {prefix}cancel - Cancel current task\n\
              {prefix}endchat - End the chat; your next message starts a new one\n\
              {prefix}approve [always] - Approve permission\n\
+             {prefix}auto [on|off] - Auto-approve permissions (on/off)\n\
              {prefix}deny - Deny permission\n\
              \n\
              {prefix}search <keyword> - Search conversations\n\
