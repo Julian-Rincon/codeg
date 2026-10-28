@@ -4804,6 +4804,12 @@ mod tests {
         assert!(agents.iter().any(|a| a == "zcode"));
         assert!(agents.iter().any(|a| a == "trae"));
         assert!(agents.iter().any(|a| a == "command_code"));
+        assert!(agents.iter().any(|a| a == "minimax_code"));
+        for agent in crate::models::agent::BUILTIN_AGENT_TYPES {
+            assert!(agents
+                .iter()
+                .any(|a| a.as_str() == Some(agent.as_wire().as_ref())));
+        }
         // get_delegation_status takes a single id param — task_ids (required) —
         // plus wait_ms. The legacy single `task_id` param is gone.
         let status = tools
@@ -4828,6 +4834,7 @@ mod tests {
             "custom:amp".into(),
             "custom:goose".into(),
             "codex".into(),
+            "minimax_code".into(),
         ];
         let line = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#;
         let resp = unwrap_respond(dispatch_line(&ctx, Arc::new(InflightCalls::new()), line).await);
@@ -4868,7 +4875,12 @@ mod tests {
     #[tokio::test]
     async fn disabled_agents_are_subtracted_from_the_delegate_enum() {
         let mut ctx = ctx();
-        ctx.disabled_agents = vec!["codex".into(), "grok".into(), "not-an-agent".into()];
+        ctx.disabled_agents = vec![
+            "codex".into(),
+            "grok".into(),
+            "minimax_code".into(),
+            "not-an-agent".into(),
+        ];
         ctx.custom_agents = vec!["custom:goose".into()];
         let line = r#"{"jsonrpc":"2.0","id":2,"method":"tools/list"}"#;
         let resp = unwrap_respond(dispatch_line(&ctx, Arc::new(InflightCalls::new()), line).await);
@@ -4886,11 +4898,12 @@ mod tests {
             .clone();
         assert_eq!(
             agents.len(),
-            crate::models::agent::BUILTIN_AGENT_TYPES.len() + 1 - 2 + 1,
-            "auto + builtins - 2 disabled + 1 custom"
+            crate::models::agent::BUILTIN_AGENT_TYPES.len() + 1 - 3 + 1,
+            "auto + builtins - 3 disabled + 1 custom"
         );
         assert!(!agents.contains(&serde_json::json!("codex")));
         assert!(!agents.contains(&serde_json::json!("grok")));
+        assert!(!agents.contains(&serde_json::json!("minimax_code")));
         // Survivors keep the embedded order, customs still come last.
         assert_eq!(agents[0], "auto");
         assert_eq!(agents[1], "claude_code");
@@ -4928,6 +4941,7 @@ mod tests {
         assert_eq!(agents[17], "zcode");
         assert_eq!(agents[18], "trae");
         assert_eq!(agents[19], "command_code");
+        assert_eq!(agents[20], "minimax_code");
     }
 
     #[tokio::test]

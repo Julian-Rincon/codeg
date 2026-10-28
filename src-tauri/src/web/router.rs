@@ -1106,12 +1106,12 @@ pub fn build_router_with_proxy_auth(
             post(handlers::acp::acp_qoder_auth_status),
         )
         .route(
-            "/acp_update_kimi_code_config",
-            post(handlers::acp::acp_update_kimi_code_config),
+            "/acp_update_claude_model_picker",
+            post(handlers::acp::acp_update_claude_model_picker),
         )
         .route(
-            "/acp_fetch_kimi_models",
-            post(handlers::acp::acp_fetch_kimi_models),
+            "/acp_update_kimi_code_config",
+            post(handlers::acp::acp_update_kimi_code_config),
         )
         .route(
             "/acp_update_pi_config",
@@ -1266,12 +1266,48 @@ pub fn build_router_with_proxy_auth(
             post(handlers::acp::codex_bundled_catalog),
         )
         .route(
-            "/opencode_install_plugins",
-            post(handlers::acp::opencode_install_plugins),
+            "/opencode_list_integrations",
+            post(handlers::opencode_credentials::opencode_list_integrations),
         )
         .route(
-            "/opencode_uninstall_plugin",
-            post(handlers::acp::opencode_uninstall_plugin),
+            "/opencode_connect_key",
+            post(handlers::opencode_credentials::opencode_connect_key),
+        )
+        .route(
+            "/opencode_disconnect_provider",
+            post(handlers::opencode_credentials::opencode_disconnect_provider),
+        )
+        .route(
+            "/codex_fetch_endpoint_catalog",
+            post(handlers::acp::codex_fetch_endpoint_catalog),
+        )
+        .route(
+            "/codex_catalog_plan_preview",
+            post(handlers::acp::codex_catalog_plan_preview),
+        )
+        .route(
+            "/codex_endpoint_catalog_published",
+            post(handlers::acp::codex_endpoint_catalog_published),
+        )
+        .route(
+            "/codex_endpoint_catalog_cached",
+            post(handlers::acp::codex_endpoint_catalog_cached),
+        )
+        .route(
+            "/codex_endpoint_catalog_status",
+            post(handlers::acp::codex_endpoint_catalog_status),
+        )
+        .route(
+            "/codex_refresh_endpoint_catalog",
+            post(handlers::acp::codex_refresh_endpoint_catalog),
+        )
+        .route(
+            "/opencode_add_plugin",
+            post(handlers::acp::opencode_add_plugin),
+        )
+        .route(
+            "/opencode_remove_plugin",
+            post(handlers::acp::opencode_remove_plugin),
         )
         .route(
             "/codex_request_device_code",
@@ -1639,6 +1675,10 @@ pub fn build_router_with_proxy_auth(
         .route(
             "/delete_model_provider",
             post(handlers::model_provider::delete_model_provider),
+        )
+        .route(
+            "/list_provider_models",
+            post(handlers::model_provider::list_provider_models),
         )
         // ─── Quick Messages ───
         .route(

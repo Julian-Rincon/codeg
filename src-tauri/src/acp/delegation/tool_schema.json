@@ -31,7 +31,8 @@
             "kiro",
             "zcode",
             "trae",
-            "command_code"
+            "command_code",
+            "minimax_code"
           ],
           "description": "Which local agent runs the sub-task. \"auto\" lets Phantom's router pick the agent, the model and the reasoning effort for you from task_kind/difficulty — use it when you are not sure which agent is best (recommended). With a concrete slug, the router keeps your choice and only fills in the effort; or, when the user's message names an agent via `@AgentName` / `codeg://agent/<agent_type>`, use that exact `<agent_type>` slug (e.g. `codeg://agent/claude_code` means `claude_code`)."
         },
