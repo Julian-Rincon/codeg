@@ -2695,6 +2695,9 @@ pub async fn spawn_agent_connection(
         owner_window_label.clone(),
         None, // folder_id 由后续 prompt handler 在首次 send 时绑定 (Phase 2)
     );
+    if runtime_env.contains_key(crate::acp::session_state::PHANTOM_DELEGATION_CHILD_ENV) {
+        initial_state.wants_prompt_suggestions = false;
+    }
 
     // Install the SessionStarted dedup signal BEFORE wrapping into Arc so the
     // first event (StatusChanged{Connecting} below) doesn't race with the

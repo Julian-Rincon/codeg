@@ -4231,7 +4231,7 @@ impl crate::acp::delegation::spawner::ConnectionSpawner for ConnectionManagerSpa
         // user-initiated session — disabled check, settings overrides,
         // model provider creds, git helper. Without this, delegated
         // subagents would skip the user's configuration entirely.
-        let runtime_env = crate::commands::acp::build_session_runtime_env(
+        let mut runtime_env = crate::commands::acp::build_session_runtime_env(
             &self.db,
             agent_type,
             None,
@@ -4239,6 +4239,12 @@ impl crate::acp::delegation::spawner::ConnectionSpawner for ConnectionManagerSpa
         )
         .await
         .map_err(|e| SpawnerError::Spawn(e.to_string()))?;
+        // Phantom: nobody reads a delegated child's predicted next prompt, and
+        // each one is an extra model request against the quota.
+        runtime_env.insert(
+            crate::acp::session_state::PHANTOM_DELEGATION_CHILD_ENV.to_string(),
+            "1".to_string(),
+        );
 
         let connection_id = self
             .manager
@@ -4355,7 +4361,7 @@ impl crate::acp::delegation::spawner::ConnectionSpawner for ConnectionManagerSpa
         };
         let effective_working_dir = working_dir.or(parent_working_dir);
 
-        let runtime_env = crate::commands::acp::build_session_runtime_env(
+        let mut runtime_env = crate::commands::acp::build_session_runtime_env(
             &self.db,
             agent_type,
             None,
@@ -4363,6 +4369,12 @@ impl crate::acp::delegation::spawner::ConnectionSpawner for ConnectionManagerSpa
         )
         .await
         .map_err(|e| SpawnerError::Spawn(e.to_string()))?;
+        // Phantom: nobody reads a delegated child's predicted next prompt, and
+        // each one is an extra model request against the quota.
+        runtime_env.insert(
+            crate::acp::session_state::PHANTOM_DELEGATION_CHILD_ENV.to_string(),
+            "1".to_string(),
+        );
 
         // `session_id = Some(..)` is the whole difference vs `spawn`: the
         // connection loads the child's prior agent session (and its context)

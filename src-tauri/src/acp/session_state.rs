@@ -2468,6 +2468,11 @@ impl SessionState {
 /// Everything else is a person's window, a work task (its session takes
 /// follow-ups once the task stops), or a delegated child (which inherits its
 /// parent's label, and whose session the user can open and continue).
+/// Phantom: runtime-env marker the delegation spawner sets on a child, whose
+/// prompts come from its parent agent, so it asks the agent for no prompt
+/// suggestions (each one is an extra model request).
+pub(crate) const PHANTOM_DELEGATION_CHILD_ENV: &str = "PHANTOM_DELEGATION_CHILD";
+
 pub(crate) fn owner_composes_prompts(owner_window_label: &str) -> bool {
     owner_window_label != "automation"
         && owner_window_label != crate::cli_run::service::CLI_OWNER_LABEL
