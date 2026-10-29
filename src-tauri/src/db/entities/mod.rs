@@ -19,6 +19,7 @@ pub mod folder_group;
 pub mod folder_link;
 pub mod model_provider;
 pub mod opened_tab;
+pub mod phantom_checkpoint;
 pub mod prelude;
 pub mod quick_message;
 pub mod remote_workspace_connection;

@@ -87,6 +87,9 @@ pub async fn init_database(
 
     service::app_metadata_service::update_app_version(&conn, app_version).await?;
 
+    // Phantom: the checkpoint hook on the shared prompt path writes here.
+    crate::phantom::checkpoints::install_db(conn.clone());
+
     // Publish user-registered ACP agents into the process-global launch
     // registry before anything can ask for agent metadata. This is the single
     // chokepoint every runtime (desktop, server) goes through, so custom agents

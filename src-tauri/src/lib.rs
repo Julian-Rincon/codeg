@@ -55,6 +55,7 @@ pub mod paths;
 pub mod pet_sessions;
 pub mod pet_state_mapper;
 pub mod pets;
+pub mod phantom;
 #[cfg(feature = "tauri-runtime")]
 pub mod preferences;
 pub mod process;
@@ -117,7 +118,8 @@ mod tauri_app {
         folders, logging as logging_commands, mcp as mcp_commands,
         model_provider as model_provider_commands,
         model_scorecard as model_scorecard_commands, notification,
-        pet as pet_commands, phantom_handoff as phantom_handoff_commands,
+        pet as pet_commands, phantom_checkpoints as phantom_checkpoint_commands,
+        phantom_handoff as phantom_handoff_commands,
         phantom_successor as phantom_successor_commands, project_boot,
         question as question_commands, quick_messages as quick_messages_commands,
         quota_resume as quota_resume_commands,
@@ -2334,6 +2336,8 @@ mod tauri_app {
                 quota_resume_commands::quota_resume_cancel,
                 phantom_successor_commands::phantom_successor,
                 phantom_handoff_commands::phantom_handoff,
+                phantom_checkpoint_commands::phantom_checkpoint_preview,
+                phantom_checkpoint_commands::phantom_checkpoint_restore,
                 work_task_commands::work_task_list,
                 work_task_commands::work_task_get,
                 work_task_commands::work_task_events,

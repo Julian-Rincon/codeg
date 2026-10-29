@@ -53,6 +53,10 @@ import {
   parkAskSelectionPrompt,
   type AskSelectionParkedDetail,
 } from "@/lib/ask-selection-handoff"
+import {
+  usePhantomRewindDraftInbox,
+  usePhantomRewindHost,
+} from "@/components/phantom/use-phantom-rewind"
 import { useConnectionLifecycle } from "@/hooks/use-connection-lifecycle"
 import { useMessageQueue, type QueuedMessage } from "@/hooks/use-message-queue"
 import { MessageListView } from "@/components/message/message-list-view"
@@ -1455,7 +1459,7 @@ const ConversationTabView = memo(function ConversationTabView({
   const handleForkFromTurn = useCallback(
     async (turnId: string) => {
       const connectionId = conn.connectionId
-      if (!connectionId || connStatusRef.current !== "connected") return
+      if (!connectionId || connStatusRef.current !== "connected") return false
       // Snapshot which live turns belong to the PRE-fork session, before the
       // await. The fork RPC is a window in which a send can still start — a
       // queued auto-flush, a fast typist, another client — and such a turn
@@ -1505,6 +1509,7 @@ const ConversationTabView = memo(function ConversationTabView({
           preserveLive: true,
           dropLiveTurnIds: staleLiveTurnIds,
         })
+        return true
       } catch (err) {
         // A turn in flight is transient here, not a failure to report as one —
         // there is no draft to re-queue, so say so and let the user retry.
@@ -1523,6 +1528,7 @@ const ConversationTabView = memo(function ConversationTabView({
                         : String(err),
                 }),
         })
+        return false
       }
     },
     [
@@ -1918,6 +1924,41 @@ const ConversationTabView = memo(function ConversationTabView({
       window.removeEventListener(ASK_SELECTION_PARKED_EVENT, onParked)
   }, [folderId, mqEnqueue, selectedAgent, tabId])
 
+  // Phantom "Rebobinar aquí": the conversation half of a rewind (fork before
+  // the message / fresh conversation) plus the inbox that receives its text.
+  const handleRewindInject = useCallback((text: string) => {
+    setComposerInject({ text, mode: "replace" })
+  }, [])
+  usePhantomRewindDraftInbox(tabId, selectedAgent, folderId, handleRewindInject)
+  const handleRewindOpenFresh = useCallback(() => {
+    if (askFolderId == null || workingDirForConnection == null) return null
+    const target = openNewConversationTab(
+      askFolderId,
+      workingDirForConnection,
+      { targetGroup: groupId, forceAgent: selectedAgent }
+    )
+    return {
+      tabId: target.tabId,
+      agentType: target.agentType,
+      folderId: target.folderId,
+    }
+  }, [
+    askFolderId,
+    groupId,
+    openNewConversationTab,
+    selectedAgent,
+    workingDirForConnection,
+  ])
+  const phantomRewind = usePhantomRewindHost({
+    conversationId: dbConversationId,
+    canFork:
+      (connStatus === "connected" || connStatus === "prompting") &&
+      conn.supportsFork,
+    forkFromTurn: handleForkFromTurn,
+    injectText: handleRewindInject,
+    openFreshConversation: handleRewindOpenFresh,
+  })
+
   const canShowDetailErrorActions =
     hasPersistedConversation && dbConversationId != null && !!folder
   const handleReloadDetail = useCallback(() => {
@@ -2239,6 +2280,7 @@ const ConversationTabView = memo(function ConversationTabView({
               ? handleForkFromTurn
               : undefined
           }
+          phantomRewind={phantomRewind}
         />
       </ActivityLiveProvider>
     </GoalControlProvider>
