@@ -7794,6 +7794,80 @@
       "hint": "↑↓ · Entrée · Échap",
       "empty": "Aucun prompt envoyé pour l'instant",
       "noMatches": "Aucun prompt correspondant"
+    },
+    "memory": {
+      "menuEntry": "Mémoire (CLAUDE.md)",
+      "scopes": {
+        "user": {
+          "label": "Utilisateur",
+          "path": "~/.claude/CLAUDE.md"
+        },
+        "project": {
+          "label": "Projet",
+          "path": "CLAUDE.md"
+        },
+        "project_dot_claude": {
+          "label": "Projet (.claude)",
+          "path": ".claude/CLAUDE.md"
+        },
+        "local": {
+          "label": "Local (non versionné)",
+          "path": "CLAUDE.local.md"
+        }
+      },
+      "quickAdd": {
+        "title": "Enregistrer en mémoire",
+        "cancel": "Annuler",
+        "hint": "P / U pour choisir · Échap garde le texte dans la zone de saisie",
+        "saved": "Enregistré dans {file}",
+        "failed": "Impossible d’enregistrer la note : {message}"
+      },
+      "editor": {
+        "title": "Mémoire de Claude Code",
+        "description": "Les fichiers CLAUDE.md que Claude Code charge pour ce dossier. Les modifications s’appliquent à la prochaine session ou au prochain message.",
+        "files": "Fichiers de mémoire",
+        "unsaved": "Modifications non enregistrées",
+        "blocked": "Inaccessible",
+        "blockedDetail": "Ce fichier ne peut pas être ouvert ici : {reason}",
+        "exists": "Existe",
+        "missing": "Pas encore créé",
+        "willCreate": "Ce fichier n’existe pas encore ; l’enregistrement le crée.",
+        "loadFailed": "Impossible de lire le fichier : {message}",
+        "retry": "Réessayer",
+        "saved": "Mémoire enregistrée",
+        "saveFailed": "Échec de l’enregistrement : {message}",
+        "conflict": "Le fichier a changé sur le disque depuis son ouverture. Rien n’a été enregistré.",
+        "conflictDeleted": "Le fichier a été supprimé du disque depuis son ouverture. Rien n’a été enregistré.",
+        "reload": "Recharger (perdre mes modifications)",
+        "overwrite": "Écraser",
+        "discardPrompt": "Abandonner les modifications non enregistrées ?",
+        "keepEditing": "Continuer",
+        "discard": "Abandonner",
+        "close": "Fermer",
+        "save": "Enregistrer",
+        "create": "Créer"
+      },
+      "settings": {
+        "title": "Ajout rapide en mémoire avec « # »",
+        "description": "Dans les discussions Claude Code, un message d’une seule ligne commençant par # est enregistré dans CLAUDE.md au lieu d’être envoyé."
+      }
+    },
+    "contextBreakdown": {
+      "title": "Détail du contexte",
+      "refresh": "Actualiser le détail (/context)",
+      "explain": "Voyez ce qui remplit la fenêtre de contexte : prompt système, outils, MCP, fichiers de mémoire, messages et espace libre.",
+      "show": "Afficher le détail",
+      "zeroTokens": "Exécute /context : Claude Code répond localement sans appeler le modèle (0 jeton). Le rapport apparaît aussi dans la discussion.",
+      "compactPlaceholder": "Instructions de compactage (facultatif)",
+      "compact": "Compacter maintenant",
+      "compactCost": "Envoie /compact : le modèle résume la conversation — cela consomme des jetons.",
+      "busy": "Disponible quand l’agent a fini de répondre.",
+      "barAria": "Utilisation de la fenêtre de contexte par catégorie",
+      "category": "Catégorie",
+      "tokens": "Jetons",
+      "share": "Part",
+      "autocompactAt": "Compactage auto à",
+      "memoryFiles": "Fichiers de mémoire"
     }
   }
 }

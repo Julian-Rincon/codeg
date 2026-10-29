@@ -7794,6 +7794,80 @@
       "hint": "↑↓ · Enter · Esc",
       "empty": "送信したプロンプトはまだありません",
       "noMatches": "一致するプロンプトはありません"
+    },
+    "memory": {
+      "menuEntry": "メモリ (CLAUDE.md)",
+      "scopes": {
+        "user": {
+          "label": "ユーザー",
+          "path": "~/.claude/CLAUDE.md"
+        },
+        "project": {
+          "label": "プロジェクト",
+          "path": "CLAUDE.md"
+        },
+        "project_dot_claude": {
+          "label": "プロジェクト (.claude)",
+          "path": ".claude/CLAUDE.md"
+        },
+        "local": {
+          "label": "ローカル（コミットしない）",
+          "path": "CLAUDE.local.md"
+        }
+      },
+      "quickAdd": {
+        "title": "メモリに保存",
+        "cancel": "キャンセル",
+        "hint": "P / U で選択 · Esc で入力欄にテキストを残す",
+        "saved": "{file} に保存しました",
+        "failed": "メモを保存できませんでした: {message}"
+      },
+      "editor": {
+        "title": "Claude Code のメモリ",
+        "description": "Claude Code がこのフォルダで読み込む CLAUDE.md ファイルです。変更は次のセッションまたはメッセージから反映されます。",
+        "files": "メモリファイル",
+        "unsaved": "未保存の変更",
+        "blocked": "アクセスできません",
+        "blockedDetail": "このファイルはここでは開けません: {reason}",
+        "exists": "あり",
+        "missing": "未作成",
+        "willCreate": "このファイルはまだありません。保存すると作成されます。",
+        "loadFailed": "ファイルを読み込めませんでした: {message}",
+        "retry": "再試行",
+        "saved": "メモリを保存しました",
+        "saveFailed": "保存できませんでした: {message}",
+        "conflict": "開いた後にディスク上のファイルが変更されました。何も保存されていません。",
+        "conflictDeleted": "開いた後にディスク上のファイルが削除されました。何も保存されていません。",
+        "reload": "再読み込み（自分の変更を破棄）",
+        "overwrite": "上書き",
+        "discardPrompt": "未保存の変更を破棄しますか？",
+        "keepEditing": "編集を続ける",
+        "discard": "破棄",
+        "close": "閉じる",
+        "save": "保存",
+        "create": "作成"
+      },
+      "settings": {
+        "title": "「#」でメモリにすばやく追加",
+        "description": "Claude Code のチャットで、# で始まる 1 行のメッセージは送信されず CLAUDE.md に保存されます。"
+      }
+    },
+    "contextBreakdown": {
+      "title": "コンテキストの内訳",
+      "refresh": "内訳を更新 (/context)",
+      "explain": "コンテキストウィンドウを何が占めているかを確認します: システムプロンプト、ツール、MCP、メモリファイル、メッセージ、空き容量。",
+      "show": "内訳を表示",
+      "zeroTokens": "/context を実行します: Claude Code はモデルを呼び出さずローカルで応答します（0 トークン）。レポートはチャットにも表示されます。",
+      "compactPlaceholder": "圧縮の指示（任意）",
+      "compact": "今すぐ圧縮",
+      "compactCost": "/compact を送信します: モデルが会話を要約します — トークンを消費します。",
+      "busy": "エージェントの応答が終わると使用できます。",
+      "barAria": "カテゴリ別のコンテキストウィンドウ使用量",
+      "category": "カテゴリ",
+      "tokens": "トークン",
+      "share": "割合",
+      "autocompactAt": "自動圧縮のしきい値",
+      "memoryFiles": "メモリファイル"
     }
   }
 }

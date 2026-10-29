@@ -7794,6 +7794,80 @@
       "hint": "↑↓ · Enter · Esc",
       "empty": "尚未傳送過提示詞",
       "noMatches": "沒有符合的提示詞"
+    },
+    "memory": {
+      "menuEntry": "記憶 (CLAUDE.md)",
+      "scopes": {
+        "user": {
+          "label": "使用者",
+          "path": "~/.claude/CLAUDE.md"
+        },
+        "project": {
+          "label": "專案",
+          "path": "CLAUDE.md"
+        },
+        "project_dot_claude": {
+          "label": "專案 (.claude)",
+          "path": ".claude/CLAUDE.md"
+        },
+        "local": {
+          "label": "本機（不提交）",
+          "path": "CLAUDE.local.md"
+        }
+      },
+      "quickAdd": {
+        "title": "儲存到記憶",
+        "cancel": "取消",
+        "hint": "按 P / U 選擇 · Esc 保留輸入框中的文字",
+        "saved": "已儲存到 {file}",
+        "failed": "無法儲存筆記：{message}"
+      },
+      "editor": {
+        "title": "Claude Code 記憶",
+        "description": "Claude Code 為此資料夾載入的 CLAUDE.md 檔案。變更自下一個工作階段或訊息起生效。",
+        "files": "記憶檔案",
+        "unsaved": "有未儲存的變更",
+        "blocked": "無法存取",
+        "blockedDetail": "此檔案無法在這裡開啟：{reason}",
+        "exists": "已存在",
+        "missing": "尚未建立",
+        "willCreate": "此檔案尚不存在，儲存時將建立。",
+        "loadFailed": "無法讀取檔案：{message}",
+        "retry": "重試",
+        "saved": "記憶已儲存",
+        "saveFailed": "儲存失敗：{message}",
+        "conflict": "自開啟以來，磁碟上的檔案已被修改。未儲存任何內容。",
+        "conflictDeleted": "自開啟以來，磁碟上的檔案已被刪除。未儲存任何內容。",
+        "reload": "重新載入（捨棄我的變更）",
+        "overwrite": "覆寫",
+        "discardPrompt": "捨棄未儲存的變更？",
+        "keepEditing": "繼續編輯",
+        "discard": "捨棄",
+        "close": "關閉",
+        "save": "儲存",
+        "create": "建立"
+      },
+      "settings": {
+        "title": "「#」快速新增到記憶",
+        "description": "在 Claude Code 對話中，以 # 開頭的單行訊息會儲存到 CLAUDE.md，而不是送出。"
+      }
+    },
+    "contextBreakdown": {
+      "title": "上下文明細",
+      "refresh": "重新整理明細 (/context)",
+      "explain": "查看是什麼佔用了上下文視窗：系統提示詞、工具、MCP、記憶檔案、訊息與剩餘空間。",
+      "show": "查看明細",
+      "zeroTokens": "執行 /context：Claude Code 在本機回答，不呼叫模型（0 token）。報告也會出現在對話中。",
+      "compactPlaceholder": "壓縮說明（選填）",
+      "compact": "立即壓縮",
+      "compactCost": "送出 /compact：模型會摘要對話——這會消耗 token。",
+      "busy": "代理回覆完成後可用。",
+      "barAria": "依類別劃分的上下文視窗使用情況",
+      "category": "類別",
+      "tokens": "Token",
+      "share": "佔比",
+      "autocompactAt": "自動壓縮門檻",
+      "memoryFiles": "記憶檔案"
     }
   }
 }

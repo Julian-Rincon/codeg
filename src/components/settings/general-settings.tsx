@@ -45,6 +45,7 @@ import { toErrorMessage } from "@/lib/app-error"
 import { CloseBehaviorSettingsSection } from "@/components/settings/close-behavior-settings"
 import { DesktopNotificationSettingsSection } from "@/components/settings/desktop-notification-settings"
 import { MentionPanelSettingsSection } from "@/components/settings/mention-panel-settings"
+import { MemoryQuickAddSettingsSection } from "@/components/phantom/memory-quick-add-settings"
 import { NotificationSoundSettingsSection } from "@/components/settings/notification-sound-settings"
 import { WindowAttentionSettingsSection } from "@/components/settings/window-attention-settings"
 
@@ -516,6 +517,8 @@ export function GeneralSettings() {
         )}
 
         <MentionPanelSettingsSection />
+
+        <MemoryQuickAddSettingsSection />
 
         <CloseBehaviorSettingsSection />
 

@@ -65,6 +65,7 @@ pub mod office_tools;
 pub mod opencode_credentials;
 pub mod open_in;
 pub mod phantom_handoff;
+pub mod phantom_memory;
 pub mod phantom_successor;
 #[cfg(feature = "tauri-runtime")]
 pub mod notification;

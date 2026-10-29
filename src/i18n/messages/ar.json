@@ -7794,6 +7794,80 @@
       "hint": "↑↓ · Enter · Esc",
       "empty": "لم تُرسل أي طلبات بعد",
       "noMatches": "لا توجد طلبات مطابقة"
+    },
+    "memory": {
+      "menuEntry": "الذاكرة (CLAUDE.md)",
+      "scopes": {
+        "user": {
+          "label": "المستخدم",
+          "path": "~/.claude/CLAUDE.md"
+        },
+        "project": {
+          "label": "المشروع",
+          "path": "CLAUDE.md"
+        },
+        "project_dot_claude": {
+          "label": "المشروع (.claude)",
+          "path": ".claude/CLAUDE.md"
+        },
+        "local": {
+          "label": "محلي (غير مُودَع)",
+          "path": "CLAUDE.local.md"
+        }
+      },
+      "quickAdd": {
+        "title": "حفظ في الذاكرة",
+        "cancel": "إلغاء",
+        "hint": "P / U للاختيار · Esc يُبقي النص في مربع الكتابة",
+        "saved": "تم الحفظ في {file}",
+        "failed": "تعذّر حفظ الملاحظة: {message}"
+      },
+      "editor": {
+        "title": "ذاكرة Claude Code",
+        "description": "ملفات CLAUDE.md التي يحمّلها Claude Code لهذا المجلد. تسري التغييرات بدءًا من الجلسة أو الرسالة التالية.",
+        "files": "ملفات الذاكرة",
+        "unsaved": "تغييرات غير محفوظة",
+        "blocked": "غير متاح",
+        "blockedDetail": "لا يمكن فتح هذا الملف هنا: {reason}",
+        "exists": "موجود",
+        "missing": "لم يُنشأ بعد",
+        "willCreate": "هذا الملف غير موجود بعد؛ سيُنشأ عند الحفظ.",
+        "loadFailed": "تعذّرت قراءة الملف: {message}",
+        "retry": "إعادة المحاولة",
+        "saved": "تم حفظ الذاكرة",
+        "saveFailed": "تعذّر الحفظ: {message}",
+        "conflict": "تغيّر الملف على القرص منذ فتحه. لم يُحفظ أي شيء.",
+        "conflictDeleted": "حُذف الملف من القرص منذ فتحه. لم يُحفظ أي شيء.",
+        "reload": "إعادة التحميل (تجاهل تغييراتي)",
+        "overwrite": "استبدال",
+        "discardPrompt": "تجاهل التغييرات غير المحفوظة؟",
+        "keepEditing": "متابعة التحرير",
+        "discard": "تجاهل",
+        "close": "إغلاق",
+        "save": "حفظ",
+        "create": "إنشاء"
+      },
+      "settings": {
+        "title": "إضافة سريعة إلى الذاكرة بـ “#”",
+        "description": "في محادثات Claude Code، تُحفظ الرسالة المكوّنة من سطر واحد والتي تبدأ بـ # في CLAUDE.md بدلًا من إرسالها."
+      }
+    },
+    "contextBreakdown": {
+      "title": "تفصيل السياق",
+      "refresh": "تحديث التفصيل (/context)",
+      "explain": "اعرف ما الذي يملأ نافذة السياق: موجّه النظام، والأدوات، وMCP، وملفات الذاكرة، والرسائل، والمساحة الحرة.",
+      "show": "عرض التفصيل",
+      "zeroTokens": "يشغّل /context: يجيب Claude Code محليًا دون استدعاء النموذج (0 رموز). يظهر التقرير في المحادثة أيضًا.",
+      "compactPlaceholder": "تعليمات الضغط (اختياري)",
+      "compact": "ضغط السياق الآن",
+      "compactCost": "يرسل /compact: يلخّص النموذج المحادثة — وهذا يستهلك رموزًا.",
+      "busy": "متاح عندما ينتهي الوكيل من الرد.",
+      "barAria": "استخدام نافذة السياق حسب الفئة",
+      "category": "الفئة",
+      "tokens": "الرموز",
+      "share": "النسبة",
+      "autocompactAt": "يُضغط تلقائيًا عند",
+      "memoryFiles": "ملفات الذاكرة"
     }
   }
 }

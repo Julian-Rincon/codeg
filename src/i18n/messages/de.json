@@ -7794,6 +7794,80 @@
       "hint": "↑↓ · Enter · Esc",
       "empty": "Noch keine Prompts gesendet",
       "noMatches": "Keine passenden Prompts"
+    },
+    "memory": {
+      "menuEntry": "Gedächtnis (CLAUDE.md)",
+      "scopes": {
+        "user": {
+          "label": "Benutzer",
+          "path": "~/.claude/CLAUDE.md"
+        },
+        "project": {
+          "label": "Projekt",
+          "path": "CLAUDE.md"
+        },
+        "project_dot_claude": {
+          "label": "Projekt (.claude)",
+          "path": ".claude/CLAUDE.md"
+        },
+        "local": {
+          "label": "Lokal (nicht eingecheckt)",
+          "path": "CLAUDE.local.md"
+        }
+      },
+      "quickAdd": {
+        "title": "Im Gedächtnis speichern",
+        "cancel": "Abbrechen",
+        "hint": "P / U zum Auswählen · Esc lässt den Text im Eingabefeld",
+        "saved": "Gespeichert in {file}",
+        "failed": "Notiz konnte nicht gespeichert werden: {message}"
+      },
+      "editor": {
+        "title": "Claude-Code-Gedächtnis",
+        "description": "Die CLAUDE.md-Dateien, die Claude Code für diesen Ordner lädt. Änderungen gelten ab der nächsten Sitzung oder Nachricht.",
+        "files": "Gedächtnisdateien",
+        "unsaved": "Ungespeicherte Änderungen",
+        "blocked": "Nicht zugänglich",
+        "blockedDetail": "Diese Datei kann hier nicht geöffnet werden: {reason}",
+        "exists": "Vorhanden",
+        "missing": "Noch nicht angelegt",
+        "willCreate": "Diese Datei existiert noch nicht; Speichern legt sie an.",
+        "loadFailed": "Datei konnte nicht gelesen werden: {message}",
+        "retry": "Erneut versuchen",
+        "saved": "Gedächtnis gespeichert",
+        "saveFailed": "Speichern fehlgeschlagen: {message}",
+        "conflict": "Die Datei wurde seit dem Öffnen auf der Festplatte geändert. Es wurde nichts gespeichert.",
+        "conflictDeleted": "Die Datei wurde seit dem Öffnen von der Festplatte gelöscht. Es wurde nichts gespeichert.",
+        "reload": "Neu laden (meine verwerfen)",
+        "overwrite": "Überschreiben",
+        "discardPrompt": "Ungespeicherte Änderungen verwerfen?",
+        "keepEditing": "Weiter bearbeiten",
+        "discard": "Verwerfen",
+        "close": "Schließen",
+        "save": "Speichern",
+        "create": "Anlegen"
+      },
+      "settings": {
+        "title": "„#“-Schnellnotiz ins Gedächtnis",
+        "description": "In Claude-Code-Chats wird eine einzeilige Nachricht, die mit # beginnt, in CLAUDE.md gespeichert statt gesendet."
+      }
+    },
+    "contextBreakdown": {
+      "title": "Kontext-Aufschlüsselung",
+      "refresh": "Aufschlüsselung aktualisieren (/context)",
+      "explain": "Sieh, was das Kontextfenster füllt: System-Prompt, Tools, MCP, Gedächtnisdateien, Nachrichten und freier Platz.",
+      "show": "Aufschlüsselung anzeigen",
+      "zeroTokens": "Führt /context aus: Claude Code antwortet lokal ohne Modellaufruf (0 Tokens). Der Bericht erscheint auch im Chat.",
+      "compactPlaceholder": "Anweisungen zum Komprimieren (optional)",
+      "compact": "Jetzt komprimieren",
+      "compactCost": "Sendet /compact: Das Modell fasst die Unterhaltung zusammen — das verbraucht Tokens.",
+      "busy": "Verfügbar, sobald der Agent fertig geantwortet hat.",
+      "barAria": "Nutzung des Kontextfensters nach Kategorie",
+      "category": "Kategorie",
+      "tokens": "Tokens",
+      "share": "Anteil",
+      "autocompactAt": "Automatisch komprimiert bei",
+      "memoryFiles": "Gedächtnisdateien"
     }
   }
 }

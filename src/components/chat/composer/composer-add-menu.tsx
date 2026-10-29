@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react"
 import { useTranslations } from "next-intl"
 import {
+  BookMarked,
   Command,
   FileStack,
   FlaskConical,
@@ -63,6 +64,8 @@ export interface ComposerAddMenuProps {
   /** Open the live-feedback dialog. Conversation-only; omitted elsewhere. */
   onAddFeedback?: () => void
   feedbackAddDisabled?: boolean
+  /** Phantom: open the CLAUDE.md memory editor (Claude Code sessions only). */
+  onOpenMemory?: () => void
   triggerClassName?: string
 }
 
@@ -82,9 +85,11 @@ export function ComposerAddMenu({
   slashCommands,
   onAddFeedback,
   feedbackAddDisabled,
+  onOpenMemory,
   triggerClassName,
 }: ComposerAddMenuProps) {
   const t = useTranslations("Folder.chat.messageInput")
+  const tMemory = useTranslations("Phantom.memory")
   const [slashOpen, setSlashOpen] = useState(false)
   const [slashSearch, setSlashSearch] = useState("")
   const slashInputRef = useRef<HTMLInputElement>(null)
@@ -224,6 +229,12 @@ export function ComposerAddMenu({
           >
             <MessageSquarePlus className="size-4" />
             {t("liveFeedback")}
+          </DropdownMenuItem>
+        )}
+        {onOpenMemory && (
+          <DropdownMenuItem onClick={onOpenMemory}>
+            <BookMarked className="size-4" />
+            {tMemory("menuEntry")}
           </DropdownMenuItem>
         )}
         <DropdownMenuSub open={slashOpen} onOpenChange={handleSlashOpenChange}>
