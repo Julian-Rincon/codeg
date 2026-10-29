@@ -1789,6 +1789,22 @@ pub fn build_router_with_proxy_auth(
             "/phantom_handoff",
             post(handlers::phantom::phantom_handoff),
         )
+        .route(
+            "/phantom_memory_list",
+            post(handlers::phantom_memory::phantom_memory_list),
+        )
+        .route(
+            "/phantom_memory_read",
+            post(handlers::phantom_memory::phantom_memory_read),
+        )
+        .route(
+            "/phantom_memory_write",
+            post(handlers::phantom_memory::phantom_memory_write),
+        )
+        .route(
+            "/phantom_memory_append",
+            post(handlers::phantom_memory::phantom_memory_append),
+        )
         // ─── Work tasks ───
         .route("/work_task_list", post(handlers::work_task::work_task_list))
         .route("/work_task_get", post(handlers::work_task::work_task_get))

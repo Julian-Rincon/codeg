@@ -86,6 +86,7 @@ import {
   type ConversationFolderPickerOverride,
 } from "@/components/chat/conversation-context-bar"
 import { ComposerContextUsage } from "@/components/chat/composer-context-usage"
+import { usePhantomMemoryComposer } from "@/components/phantom/memory-composer"
 import { ComposerConnectionStatus } from "@/components/chat/composer-connection-status"
 import { SessionSettingsPicker } from "@/components/chat/session-settings-picker"
 import {
@@ -1684,6 +1685,25 @@ export function MessageInput({
     historyDraftRef.current = null
   }, [clearAttachments, closeSlashMenu])
 
+  // Phantom: Claude Code memory — `#` quick-add + the CLAUDE.md editor.
+  const phantomMemory = usePhantomMemoryComposer({
+    agentType,
+    folderPath: defaultPath,
+    onNoteSaved: useCallback(() => {
+      if (effectiveDraftStorageKey) {
+        clearMessageInputDraftV2(effectiveDraftStorageKey)
+      }
+      resetComposer()
+    }, [effectiveDraftStorageKey, resetComposer]),
+    onDismiss: useCallback(() => editorRef.current?.focus(), []),
+  })
+  const interceptMemoryDraft = phantomMemory.interceptDraft
+  const sendComposerCommand = useCallback(
+    (text: string) =>
+      onSend({ blocks: [{ type: "text", text }], displayText: text }),
+    [onSend]
+  )
+
   // Async steering must compare against the current draft, including images
   // added or removed while delivery was awaiting confirmation.
   const currentComposerRef = useRef({
@@ -1718,6 +1738,9 @@ export function MessageInput({
       resetComposer()
       return
     }
+
+    // Phantom: a whole-draft `# note` is a memory quick-add, not a message.
+    if (interceptMemoryDraft(draft)) return
 
     // Prompting mode: enqueue instead of sending
     if (isPrompting && onEnqueue) {
@@ -1759,6 +1782,7 @@ export function MessageInput({
     effectiveDraftStorageKey,
     resetComposer,
     defaultPath,
+    interceptMemoryDraft,
   ])
 
   // Mid-turn send over the session's live-feedback channel: a native push
@@ -2106,6 +2130,7 @@ export function MessageInput({
       onKeyDown={handleContainerKeyDown}
       {...attach.containerDragProps}
     >
+      {phantomMemory.element}
       {promptSearchOpen && (
         <PromptHistorySearch
           folder={defaultPath ?? null}
@@ -2305,6 +2330,7 @@ export function MessageInput({
                     slashCommands={slashCommands}
                     onAddFeedback={onAddFeedback}
                     feedbackAddDisabled={feedbackAddDisabled}
+                    onOpenMemory={phantomMemory.openEditor}
                   />
                   {hasAnySelector && (
                     <SessionSettingsPicker
@@ -2447,7 +2473,12 @@ export function MessageInput({
                 send button's right edge in the action bar above — no centring
                 slot, which would inset the narrow icon and break the alignment. */}
             <div className="flex shrink-0 items-center gap-3 pr-px">
-              <ComposerContextUsage tabId={attachmentTabId ?? null} />
+              <ComposerContextUsage
+                tabId={attachmentTabId ?? null}
+                agentType={agentType}
+                isPrompting={isPrompting}
+                onSendCommand={sendComposerCommand}
+              />
               <ComposerConnectionStatus tabId={attachmentTabId ?? null} />
             </div>
           </div>

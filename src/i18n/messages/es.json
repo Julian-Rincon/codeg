@@ -7794,6 +7794,80 @@
       "hint": "↑↓ · Enter · Esc",
       "empty": "Aún no has enviado prompts",
       "noMatches": "Ningún prompt coincide"
+    },
+    "memory": {
+      "menuEntry": "Memoria (CLAUDE.md)",
+      "scopes": {
+        "user": {
+          "label": "Usuario",
+          "path": "~/.claude/CLAUDE.md"
+        },
+        "project": {
+          "label": "Proyecto",
+          "path": "CLAUDE.md"
+        },
+        "project_dot_claude": {
+          "label": "Proyecto (.claude)",
+          "path": ".claude/CLAUDE.md"
+        },
+        "local": {
+          "label": "Local (sin versionar)",
+          "path": "CLAUDE.local.md"
+        }
+      },
+      "quickAdd": {
+        "title": "Guardar en memoria",
+        "cancel": "Cancelar",
+        "hint": "P / U para elegir · Esc deja el texto en el composer",
+        "saved": "Guardado en {file}",
+        "failed": "No se pudo guardar la nota: {message}"
+      },
+      "editor": {
+        "title": "Memoria de Claude Code",
+        "description": "Los archivos CLAUDE.md que Claude Code carga para esta carpeta. Los cambios aplican desde la próxima sesión o mensaje.",
+        "files": "Archivos de memoria",
+        "unsaved": "Cambios sin guardar",
+        "blocked": "No accesible",
+        "blockedDetail": "Este archivo no se puede abrir aquí: {reason}",
+        "exists": "Existe",
+        "missing": "Aún no existe",
+        "willCreate": "Este archivo todavía no existe; al guardar se crea.",
+        "loadFailed": "No se pudo leer el archivo: {message}",
+        "retry": "Reintentar",
+        "saved": "Memoria guardada",
+        "saveFailed": "No se pudo guardar: {message}",
+        "conflict": "El archivo cambió en disco desde que lo abriste. No se guardó nada.",
+        "conflictDeleted": "El archivo se borró del disco desde que lo abriste. No se guardó nada.",
+        "reload": "Recargar (perder mis cambios)",
+        "overwrite": "Sobrescribir",
+        "discardPrompt": "¿Descartar los cambios sin guardar?",
+        "keepEditing": "Seguir editando",
+        "discard": "Descartar",
+        "close": "Cerrar",
+        "save": "Guardar",
+        "create": "Crear"
+      },
+      "settings": {
+        "title": "Atajo “#” para guardar en memoria",
+        "description": "En chats de Claude Code, un mensaje de una sola línea que empieza con # se guarda en CLAUDE.md en vez de enviarse."
+      }
+    },
+    "contextBreakdown": {
+      "title": "Desglose del contexto",
+      "refresh": "Actualizar desglose (/context)",
+      "explain": "Mira qué está ocupando la ventana de contexto: prompt del sistema, herramientas, MCP, archivos de memoria, mensajes y espacio libre.",
+      "show": "Ver desglose",
+      "zeroTokens": "Ejecuta /context: Claude Code responde localmente sin llamar al modelo (0 tokens). El informe también aparece en el chat.",
+      "compactPlaceholder": "Instrucciones para compactar (opcional)",
+      "compact": "Compactar ahora",
+      "compactCost": "Envía /compact: el modelo resume la conversación — esto sí gasta tokens.",
+      "busy": "Disponible cuando el agente termine de responder.",
+      "barAria": "Uso de la ventana de contexto por categoría",
+      "category": "Categoría",
+      "tokens": "Tokens",
+      "share": "Proporción",
+      "autocompactAt": "Autocompacta en",
+      "memoryFiles": "Archivos de memoria"
     }
   }
 }

@@ -7794,6 +7794,80 @@
       "hint": "↑↓ · Enter · Esc",
       "empty": "No prompts sent yet",
       "noMatches": "No matching prompts"
+    },
+    "memory": {
+      "menuEntry": "Memory (CLAUDE.md)",
+      "scopes": {
+        "user": {
+          "label": "User",
+          "path": "~/.claude/CLAUDE.md"
+        },
+        "project": {
+          "label": "Project",
+          "path": "CLAUDE.md"
+        },
+        "project_dot_claude": {
+          "label": "Project (.claude)",
+          "path": ".claude/CLAUDE.md"
+        },
+        "local": {
+          "label": "Local (not committed)",
+          "path": "CLAUDE.local.md"
+        }
+      },
+      "quickAdd": {
+        "title": "Save to memory",
+        "cancel": "Cancel",
+        "hint": "P / U to choose · Esc keeps the text in the composer",
+        "saved": "Saved to {file}",
+        "failed": "Couldn't save the note: {message}"
+      },
+      "editor": {
+        "title": "Claude Code memory",
+        "description": "The CLAUDE.md files Claude Code loads for this folder. Changes apply from the next session or message.",
+        "files": "Memory files",
+        "unsaved": "Unsaved changes",
+        "blocked": "Not accessible",
+        "blockedDetail": "This file can't be opened here: {reason}",
+        "exists": "Exists",
+        "missing": "Not created yet",
+        "willCreate": "This file doesn't exist yet; saving creates it.",
+        "loadFailed": "Couldn't read the file: {message}",
+        "retry": "Try again",
+        "saved": "Memory saved",
+        "saveFailed": "Couldn't save: {message}",
+        "conflict": "The file changed on disk since you opened it. Nothing was saved.",
+        "conflictDeleted": "The file was deleted on disk since you opened it. Nothing was saved.",
+        "reload": "Reload (discard mine)",
+        "overwrite": "Overwrite",
+        "discardPrompt": "Discard unsaved changes?",
+        "keepEditing": "Keep editing",
+        "discard": "Discard",
+        "close": "Close",
+        "save": "Save",
+        "create": "Create"
+      },
+      "settings": {
+        "title": "“#” quick-add to memory",
+        "description": "In Claude Code chats, a one-line message starting with # is saved to CLAUDE.md instead of being sent."
+      }
+    },
+    "contextBreakdown": {
+      "title": "Context breakdown",
+      "refresh": "Refresh breakdown (/context)",
+      "explain": "See what is filling the context window: system prompt, tools, MCP, memory files, messages and free space.",
+      "show": "Show breakdown",
+      "zeroTokens": "Runs /context: Claude Code answers locally without calling the model (0 tokens). The report also appears in the chat.",
+      "compactPlaceholder": "Compaction instructions (optional)",
+      "compact": "Compact now",
+      "compactCost": "Sends /compact: the model summarizes the conversation — this uses tokens.",
+      "busy": "Available when the agent finishes responding.",
+      "barAria": "Context window usage by category",
+      "category": "Category",
+      "tokens": "Tokens",
+      "share": "Share",
+      "autocompactAt": "Autocompacts at",
+      "memoryFiles": "Memory files"
     }
   }
 }

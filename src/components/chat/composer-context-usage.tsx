@@ -18,6 +18,8 @@ import {
   PopoverContent,
   PopoverTrigger,
 } from "@/components/ui/popover"
+import { ContextBreakdownSection } from "@/components/phantom/context-breakdown-section"
+import type { AgentType } from "@/lib/types"
 
 const ICON_RADIUS = 6
 const ICON_CENTER = 8
@@ -31,7 +33,18 @@ const ICON_CIRCUMFERENCE = 2 * Math.PI * ICON_RADIUS
  * token breakdown from that conversation's own runtime-store session stats — so
  * every loaded/tiled composer shows its own context, not the active one's.
  */
-export function ComposerContextUsage({ tabId }: { tabId: string | null }) {
+export function ComposerContextUsage({
+  tabId,
+  agentType,
+  isPrompting = false,
+  onSendCommand,
+}: {
+  tabId: string | null
+  /** Phantom: Claude Code sessions get the `/context` breakdown section. */
+  agentType?: AgentType | null
+  isPrompting?: boolean
+  onSendCommand?: (text: string) => void
+}) {
   const t = useTranslations("Folder.statusBar.tokens")
   const store = useConnectionStore()
   // This tab's own conversation → its per-conversation session stats, read
@@ -160,6 +173,7 @@ export function ComposerContextUsage({ tabId }: { tabId: string | null }) {
     : null
 
   if (!hasContext && !hasTokenSection) return null
+  const showBreakdown = agentType === "claude_code" && onSendCommand != null
 
   // Native hover hint mirroring the popover's headline (the popover stays for
   // the full breakdown on click).
@@ -219,7 +233,11 @@ export function ComposerContextUsage({ tabId }: { tabId: string | null }) {
           )}
         </button>
       </PopoverTrigger>
-      <PopoverContent side="top" align="end" className="w-56 gap-2 p-3 text-xs">
+      <PopoverContent
+        side="top"
+        align="end"
+        className={`${showBreakdown ? "w-80" : "w-56"} gap-2 p-3 text-xs`}
+      >
         {hasContext || cacheHit != null ? (
           <div
             className={`space-y-1 ${
@@ -292,6 +310,14 @@ export function ComposerContextUsage({ tabId }: { tabId: string | null }) {
               ))}
             </div>
           </>
+        ) : null}
+        {showBreakdown ? (
+          <ContextBreakdownSection
+            conversationId={runtimeConversationId}
+            windowSize={contextMax}
+            isPrompting={isPrompting}
+            onSendCommand={onSendCommand}
+          />
         ) : null}
       </PopoverContent>
     </Popover>

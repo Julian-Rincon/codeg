@@ -7794,6 +7794,80 @@
       "hint": "↑↓ · Enter · Esc",
       "empty": "还没有发送过提示词",
       "noMatches": "没有匹配的提示词"
+    },
+    "memory": {
+      "menuEntry": "记忆 (CLAUDE.md)",
+      "scopes": {
+        "user": {
+          "label": "用户",
+          "path": "~/.claude/CLAUDE.md"
+        },
+        "project": {
+          "label": "项目",
+          "path": "CLAUDE.md"
+        },
+        "project_dot_claude": {
+          "label": "项目 (.claude)",
+          "path": ".claude/CLAUDE.md"
+        },
+        "local": {
+          "label": "本地（不提交）",
+          "path": "CLAUDE.local.md"
+        }
+      },
+      "quickAdd": {
+        "title": "保存到记忆",
+        "cancel": "取消",
+        "hint": "按 P / U 选择 · Esc 保留输入框中的文字",
+        "saved": "已保存到 {file}",
+        "failed": "无法保存笔记：{message}"
+      },
+      "editor": {
+        "title": "Claude Code 记忆",
+        "description": "Claude Code 为此文件夹加载的 CLAUDE.md 文件。修改从下一个会话或消息开始生效。",
+        "files": "记忆文件",
+        "unsaved": "有未保存的更改",
+        "blocked": "无法访问",
+        "blockedDetail": "此文件无法在这里打开：{reason}",
+        "exists": "已存在",
+        "missing": "尚未创建",
+        "willCreate": "此文件尚不存在，保存时将创建。",
+        "loadFailed": "无法读取文件：{message}",
+        "retry": "重试",
+        "saved": "记忆已保存",
+        "saveFailed": "保存失败：{message}",
+        "conflict": "自打开以来，磁盘上的文件已被修改。未保存任何内容。",
+        "conflictDeleted": "自打开以来，磁盘上的文件已被删除。未保存任何内容。",
+        "reload": "重新加载（放弃我的更改）",
+        "overwrite": "覆盖",
+        "discardPrompt": "放弃未保存的更改？",
+        "keepEditing": "继续编辑",
+        "discard": "放弃",
+        "close": "关闭",
+        "save": "保存",
+        "create": "创建"
+      },
+      "settings": {
+        "title": "“#” 快速添加到记忆",
+        "description": "在 Claude Code 对话中，以 # 开头的单行消息会保存到 CLAUDE.md，而不是发送出去。"
+      }
+    },
+    "contextBreakdown": {
+      "title": "上下文明细",
+      "refresh": "刷新明细 (/context)",
+      "explain": "查看是什么占用了上下文窗口：系统提示词、工具、MCP、记忆文件、消息和剩余空间。",
+      "show": "查看明细",
+      "zeroTokens": "运行 /context：Claude Code 在本地回答，不调用模型（0 token）。报告也会出现在对话中。",
+      "compactPlaceholder": "压缩说明（可选）",
+      "compact": "立即压缩",
+      "compactCost": "发送 /compact：模型会总结对话——这会消耗 token。",
+      "busy": "智能体回复完成后可用。",
+      "barAria": "按类别划分的上下文窗口使用情况",
+      "category": "类别",
+      "tokens": "Token",
+      "share": "占比",
+      "autocompactAt": "自动压缩阈值",
+      "memoryFiles": "记忆文件"
     }
   }
 }

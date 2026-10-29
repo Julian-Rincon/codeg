@@ -39,6 +39,7 @@ pub mod office_watch_proxy;
 pub mod opencode_credentials;
 pub mod pet;
 pub mod phantom;
+pub mod phantom_memory;
 pub mod project_boot;
 pub mod question;
 pub mod quick_messages;
