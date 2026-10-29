@@ -822,6 +822,20 @@ pub async fn claude_usage_effective() -> Option<ClaudeUsage> {
     overlay_live(view, &live, None, plan, Utc::now()).0.claude
 }
 
+/// Phantom: whether either Claude window is used up (>= 100 %). Pure.
+pub(crate) fn quota_exhausted(usage: &ClaudeUsage) -> bool {
+    usage.five_hour.percent >= 100.0 || usage.seven_day.percent >= 100.0
+}
+
+/// Phantom: whether Claude's quota is used up right now, per
+/// [`claude_usage_effective`]. A delegated child whose turn ends empty while
+/// this holds was cut off by the limit, not finished.
+pub async fn claude_quota_exhausted() -> bool {
+    claude_usage_effective()
+        .await
+        .is_some_and(|usage| quota_exhausted(&usage))
+}
+
 /// Fold live readings into the meter view. Pure.
 ///
 /// Per window, a live reading newer than `claude.fetched_at` replaces the
@@ -989,6 +1003,25 @@ pub async fn router_profile_set(
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn quota_is_exhausted_when_either_window_is_full() {
+        let usage = |five: f64, week: f64| ClaudeUsage {
+            plan: String::new(),
+            five_hour: ClaudeUsageWindow {
+                percent: five,
+                resets_at: None,
+            },
+            seven_day: ClaudeUsageWindow {
+                percent: week,
+                resets_at: None,
+            },
+            fetched_at: String::new(),
+        };
+        assert!(!quota_exhausted(&usage(99.0, 50.0)));
+        assert!(quota_exhausted(&usage(100.0, 50.0)));
+        assert!(quota_exhausted(&usage(20.0, 100.0)));
+    }
+
     use super::*;
 
     const SAMPLE: &str = r#"{"five_hour":{"utilization":77.0,"resets_at":"2026-10-10T11:39:59.655380+00:00"},"seven_day":{"utilization":62.0,"resets_at":"2026-10-14T13:59:59.655408+00:00"},"limits":[]}"#;

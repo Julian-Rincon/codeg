@@ -503,6 +503,21 @@ async fn forward_turn_complete_to_broker(
     }
     let agent_type = row.agent_type;
     let outcome = match stop_reason {
+        // Phantom: a Claude child whose turn ends with no text while the quota
+        // is used up was cut off by the limit; report it canceled so the
+        // parent can resume it after the reset instead of reading it done.
+        "end_turn"
+            if last_text.as_deref().is_none_or(|t| t.trim().is_empty())
+                && agent_type == crate::models::agent::AgentType::ClaudeCode
+                && crate::commands::usage_meter::claude_quota_exhausted().await =>
+        {
+            DelegationOutcome::from_err(
+                DelegationError::Canceled {
+                    reason: "Claude quota limit reached; resume it once the limit resets".into(),
+                },
+                Some(conversation_id),
+            )
+        }
         "end_turn" => DelegationOutcome::Ok(DelegationSuccess {
             text: last_text.unwrap_or_default(),
             child_conversation_id: conversation_id,
