@@ -2977,6 +2977,11 @@ pub async fn delete_conversation_with_cleanup_core(
     if let Some(folder_id) = folder_id {
         cleanup_chat_folder_for_deleted_conversation(conn, folder_id).await;
     }
+    // Phantom: drop the conversation's checkpoint refs (off the request path).
+    let checkpoint_conn = conn.clone();
+    tokio::spawn(async move {
+        crate::phantom::checkpoints::cleanup_conversation(&checkpoint_conn, conversation_id).await;
+    });
     Ok(())
 }
 

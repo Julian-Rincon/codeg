@@ -1805,6 +1805,14 @@ pub fn build_router_with_proxy_auth(
             "/phantom_memory_append",
             post(handlers::phantom_memory::phantom_memory_append),
         )
+        .route(
+            "/phantom_checkpoint_preview",
+            post(handlers::phantom::phantom_checkpoint_preview),
+        )
+        .route(
+            "/phantom_checkpoint_restore",
+            post(handlers::phantom::phantom_checkpoint_restore),
+        )
         // ─── Work tasks ───
         .route("/work_task_list", post(handlers::work_task::work_task_list))
         .route("/work_task_get", post(handlers::work_task::work_task_get))

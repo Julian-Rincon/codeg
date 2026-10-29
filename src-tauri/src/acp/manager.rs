@@ -1787,6 +1787,20 @@ impl ConnectionManager {
                 None
             };
 
+        // Phantom: snapshot the working tree before the agent can touch it.
+        // Placed AFTER the link phase so the first prompt of a conversation is
+        // covered (before it, the connection has no conversation id yet), and
+        // before `send_prompt_inner` hands the prompt over. Bounded by its own
+        // budget; a skipped snapshot never fails the send.
+        if delegation.is_none() {
+            crate::phantom::checkpoints::before_prompt(
+                &state_arc,
+                user_message.as_ref().map(|(id, _)| id.as_str()),
+                &blocks,
+            )
+            .await;
+        }
+
         // We hold `_prompt_guard` here, so call the lock-free inner helper —
         // re-entering `send_prompt` would try to acquire the same mutex and
         // deadlock. The helper reserves channel capacity FIRST and only then

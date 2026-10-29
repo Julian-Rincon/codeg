@@ -124,6 +124,12 @@ import { useModelLabels } from "@/hooks/use-model-labels"
 import { useChatAnimationsEnabled } from "@/hooks/use-appearance"
 import { usePageHandoffName } from "@/lib/browser/use-page-handoff-name"
 import { unescapeComposerText } from "@/lib/composer-copy-text"
+import { PhantomRewindButton } from "@/components/phantom/rewind-dialog"
+import {
+  findRewindForkTarget,
+  type PhantomRewindContext,
+  type PhantomRewindHost,
+} from "@/lib/phantom-checkpoints"
 import { useStickToBottomContext } from "use-stick-to-bottom"
 import { useAppWorkspaceStore } from "@/stores/app-workspace-store"
 import { MarkdownImageProvider } from "@/components/ai-elements/markdown-local-image"
@@ -217,6 +223,11 @@ interface MessageListViewProps {
    * (see `forkBusy`) rather than making every reply's footer flicker.
    */
   onForkFromTurn?: (turnId: string) => void
+  /**
+   * Phantom "Rebobinar aquí" on user messages. Only the owning conversation
+   * surface passes it. MUST be referentially stable.
+   */
+  phantomRewind?: PhantomRewindHost
 }
 
 export interface ResolvedMessageGroup {
@@ -1220,6 +1231,8 @@ const HistoricalMessageGroup = memo(function HistoricalMessageGroup({
   onForkFromTurn,
   forkDisabled = false,
   isThreadTail = false,
+  phantomRewind,
+  rewindItemKey,
 }: {
   group: ResolvedMessageGroup
   dimmed?: boolean
@@ -1236,6 +1249,8 @@ const HistoricalMessageGroup = memo(function HistoricalMessageGroup({
   /** Whether nothing follows this group in the thread — the one position where
    *  a turn the backend cannot name still forks where the user pointed. */
   isThreadTail?: boolean
+  phantomRewind?: PhantomRewindContext
+  rewindItemKey?: string
 }) {
   if (group.role === "system") {
     // A failed turn's line is the agent's account of the failure, not a
@@ -1261,6 +1276,17 @@ const HistoricalMessageGroup = memo(function HistoricalMessageGroup({
         ) : null}
         {group.role === "user" ? (
           <div className="group/user-msg flex w-fit ml-auto max-w-full items-start gap-1">
+            {phantomRewind && rewindItemKey ? (
+              <PhantomRewindButton
+                context={phantomRewind}
+                itemKey={rewindItemKey}
+                turn={sourceTurns?.[0]}
+                getText={() =>
+                  unescapeComposerText(extractTextFromParts(group.parts))
+                }
+                busy={forkDisabled}
+              />
+            ) : null}
             <UserMessageTaskButton parts={group.parts} />
             <UserMessageCopyButton parts={group.parts} />
             <MessageContent>
@@ -1386,6 +1412,7 @@ export function MessageListView({
   onAskSelection,
   onSaveNoteSelection,
   onForkFromTurn,
+  phantomRewind,
 }: MessageListViewProps) {
   const t = useTranslations("Folder.chat.messageList")
   const sharedT = useTranslations("Folder.chat.shared")
@@ -1706,6 +1733,31 @@ export function MessageListView({
   // "not right now" instead of dropping its button and shifting the icon row.
   const forkBusy = connStatus === "prompting"
 
+  // Phantom: the rewind dialog reads the thread at click time, so the item
+  // renderer below stays stable across thread updates.
+  const rewindThreadRef = useRef({
+    items: threadItems,
+    hasOlder: hasOlderTurns,
+  })
+  useEffect(() => {
+    rewindThreadRef.current = { items: threadItems, hasOlder: hasOlderTurns }
+  }, [threadItems, hasOlderTurns])
+  const phantomRewindContext = useMemo<PhantomRewindContext | undefined>(
+    () =>
+      phantomRewind
+        ? {
+            ...phantomRewind,
+            resolveForkTarget: (key) =>
+              findRewindForkTarget(
+                rewindThreadRef.current.items,
+                key,
+                rewindThreadRef.current.hasOlder
+              ),
+          }
+        : undefined,
+    [phantomRewind]
+  )
+
   const renderThreadItem = useCallback(
     (item: ThreadRenderItem) => {
       switch (item.kind) {
@@ -1740,6 +1792,8 @@ export function MessageListView({
                 onForkFromTurn={onForkFromTurn}
                 forkDisabled={forkBusy}
                 isThreadTail={item.isThreadTail}
+                phantomRewind={phantomRewindContext}
+                rewindItemKey={item.key}
               />
             </div>
           )
@@ -1769,6 +1823,7 @@ export function MessageListView({
       handleRoundOpenChange,
       onForkFromTurn,
       forkBusy,
+      phantomRewindContext,
     ]
   )
 
