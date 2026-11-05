@@ -988,6 +988,7 @@ mod permission_push_tests {
             &config,
             &mut last_push,
             &test_client(),
+            &ConnectionDirectory::default(),
         )
         .await;
 

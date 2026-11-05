@@ -173,6 +173,7 @@ mod tests {
             last_flushed: Instant::now(),
             pending_prompt: None,
             permission_pending: None,
+            pending_voice_reply_lang: None,
         }
     }
 
