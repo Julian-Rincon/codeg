@@ -383,6 +383,10 @@
     "giteaDescription": "認証用の Gitea（および Forgejo）アカウントを管理します。トークンはローカルに保存されます。",
     "giteaTokenHint": "Gitea → Settings → Applications で write:repository、write:issue、read:user スコープ付きのアクセストークンを作成してください。",
     "giteaNoAccounts": "Gitea アカウントがまだありません",
+    "cnbTitle": "CNB アカウント",
+    "cnbDescription": "認証用の CNB（cnb.cool）アカウントを管理します。トークンはローカルに保存されます。",
+    "cnbTokenHint": "CNB の「個人設定 → アクセストークン」で、account-profile:r、repo-issue:rw、repo-pr:rw、repo-notes:rw、repo-code:rw のスコープを付けてアクセストークンを作成してください。account-profile:r がないと CNB はトークンの持ち主を返さないため、アカウントを追加できません。",
+    "cnbNoAccounts": "CNB アカウントはまだありません",
     "noAccounts": "GitHub アカウントが設定されていません。",
     "addAccount": "アカウントを追加",
     "serverUrl": "サーバー URL",
@@ -764,6 +768,16 @@
     "emptyNoAgent": "利用可能なエージェントがありません。",
     "configManagement": "設定管理",
     "envVars": "環境変数",
+    "systemInstructions": {
+      "label": "システム指示",
+      "hint": "このエージェントのグローバルなシステム指示を設定し、グローバル指示ファイルに保存します。",
+      "placeholder": "グローバルなシステム指示を Markdown 形式で入力してください（役割の定義、ガイドライン、コーディング規約など）...",
+      "filePath": "ファイルパス",
+      "unsaved": "未保存の変更があります",
+      "discard": "変更を破棄",
+      "copyPath": "ファイルパスをコピー",
+      "pathCopied": "ファイルパスをコピーしました"
+    },
     "hostTools": {
       "label": "ファイルとコマンドをエージェント自身に処理させる",
       "description": "codeg がファイルアクセスとターミナルコマンドを代行しなくなり、エージェントが自身のプロセスで実行します。そうすることで初めて、エージェント自身のサンドボックスと権限ルールが適用されます。他のエージェントへの委任も無効になります（同じ処理が codeg 経由に戻ってしまうため）。codeg 自体はサンドボックスを提供しないため、エージェント側でサンドボックスを設定済みの場合にのみ有効にしてください。"
@@ -891,6 +905,7 @@
       }
     },
     "actions": {
+      "saveSystemInstructions": "システム指示を保存",
       "dragSort": "ドラッグして並べ替え",
       "dragSortAgent": "{name} をドラッグして並べ替え",
       "refreshCheck": "再チェック",
@@ -1608,6 +1623,8 @@
       "authRecoveredStructured": "auth.json が不正のため、構造化設定にリセットしました"
     },
     "toasts": {
+      "systemInstructionsSaved": "システム指示を保存しました",
+      "saveSystemInstructionsFailed": "システム指示の保存に失敗しました",
       "agentActionCompleted": "{name} の {action} が完了しました",
       "agentActionFailed": "{name} の {action} に失敗しました",
       "localVersion": "ローカルバージョン: {version}",
@@ -4674,6 +4691,8 @@
       "questionRequestDesc": "エージェントが質問したとき",
       "userPromptSent": "ユーザーメッセージ",
       "userPromptSentDesc": "メッセージを送信したとき（通知に本文が含まれます）",
+      "topLevelOnly": "トップレベルのセッションのみ",
+      "topLevelOnlyDesc": "委任で起動したサブセッションは「ターン完了」と「エージェントエラー」を送信しません。結果は委任元のエージェントが完了時に報告します。サブセッションの権限リクエストと質問はエージェントが応答を待つため引き続き通知されます。チャンネルと Webhook の両方に適用されます。",
       "saved": "イベントフィルターを更新しました。",
       "saveFailed": "イベントフィルターの保存に失敗しました。",
       "loadFailed": "設定の読み込みに失敗しました。",
@@ -6271,6 +6290,10 @@
     "actionStart": "開始",
     "actionSchedule": "予約実行",
     "actionCancel": "キャンセル",
+    "actionCancelTask": "タスクをキャンセル",
+    "actionRespond": "応答する",
+    "actionRespondHint": "会話を開いて、エージェントの権限リクエスト・質問・計画の承認に対応します",
+    "awaitingInputHint": "エージェントは一時停止し、権限リクエストへの対応、質問への回答、または計画の承認を待っています。会話で応答すると、タスクは自動的に再開します。",
     "actionRetry": "再試行",
     "actionRequeue": "再キュー",
     "actionViewSession": "会話を表示",
@@ -7066,7 +7089,7 @@
     "noRemote": "このフォルダには認識できるリモート（origin）がありません",
     "errors": {
       "noAccount": "{host} の {provider} アカウントが設定されていません。「設定 → バージョン管理」で追加するとこのリポジトリを読み込めます。",
-      "unsupportedHost": "リポジトリパネルは GitHub、GitLab、Gitea にのみ対応しており、{host} はそのいずれとしても認識できません。自己ホスト型の GitHub Enterprise、GitLab、Gitea、Forgejo インスタンスであれば、「設定 → バージョン管理」でアカウントを追加してください。",
+      "unsupportedHost": "リポジトリパネルは GitHub、GitLab、Gitea、CNB にのみ対応しており、{host} はそのいずれとしても認識できません。自己ホスト型の GitHub Enterprise、GitLab、Gitea、Forgejo、CNB インスタンスであれば、「設定 → バージョン管理」でアカウントを追加してください。",
       "wrongForge": "{host} は {provider} でした。別のフォージとして扱われていましたが、判定を修正しました。再読み込みしてください。"
     },
     "addAccount": "アカウントを追加",

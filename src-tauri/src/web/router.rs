@@ -948,6 +948,10 @@ pub fn build_router_with_proxy_auth(
             post(handlers::version_control::validate_gitea_token),
         )
         .route(
+            "/validate_cnb_token",
+            post(handlers::version_control::validate_cnb_token),
+        )
+        .route(
             "/save_account_token",
             post(handlers::version_control::save_account_token),
         )
@@ -1240,6 +1244,10 @@ pub fn build_router_with_proxy_auth(
         .route(
             "/acp_list_agent_skills",
             post(handlers::acp::acp_list_agent_skills),
+        )
+        .route(
+            "/acp_list_agent_runtime_skills",
+            post(handlers::acp::acp_list_agent_runtime_skills),
         )
         .route(
             "/acp_read_agent_skill",
@@ -1644,6 +1652,14 @@ pub fn build_router_with_proxy_auth(
             post(handlers::chat_channel::set_chat_event_webhooks),
         )
         .route(
+            "/get_chat_event_top_level_only",
+            post(handlers::chat_channel::get_chat_event_top_level_only),
+        )
+        .route(
+            "/set_chat_event_top_level_only",
+            post(handlers::chat_channel::set_chat_event_top_level_only),
+        )
+        .route(
             "/get_chat_message_language",
             post(handlers::chat_channel::get_chat_message_language),
         )
@@ -1871,6 +1887,10 @@ pub fn build_router_with_proxy_auth(
         .route(
             "/forge_list_issues",
             post(handlers::forge::forge_list_issues),
+        )
+        .route(
+            "/forge_issue_detail",
+            post(handlers::forge::forge_issue_detail),
         )
         .route(
             "/forge_tab_count",
