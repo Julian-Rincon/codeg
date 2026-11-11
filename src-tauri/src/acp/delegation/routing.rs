@@ -357,7 +357,7 @@ pub fn candidates_from_scorecard(entries: &[ModelScorecardEntry], stats: &Router
         if n >= LEARNED_MIN_TASKS && good / (good + bad).max(f64::EPSILON) < BLACKLIST_BELOW_RATE {
             continue;
         }
-        let eligible = !router::is_free(&e.model)
+        let eligible = router::trusted_unmeasured(&e.model)
             || measured.get(&key).copied().unwrap_or(0) >= FREE_MIN_TOOL_CALLS
             || n >= LEARNED_MIN_TASKS;
         let target = if eligible { &mut chosen } else { &mut trial_chosen };
@@ -939,6 +939,32 @@ mod tests {
         let entries = vec![limited, entry("hermes", "gpt-4o", true, 500)];
         let candidates = candidates_from_scorecard(&entries, &RouterStats::default()).candidates;
         assert!(candidates.is_empty());
+    }
+
+    #[test]
+    fn unmeasured_local_and_mid_models_are_trials_but_frontier_is_a_candidate() {
+        let entries = vec![
+            entry("open_code", "ollama/gemma:2b", true, 0),
+            entry("open_code", "mi-mistral/mistral-small-latest", true, 0),
+            entry("codex", "gpt-5.5", true, 0),
+            entry("claude_code", "claude-sonnet-5-5", true, 0),
+        ];
+        let pool = candidates_from_scorecard(&entries, &RouterStats::default());
+        let names = |v: &[CandidateModel]| v.iter().map(|c| c.model.clone()).collect::<Vec<_>>();
+        let cands = names(&pool.candidates);
+        let trials = names(&pool.trials);
+        assert!(cands.contains(&"gpt-5.5".to_string()));
+        assert!(cands.contains(&"claude-sonnet-5-5".to_string()));
+        assert!(trials.contains(&"ollama/gemma:2b".to_string()));
+        assert!(trials.contains(&"mi-mistral/mistral-small-latest".to_string()));
+    }
+
+    #[test]
+    fn a_measured_mid_model_becomes_a_candidate() {
+        let entries = vec![entry("open_code", "mi-groq/qwen/qwen3.8-27b", true, 40)];
+        let pool = candidates_from_scorecard(&entries, &RouterStats::default());
+        assert_eq!(pool.candidates.len(), 1);
+        assert!(pool.trials.is_empty());
     }
 
     #[test]

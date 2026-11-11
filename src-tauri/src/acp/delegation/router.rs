@@ -25,6 +25,8 @@ use crate::models::AgentType;
 const PRIOR_WEIGHT: f64 = 8.0;
 /// Prior quality for a family that is not in the priors table.
 const UNKNOWN_PRIOR: f64 = 0.6;
+/// Prior for a small local model: below every hosted class until measured.
+const LOCAL_PRIOR: f64 = 0.45;
 /// Probability of picking among near-best candidates instead of the best.
 const EXPLORE_PROB: f64 = 0.1;
 /// "Near-best" window for exploration, in score units.
@@ -175,6 +177,17 @@ impl Effort {
     }
 }
 
+/// Whether `model` may be routed before Phantom has measured it: Claude and
+/// non-Claude frontier models. Free, mid-tier, local and unknown models earn
+/// their place through trials first.
+pub fn trusted_unmeasured(model: &str) -> bool {
+    let class = FamilyClass::of(&family_of(model), is_free(model));
+    matches!(
+        class,
+        FamilyClass::Haiku | FamilyClass::Sonnet | FamilyClass::Opus | FamilyClass::Fable | FamilyClass::Frontier
+    )
+}
+
 /// Free-tier model ids carry a `-free` / `:free` marker.
 pub fn is_free(model: &str) -> bool {
     let m = model.to_ascii_lowercase();
@@ -205,7 +218,36 @@ enum FamilyClass {
     Sonnet,
     Opus,
     Fable,
+    /// Non-Claude frontier model (GPT-5/6, Gemini Pro): trusted with hard work.
+    Frontier,
+    /// Capable non-Claude workhorse (Gemini Flash, DeepSeek, Kimi, GLM, Qwen,
+    /// Mistral, gpt-oss, MiniMax): rated like a free model, never `hard`.
+    Mid,
+    /// Small model on this machine (`ollama/…`): quick chores only.
+    Local,
     Other,
+}
+
+/// Lowercased model id (provider prefix kept) → its non-Claude class.
+fn non_claude_class(m: &str) -> Option<FamilyClass> {
+    if m.starts_with("ollama/") {
+        return Some(FamilyClass::Local);
+    }
+    let tail = m.rsplit('/').next().unwrap_or(m);
+    let gpt_major = tail
+        .strip_prefix("gpt-")
+        .and_then(|v| v.split(['.', '-']).next())
+        .and_then(|v| v.parse::<u32>().ok());
+    if gpt_major.is_some_and(|v| v >= 5) && !tail.contains("mini") && !tail.contains("nano") {
+        return Some(FamilyClass::Frontier);
+    }
+    if tail.starts_with("gemini-") && tail.contains("-pro") {
+        return Some(FamilyClass::Frontier);
+    }
+    const MID: [&str; 10] = [
+        "gemini-", "deepseek", "kimi", "glm-", "qwen", "mistral", "gpt-oss", "minimax", "gpt-", "grok",
+    ];
+    MID.iter().any(|p| tail.starts_with(p)).then_some(FamilyClass::Mid)
 }
 
 impl FamilyClass {
@@ -218,7 +260,7 @@ impl FamilyClass {
             "opus" => FamilyClass::Opus,
             "sonnet" => FamilyClass::Sonnet,
             "haiku" => FamilyClass::Haiku,
-            _ => FamilyClass::Other,
+            other => non_claude_class(other).unwrap_or(FamilyClass::Other),
         }
     }
 
@@ -229,6 +271,9 @@ impl FamilyClass {
             FamilyClass::Sonnet => 0.4,
             FamilyClass::Opus => 0.7,
             FamilyClass::Fable => 1.0,
+            FamilyClass::Frontier => 0.6,
+            FamilyClass::Mid => 0.2,
+            FamilyClass::Local => 0.0,
             FamilyClass::Other => 0.5,
         }
     }
@@ -240,6 +285,9 @@ impl FamilyClass {
             FamilyClass::Sonnet => 0.4,
             FamilyClass::Opus => 0.7,
             FamilyClass::Fable => 0.8,
+            FamilyClass::Frontier => 0.6,
+            FamilyClass::Mid => 0.3,
+            FamilyClass::Local => 0.5,
             FamilyClass::Other => 0.5,
         }
     }
@@ -248,7 +296,7 @@ impl FamilyClass {
     fn is_strong(self) -> bool {
         matches!(
             self,
-            FamilyClass::Opus | FamilyClass::Fable | FamilyClass::Sonnet
+            FamilyClass::Opus | FamilyClass::Fable | FamilyClass::Sonnet | FamilyClass::Frontier
         )
     }
 
@@ -270,7 +318,9 @@ impl FamilyClass {
             FamilyClass::Opus => row[1],
             FamilyClass::Sonnet => row[2],
             FamilyClass::Haiku => row[3],
-            FamilyClass::Free => row[4],
+            FamilyClass::Free | FamilyClass::Mid => row[4],
+            FamilyClass::Frontier => row[2],
+            FamilyClass::Local => LOCAL_PRIOR,
             FamilyClass::Other => UNKNOWN_PRIOR,
         }
     }
@@ -584,6 +634,41 @@ mod tests {
     use super::*;
 
     const EPS: f64 = 1e-9;
+
+    #[test]
+    fn non_claude_models_get_their_own_class() {
+        let class = |m: &str| FamilyClass::of(&family_of(m), is_free(m));
+        assert!(class("gpt-5.5") == FamilyClass::Frontier);
+        assert!(class("gpt-6-sol") == FamilyClass::Frontier);
+        assert!(class("gemini-3.1-pro-preview") == FamilyClass::Frontier);
+        assert!(class("gpt-5.4-mini") == FamilyClass::Mid);
+        assert!(class("gemini-3.8-flash-high") == FamilyClass::Mid);
+        assert!(class("mi-groq/openai/gpt-oss-120b") == FamilyClass::Mid);
+        assert!(class("mi-mistral/mistral-large-latest") == FamilyClass::Mid);
+        assert!(class("ollama/gemma4:e4b") == FamilyClass::Local);
+        assert!(class("opencode/deepseek-v4.1-flash-free") == FamilyClass::Free);
+        assert!(class("big-pickle") == FamilyClass::Other);
+        assert!(trusted_unmeasured("gpt-5.5") && trusted_unmeasured("claude-opus-5-5"));
+        assert!(!trusted_unmeasured("ollama/gemma:2b") && !trusted_unmeasured("gemini-3.8-flash-low"));
+    }
+
+    #[test]
+    fn hard_work_skips_local_and_mid_but_takes_frontier() {
+        let cand = |agent: AgentType, model: &str| CandidateModel {
+            agent_type: agent,
+            model: model.to_string(),
+            family: family_of(model),
+            free: is_free(model),
+        };
+        let pool = vec![
+            cand(AgentType::OpenCode, "ollama/gemma4:e4b"),
+            cand(AgentType::Antigravity, "gemini-3.8-flash-high"),
+            cand(AgentType::Codex, "gpt-5.5"),
+        ];
+        let input = RouteInput { kind: TaskKind::Implement, difficulty: Difficulty::Hard, effort: None };
+        let d = route(&input, &pool, &RouterStats::default(), &[], Profile::Equilibrado, &mut || 0.99).unwrap();
+        assert_eq!(d.model, "gpt-5.5");
+    }
 
     fn approx(a: f64, b: f64) {
         assert!((a - b).abs() < EPS, "{a} != {b}");
