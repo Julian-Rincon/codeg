@@ -9,7 +9,9 @@ const SHOW_WORKTREES_KEY = "workspace:sidebar-show-worktrees"
 const SHOW_RECENT_KEY = "workspace:sidebar-show-recent"
 const RECENT_FILTER_KEY = "workspace:sidebar-recent-filter"
 const NAV_ITEMS_KEY = "workspace:sidebar-nav-items"
-const SORT_MODE_KEY = "workspace:sidebar-sort-mode"
+// v2: the default moved to "updated" (most recent activity first); the
+// suffix drops choices saved under the old "created" default.
+const SORT_MODE_KEY = "workspace:sidebar-sort-mode-v2"
 const SECTION_ORDER_KEY = "workspace:sidebar-section-order"
 const SECTION_COLLAPSED_KEY = "workspace:sidebar-section-collapsed"
 const CONVERSATION_EXPANDED_KEY = "workspace:sidebar-conversation-expanded"
@@ -379,14 +381,14 @@ export function saveNavItemVisibility(state: SidebarNavItemVisibility): void {
 }
 
 export function loadSortMode(): SidebarSortMode {
-  if (typeof window === "undefined") return "created"
+  if (typeof window === "undefined") return "updated"
   try {
     const raw = localStorage.getItem(SORT_MODE_KEY)
     if (raw === "updated" || raw === "created") return raw
   } catch {
     /* ignore */
   }
-  return "created"
+  return "updated"
 }
 
 export function saveSortMode(value: SidebarSortMode): void {

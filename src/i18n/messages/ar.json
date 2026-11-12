@@ -2238,6 +2238,7 @@
       "statusCancelledBadge": "ملغى",
       "worktreeRemovedBadge": "تمت إزالة شجرة العمل الأصلية",
       "cliBadge": "بدأت من سطر الأوامر",
+      "telegramBadge": "Telegram",
       "conversationCountUnit": "{count} محادثة",
       "emptyFolderHint": "لا توجد محادثات",
       "noMatchingConversations": "لا توجد محادثات مطابقة",

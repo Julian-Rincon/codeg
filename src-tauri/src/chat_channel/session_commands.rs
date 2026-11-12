@@ -628,6 +628,13 @@ pub async fn handle_task_with(
         }
     };
 
+    // Marked with the channel it came from (`telegram`), for the sidebar.
+    if let Some(ch) = channel.as_ref() {
+        if let Err(e) = conversation_service::set_source(db, conv.id, &ch.channel_type).await {
+            tracing::warn!("[chat] could not mark conversation {}: {e}", conv.id);
+        }
+    }
+
     // 5. Spawn ACP agent (a failover picks the successor's model through
     // the model-category alias, resolved against this agent's own list).
     let owner_label = owner_label_for(channel_id, sender_id, &session_target);

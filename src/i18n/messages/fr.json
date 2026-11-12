@@ -2238,6 +2238,7 @@
       "statusCancelledBadge": "Annulé",
       "worktreeRemovedBadge": "Worktree d'origine supprimé",
       "cliBadge": "Lancée depuis la ligne de commande",
+      "telegramBadge": "Telegram",
       "conversationCountUnit": "{count, plural, one {# conversation} other {# conversations}}",
       "emptyFolderHint": "Aucune conversation",
       "noMatchingConversations": "Aucune conversation correspondante",

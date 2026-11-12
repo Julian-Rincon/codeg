@@ -20,6 +20,7 @@ import {
   CheckCircle2,
   Info,
   ChevronRight,
+  Send,
   SquareTerminal,
 } from "lucide-react"
 import { useTranslations } from "next-intl"
@@ -492,6 +493,19 @@ export const SidebarConversationCard = memo(function SidebarConversationCard({
                           aria-hidden
                         />
                         <span className="sr-only">{tSidebar("cliBadge")}</span>
+                      </span>
+                    ) : conversation.source === "telegram" ? (
+                      <span
+                        className="ml-auto inline-flex shrink-0 items-center"
+                        title={tSidebar("telegramBadge")}
+                      >
+                        <Send
+                          className="h-3 w-3 text-sky-500/80"
+                          aria-hidden
+                        />
+                        <span className="sr-only">
+                          {tSidebar("telegramBadge")}
+                        </span>
                       </span>
                     ) : null}
                     {/* No mark for a conversation re-parented out of a removed

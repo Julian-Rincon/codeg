@@ -2238,6 +2238,7 @@
       "statusCancelledBadge": "취소됨",
       "worktreeRemovedBadge": "원본 worktree가 삭제됨",
       "cliBadge": "명령줄에서 시작됨",
+      "telegramBadge": "Telegram",
       "conversationCountUnit": "{count}개",
       "emptyFolderHint": "대화 없음",
       "noMatchingConversations": "일치하는 대화가 없습니다",

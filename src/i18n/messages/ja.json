@@ -2238,6 +2238,7 @@
       "statusCancelledBadge": "キャンセル済み",
       "worktreeRemovedBadge": "元の worktree は削除済み",
       "cliBadge": "コマンドラインから開始",
+      "telegramBadge": "Telegram",
       "conversationCountUnit": "{count} 件",
       "emptyFolderHint": "会話がありません",
       "noMatchingConversations": "一致する会話がありません",

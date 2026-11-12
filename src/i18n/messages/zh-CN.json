@@ -2238,6 +2238,7 @@
       "statusCancelledBadge": "已取消",
       "worktreeRemovedBadge": "源 worktree 已删除",
       "cliBadge": "从命令行启动",
+      "telegramBadge": "Telegram",
       "conversationCountUnit": "{count} 条",
       "emptyFolderHint": "暂无会话",
       "noMatchingConversations": "未找到匹配的会话",

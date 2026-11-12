@@ -377,6 +377,15 @@ fn is_gitignore_rel_path(path: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Phantom: the filesystem root and the home directory are never watched
+/// recursively. Registering one inotify watch per directory walks the whole
+/// tree synchronously (a home of 300k+ dirs runs past
+/// `fs.inotify.max_user_watches`, fails and unwinds after seconds of blocking),
+/// so those roots go straight to the degraded no-realtime mode.
+fn too_broad_to_watch(root: &Path, home: Option<&Path>) -> bool {
+    root.parent().is_none() || home.is_some_and(|h| h == root)
+}
+
 fn canonicalize_watch_root(root: &Path) -> Result<(PathBuf, String), AppCommandError> {
     let canonical = std::fs::canonicalize(root).map_err(|e| {
         AppCommandError::not_found("Unable to resolve workspace root").with_detail(e.to_string())
@@ -1353,10 +1362,17 @@ pub async fn start_workspace_state_stream_core(
         })?,
     );
 
-    let watch_result = watcher
-        .as_mut()
-        .ok_or_else(|| AppCommandError::task_execution_failed("Failed to create watcher"))?
-        .watch(&root_canonical, RecursiveMode::Recursive);
+    let home = dirs::home_dir().and_then(|h| std::fs::canonicalize(h).ok());
+    let watch_result = if too_broad_to_watch(&root_canonical, home.as_deref()) {
+        Err(notify::Error::generic(
+            "too broad to watch recursively (filesystem root or home)",
+        ))
+    } else {
+        watcher
+            .as_mut()
+            .ok_or_else(|| AppCommandError::task_execution_failed("Failed to create watcher"))?
+            .watch(&root_canonical, RecursiveMode::Recursive)
+    };
 
     if let Err(err) = watch_result {
         tracing::info!(
@@ -1660,6 +1676,16 @@ pub async fn get_workspace_snapshot_core(
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn root_and_home_are_too_broad_to_watch() {
+        let home = std::path::Path::new("/home/someone");
+        assert!(super::too_broad_to_watch(std::path::Path::new("/"), Some(home)));
+        assert!(super::too_broad_to_watch(home, Some(home)));
+        assert!(!super::too_broad_to_watch(&home.join("proyecto"), Some(home)));
+        assert!(!super::too_broad_to_watch(std::path::Path::new("/tmp/x"), None));
+    }
+
     use super::*;
 
     // These tests assert against the state core (seq / recent events /
