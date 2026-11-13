@@ -2325,7 +2325,6 @@
       "noRecentFolders": "最近のフォルダー会話はありません",
       "noRecentCli": "コマンドラインからの最近の会話はありません",
       "recentFilterMenuLabel": "最近の表示",
-      "worktreeRemovedBadge": "元の worktree は削除済み",
       "telegramBadge": "Telegram"
     },
     "conversation": {
@@ -2378,7 +2377,7 @@
       "fieldTitle": "タイトル",
       "untitled": "無題の会話",
       "sessionId": "セッション ID",
-      "externalId": "拡張 ID",
+      "externalId": "セッションインデックス",
       "agent": "エージェント",
       "model": "モデル",
       "status": "ステータス",
@@ -4068,9 +4067,7 @@
         "visualizeFrameTitle": "Codex ビジュアライゼーション",
         "htmlPreviewOpen": "プレビュー",
         "htmlPreviewOpenAria": "{name} をプレビュー",
-        "htmlPreviewHide": "プレビューを閉じる",
-        "agentPromptLabel": "プロンプト",
-        "agentSessionAction": "サブエージェントのセッションを表示"
+        "htmlPreviewHide": "プレビューを閉じる"
       },
       "activity": {
         "oauth": {
@@ -7331,7 +7328,7 @@
     "dialogDescriptionMr": "{repo} のフォルダーに ToDo タスクを作成し、ワークツリーをこのマージリクエストのヘッドにチェックアウトします。エージェントのコミットはその上に積まれ、承認すると同じマージリクエストに push されます。",
     "instructionPlaceholder": "エージェントへの補足指示（任意）…",
     "writebackLabel": "完了時にこの項目へコメントする",
-    "writebackHint": "タスクが完了すると、この項目に 1 件コメントします。結果・リンク・差分の行数です。",
+    "writebackHint": "タスク完了時に、この項目へコメントを 1 件投稿します：エージェントが下書きした返信（タスクを承認するときに確認・編集できます）と、作業の届け方です。",
     "previewToggle": "タスクに含まれる Issue 内容をプレビュー",
     "previewEmpty": "（説明なし）",
     "duplicateBody": "この項目はすでにアクティブなタスクが対応中です：{title}（{status}）。それでも作成しますか？",
@@ -7356,7 +7353,7 @@
     "combineScenarioFixHint": "エージェントは報告を 1 件ずつ判断し、妥当なものだけを 1 つの変更でまとめて修正します。妥当でないものには一切手を付けず、結論を添えてあなたの判断を待ちます。",
     "combineScenarioPlanFirstHint": "エージェントは報告を 1 件ずつ判断し、妥当なものについて 1 つの計画を出して停止します。計画を承認するにはタスクを差し戻して実装させます。",
     "combineWritebackLabel": "完了時に各イシューへコメントする",
-    "combineWritebackHint": "タスクが完了すると、これらのイシューそれぞれに 1 件ずつコメントします。結果・リンク・差分の行数です。",
+    "combineWritebackHint": "タスク完了時に、各 Issue へコメントを 1 件ずつ投稿します：エージェントがそれぞれに下書きした返信（タスクを承認するときに確認・編集できます）と、作業の届け方です。",
     "combineTooFew": "まとめて対応するにはイシューが 2 件以上必要です。1 件だけなら、その行から対応してください。",
     "combineConflictsBody": "これらのイシューの一部は、すでにアクティブなタスクが対応中です：",
     "combineConflictItem": "#{number} — {title}（{status}）",
@@ -7442,7 +7439,7 @@
     "autoAutoStart": "すぐに開始",
     "autoAutoStartHint": "新しいタスクをすぐにキューに入れます。実行タイミングはタスク設定の同時実行数の上限で決まります。オフ：To-do で待機します。",
     "autoWriteback": "結果をコメントで返す",
-    "autoWritebackHint": "タスク完了時に、トリガーダイアログのスイッチと同じ短いステータスコメントを投稿します。",
+    "autoWritebackHint": "タスク完了時に、開始ダイアログのスイッチと同じコメントを投稿します：エージェントが下書きし、タスク承認時に確認した返信と、作業の届け方です。",
     "autoActivity": "アクティビティ",
     "autoScanNow": "今すぐスキャン",
     "autoScanNowOff": "トリガーを有効にして保存するとスキャンできます。",

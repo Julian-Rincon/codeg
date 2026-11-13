@@ -2325,7 +2325,6 @@
       "noRecentFolders": "沒有最近的資料夾對話",
       "noRecentCli": "沒有最近從命令列啟動的對話",
       "recentFilterMenuLabel": "最近顯示",
-      "worktreeRemovedBadge": "來源 worktree 已刪除",
       "telegramBadge": "Telegram"
     },
     "conversation": {
@@ -2378,7 +2377,7 @@
       "fieldTitle": "標題",
       "untitled": "未命名對話",
       "sessionId": "對話 ID",
-      "externalId": "擴充 ID",
+      "externalId": "對話索引",
       "agent": "智能體",
       "model": "模型",
       "status": "狀態",
@@ -4068,9 +4067,7 @@
         "visualizeFrameTitle": "Codex 視覺化",
         "htmlPreviewOpen": "預覽",
         "htmlPreviewOpenAria": "預覽 {name}",
-        "htmlPreviewHide": "收起預覽",
-        "agentPromptLabel": "提示詞",
-        "agentSessionAction": "檢視子智慧體工作階段"
+        "htmlPreviewHide": "收起預覽"
       },
       "activity": {
         "oauth": {
@@ -7331,7 +7328,7 @@
     "dialogDescriptionMr": "將在 {repo} 對應的資料夾建立一個待辦任務，工作樹直接檢出到這個合併請求的頭提交——智能體的提交疊在它上面，驗收後推回同一個合併請求。",
     "instructionPlaceholder": "給智慧體的補充說明（可選）…",
     "writebackLabel": "完成後回寫留言",
-    "writebackHint": "任務完成後，在這個項目下發一則留言：結果、連結與變更行數。",
+    "writebackHint": "任務完成後，在這個條目下發一則評論：智慧體起草的處理回覆（接受任務時可審閱修改），以及工作是怎麼交付的。",
     "previewToggle": "預覽任務將攜帶的 Issue 內容",
     "previewEmpty": "（無描述）",
     "duplicateBody": "已有一個進行中的任務在處理該條目：{title}（{status}）。仍要再建一個嗎？",
@@ -7356,7 +7353,7 @@
     "combineScenarioFixHint": "智慧體先逐一判斷報告是否屬實，把屬實的在同一處改動裡一起修好；不屬實的一行都不動，帶著結論回來等你處理。",
     "combineScenarioPlanFirstHint": "智慧體先逐一判斷報告是否屬實，再為屬實的那些產出一份方案並停下；同意方案後退回任務，讓它實作。",
     "combineWritebackLabel": "完成後在每個議題下回寫評論",
-    "combineWritebackHint": "任務完成後，在每個議題下各發一則評論：結果、連結和改動行數。",
+    "combineWritebackHint": "任務完成後，在每個議題下各發一則評論：智慧體為它起草的處理回覆（接受任務時可審閱修改），以及工作是怎麼交付的。",
     "combineTooFew": "合併處理至少要 2 個議題——只處理一個的話，請在它那一列點「處理」。",
     "combineConflictsBody": "其中有些議題已有活躍任務在處理：",
     "combineConflictItem": "#{number}——{title}（{status}）",
@@ -7442,7 +7439,7 @@
     "autoAutoStart": "立即開始",
     "autoAutoStartHint": "新任務建立後立即排隊，何時執行由任務設定的並行上限決定。關閉時：任務留在待辦中。",
     "autoWriteback": "完成後回寫留言",
-    "autoWritebackHint": "任務完成時，在項目下發布與發起對話框「回寫留言」開關相同的簡短狀態留言。",
+    "autoWritebackHint": "任務完成時，在條目下發布與發起對話框中「回帖」開關相同的評論：智慧體起草、你在接受任務時審閱過的處理回覆，以及交付情況。",
     "autoActivity": "執行情況",
     "autoScanNow": "立即掃描",
     "autoScanNowOff": "開啟一種觸發方式並儲存後才能掃描。",

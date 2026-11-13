@@ -2325,7 +2325,6 @@
       "noRecentFolders": "没有最近的文件夹会话",
       "noRecentCli": "没有最近从命令行启动的会话",
       "recentFilterMenuLabel": "最近显示",
-      "worktreeRemovedBadge": "源 worktree 已删除",
       "telegramBadge": "Telegram"
     },
     "conversation": {
@@ -2378,7 +2377,7 @@
       "fieldTitle": "标题",
       "untitled": "未命名会话",
       "sessionId": "会话 ID",
-      "externalId": "扩展 ID",
+      "externalId": "会话索引",
       "agent": "智能体",
       "model": "模型",
       "status": "状态",
@@ -4068,9 +4067,7 @@
         "visualizeFrameTitle": "Codex 可视化",
         "htmlPreviewOpen": "预览",
         "htmlPreviewOpenAria": "预览 {name}",
-        "htmlPreviewHide": "收起预览",
-        "agentPromptLabel": "提示词",
-        "agentSessionAction": "查看子智能体会话"
+        "htmlPreviewHide": "收起预览"
       },
       "activity": {
         "oauth": {
@@ -7331,7 +7328,7 @@
     "dialogDescriptionMr": "将在 {repo} 对应的文件夹创建一个待办任务，工作树直接检出到这个合并请求的头提交——智能体的提交叠在它上面，验收后推回同一个合并请求。",
     "instructionPlaceholder": "给智能体的补充说明（可选）…",
     "writebackLabel": "完成后回写评论",
-    "writebackHint": "任务完成后，在这个条目下发一条评论：结果、链接和改动行数。",
+    "writebackHint": "任务完成后，在这个条目下发一条评论：智能体起草的处理回复（接受任务时可审阅修改），以及工作是怎么交付的。",
     "previewToggle": "预览任务将携带的 Issue 内容",
     "previewEmpty": "（无描述）",
     "duplicateBody": "已有一个活跃任务在处理该条目：{title}（{status}）。仍要再建一个吗？",
@@ -7356,7 +7353,7 @@
     "combineScenarioFixHint": "智能体先逐个判断报告是否属实，把属实的在同一处改动里一起修好；不属实的一行都不动，带着结论回来等你处理。",
     "combineScenarioPlanFirstHint": "智能体先逐个判断报告是否属实，再为属实的那些出一份方案并停下；同意方案后退回任务，让它实施。",
     "combineWritebackLabel": "完成后在每个议题下回写评论",
-    "combineWritebackHint": "任务完成后，在每个议题下各发一条评论：结果、链接和改动行数。",
+    "combineWritebackHint": "任务完成后，在每个议题下各发一条评论：智能体为它起草的处理回复（接受任务时可审阅修改），以及工作是怎么交付的。",
     "combineTooFew": "合并处理至少要 2 个议题——只处理一个的话，请在它那一行点「处理」。",
     "combineConflictsBody": "其中有些议题已有活跃任务在处理：",
     "combineConflictItem": "#{number}——{title}（{status}）",
@@ -7442,7 +7439,7 @@
     "autoAutoStart": "立即开始",
     "autoAutoStartHint": "新任务创建后立即排队，何时运行由任务设置里的并发上限决定。关闭时：任务留在待办中。",
     "autoWriteback": "完成后回帖",
-    "autoWritebackHint": "任务完成时，在条目下发布与发起对话框中「回帖」开关相同的简短状态评论。",
+    "autoWritebackHint": "任务完成时，在条目下发布与发起对话框中「回帖」开关相同的评论：智能体起草、你在接受任务时审阅过的处理回复，以及交付情况。",
     "autoActivity": "运行情况",
     "autoScanNow": "立即扫描",
     "autoScanNowOff": "开启一种触发方式并保存后才能扫描。",

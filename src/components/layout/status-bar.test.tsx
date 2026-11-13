@@ -27,6 +27,13 @@ vi.mock("@/components/layout/command-dropdown", () => ({
 vi.mock("@/components/layout/quick-actions-dropdown", () => ({
   QuickActionsDropdown: () => null,
 }))
+// Phantom's own status-bar items (they need next-intl, which this test omits).
+vi.mock("@/components/layout/status-bar-usage", () => ({
+  StatusBarUsage: () => null,
+}))
+vi.mock("@/components/phantom/attention-status-bar", () => ({
+  PhantomAttentionStatusBar: () => null,
+}))
 vi.mock("@/components/layout/status-bar-web-service", () => ({
   StatusBarWebService: () => <span data-testid="web-service" />,
 }))

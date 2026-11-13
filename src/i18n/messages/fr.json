@@ -2325,7 +2325,6 @@
       "noRecentFolders": "Aucune conversation de dossier récente",
       "noRecentCli": "Aucune conversation récente depuis la ligne de commande",
       "recentFilterMenuLabel": "Afficher dans Récents",
-      "worktreeRemovedBadge": "Worktree d'origine supprimé",
       "telegramBadge": "Telegram"
     },
     "conversation": {
@@ -2378,7 +2377,7 @@
       "fieldTitle": "Titre",
       "untitled": "Conversation sans titre",
       "sessionId": "ID de session",
-      "externalId": "ID d'extension",
+      "externalId": "Index de session",
       "agent": "Agent",
       "model": "Modèle",
       "status": "Statut",
@@ -4068,9 +4067,7 @@
         "visualizeFrameTitle": "Visualisation Codex",
         "htmlPreviewOpen": "Aperçu",
         "htmlPreviewOpenAria": "Aperçu de {name}",
-        "htmlPreviewHide": "Masquer l’aperçu",
-        "agentPromptLabel": "Instruction",
-        "agentSessionAction": "Voir la session du sous-agent"
+        "htmlPreviewHide": "Masquer l’aperçu"
       },
       "activity": {
         "oauth": {
@@ -7331,7 +7328,7 @@
     "dialogDescriptionMr": "Crée une tâche à faire dans le dossier de {repo}, avec son worktree positionné sur le head de cette merge request : les commits de l'agent viennent par-dessus et sont poussés vers la même merge request une fois que vous acceptez.",
     "instructionPlaceholder": "Instruction supplémentaire pour l'agent (facultatif)…",
     "writebackLabel": "Commenter le résultat sur cet élément",
-    "writebackHint": "Quand la tâche se termine, codeg publie un commentaire sur cet élément : le résultat, le lien et les chiffres du diff.",
+    "writebackHint": "Quand la tâche se termine, codeg publie un commentaire sur cet élément : la réponse rédigée par l'agent (vous la relisez en acceptant la tâche) et la manière dont le travail a été livré.",
     "previewToggle": "Aperçu du contenu de l'issue porté par la tâche",
     "previewEmpty": "(aucune description)",
     "duplicateBody": "Une tâche active traite déjà cet élément : {title} ({status}). En créer une autre quand même ?",
@@ -7356,7 +7353,7 @@
     "combineScenarioFixHint": "L'agent juge d'abord chaque rapport et corrige en une seule modification ceux qui tiennent ; les autres restent intacts et il vous rend sa conclusion pour décider.",
     "combineScenarioPlanFirstHint": "L'agent juge d'abord chaque rapport, livre un seul plan pour ceux qui tiennent puis s'arrête ; validez-le en renvoyant la tâche pour l'implémentation.",
     "combineWritebackLabel": "Commenter le résultat sur chaque ticket",
-    "combineWritebackHint": "Quand la tâche se termine, codeg publie un commentaire sur chacun de ces tickets : le résultat, le lien et les compteurs du diff.",
+    "combineWritebackHint": "Quand la tâche se termine, codeg publie un commentaire sur chacun de ces tickets : la réponse que l'agent rédige pour lui (vous les relisez en acceptant la tâche) et la manière dont le travail a été livré.",
     "combineTooFew": "Traiter des tickets ensemble en demande au moins deux ; pour un seul, lancez-le depuis sa propre ligne.",
     "combineConflictsBody": "Des tâches actives traitent déjà certains de ces tickets :",
     "combineConflictItem": "#{number} — {title} ({status})",
@@ -7442,7 +7439,7 @@
     "autoAutoStart": "Démarrer tout de suite",
     "autoAutoStartHint": "Met chaque nouvelle tâche en file aussitôt ; la limite de concurrence de vos réglages de tâches décide quand elle s'exécute. Désactivé : elle attend dans À faire.",
     "autoWriteback": "Commenter le résultat",
-    "autoWritebackHint": "À la fin de la tâche, publie le même court commentaire d'état que l'interrupteur de la boîte de lancement.",
+    "autoWritebackHint": "Quand la tâche se termine, publier le même commentaire que l'interrupteur de la boîte de lancement : la réponse rédigée par l'agent, relue en acceptant la tâche, et la manière dont le travail a été livré.",
     "autoActivity": "Activité",
     "autoScanNow": "Analyser maintenant",
     "autoScanNowOff": "Activez un déclencheur et enregistrez pour analyser.",

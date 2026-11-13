@@ -2325,7 +2325,6 @@
       "noRecentFolders": "No recent folder conversations",
       "noRecentCli": "No recent conversations from the command line",
       "recentFilterMenuLabel": "Show in Recent",
-      "worktreeRemovedBadge": "Source worktree removed",
       "telegramBadge": "Started from Telegram"
     },
     "conversation": {
@@ -2378,7 +2377,7 @@
       "fieldTitle": "Title",
       "untitled": "Untitled conversation",
       "sessionId": "Session ID",
-      "externalId": "Extension ID",
+      "externalId": "Session Index",
       "agent": "Agent",
       "model": "Model",
       "status": "Status",
@@ -4068,9 +4067,7 @@
         "visualizeFrameTitle": "Codex visualization",
         "htmlPreviewOpen": "Preview",
         "htmlPreviewOpenAria": "Preview {name}",
-        "htmlPreviewHide": "Hide preview",
-        "agentPromptLabel": "Prompt",
-        "agentSessionAction": "View sub-agent session"
+        "htmlPreviewHide": "Hide preview"
       },
       "activity": {
         "oauth": {
@@ -7331,7 +7328,7 @@
     "dialogDescriptionMr": "Creates a to-do task in {repo}'s folder, with its worktree checked out at this merge request's head — the agent's commits go on top of it and are pushed back to the same merge request once you accept.",
     "instructionPlaceholder": "Optional extra instruction for the agent…",
     "writebackLabel": "Comment the outcome back on this item",
-    "writebackHint": "When the task finishes, codeg posts one comment on this item: the outcome, the link and the diff counters.",
+    "writebackHint": "When the task finishes, codeg posts one comment on this item: the reply the agent drafts (you review it when you accept the task) and how the work was delivered.",
     "previewToggle": "Preview the issue content the task will carry",
     "previewEmpty": "(no description)",
     "duplicateBody": "An active task already handles this item: {title} ({status}). Create another one anyway?",
@@ -7356,7 +7353,7 @@
     "combineScenarioFixHint": "The agent judges each report first and fixes the ones that hold up, in one change — the ones that don't are left untouched and handed back to you to decide.",
     "combineScenarioPlanFirstHint": "The agent judges each report first, then delivers one plan for the ones that hold up and stops — approve it by returning the task for implementation.",
     "combineWritebackLabel": "Comment the outcome back on each issue",
-    "combineWritebackHint": "When the task finishes, codeg posts one comment on each of these issues: the outcome, the link and the diff counters.",
+    "combineWritebackHint": "When the task finishes, codeg posts one comment on each of these issues: the reply the agent drafts for it (you review them when you accept the task) and how the work was delivered.",
     "combineTooFew": "Handling issues together takes at least two — start a single issue from its own row instead.",
     "combineConflictsBody": "Active tasks already handle some of these issues:",
     "combineConflictItem": "#{number} — {title} ({status})",
@@ -7442,7 +7439,7 @@
     "autoAutoStart": "Start right away",
     "autoAutoStartHint": "Queue each new task at once — your task settings' concurrency limit decides when it runs. Off: it waits in To-do.",
     "autoWriteback": "Comment the outcome back",
-    "autoWritebackHint": "When the task finishes, post the same short status comment the trigger dialog's switch posts.",
+    "autoWritebackHint": "When the task finishes, post the same comment the trigger dialog's switch posts: the agent's drafted reply, reviewed when you accept the task, and how the work was delivered.",
     "autoActivity": "Activity",
     "autoScanNow": "Scan now",
     "autoScanNowOff": "Switch a trigger on and save to scan.",

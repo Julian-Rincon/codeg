@@ -2325,7 +2325,6 @@
       "noRecentFolders": "Nenhuma conversa de pasta recente",
       "noRecentCli": "Nenhuma conversa recente da linha de comando",
       "recentFilterMenuLabel": "Mostrar em Recentes",
-      "worktreeRemovedBadge": "Worktree de origem removida",
       "telegramBadge": "Telegram"
     },
     "conversation": {
@@ -2378,7 +2377,7 @@
       "fieldTitle": "Título",
       "untitled": "Conversa sem título",
       "sessionId": "ID da sessão",
-      "externalId": "ID da extensão",
+      "externalId": "Índice da sessão",
       "agent": "Agente",
       "model": "Modelo",
       "status": "Estado",
@@ -4068,9 +4067,7 @@
         "visualizeFrameTitle": "Visualização do Codex",
         "htmlPreviewOpen": "Pré-visualizar",
         "htmlPreviewOpenAria": "Pré-visualizar {name}",
-        "htmlPreviewHide": "Ocultar pré-visualização",
-        "agentPromptLabel": "Instrução",
-        "agentSessionAction": "Ver a sessão do subagente"
+        "htmlPreviewHide": "Ocultar pré-visualização"
       },
       "activity": {
         "oauth": {
@@ -7331,7 +7328,7 @@
     "dialogDescriptionMr": "Cria uma tarefa pendente na pasta de {repo}, com o worktree no head deste merge request — os commits do agente ficam por cima e são enviados ao mesmo merge request quando você aceita.",
     "instructionPlaceholder": "Instrução extra para o agente (opcional)…",
     "writebackLabel": "Comentar o resultado neste item",
-    "writebackHint": "Quando a tarefa terminar, o codeg publica um comentário neste item: o resultado, o link e os números do diff.",
+    "writebackHint": "Quando a tarefa terminar, o codeg publica um comentário neste item: a resposta redigida pelo agente (você a revisa ao aceitar a tarefa) e como o trabalho foi entregue.",
     "previewToggle": "Prévia do conteúdo do issue que a tarefa levará",
     "previewEmpty": "(sem descrição)",
     "duplicateBody": "Já existe uma tarefa ativa para este item: {title} ({status}). Criar outra mesmo assim?",
@@ -7356,7 +7353,7 @@
     "combineScenarioFixHint": "O agente avalia primeiro cada relato e corrige em uma só mudança os que se sustentam; os demais ficam intactos e ele devolve a conclusão para você decidir.",
     "combineScenarioPlanFirstHint": "O agente avalia primeiro cada relato, entrega um único plano para os que se sustentam e para; aprove-o devolvendo a tarefa para a implementação.",
     "combineWritebackLabel": "Comentar o resultado em cada issue",
-    "combineWritebackHint": "Quando a tarefa terminar, o codeg publica um comentário em cada uma dessas issues: o resultado, o link e os contadores do diff.",
+    "combineWritebackHint": "Quando a tarefa terminar, o codeg publica um comentário em cada uma destas issues: a resposta que o agente redige para ela (você as revisa ao aceitar a tarefa) e como o trabalho foi entregue.",
     "combineTooFew": "Processar issues juntas exige pelo menos duas; para uma só, inicie-a na própria linha.",
     "combineConflictsBody": "Algumas dessas issues já têm uma tarefa ativa:",
     "combineConflictItem": "#{number} — {title} ({status})",
@@ -7442,7 +7439,7 @@
     "autoAutoStart": "Iniciar imediatamente",
     "autoAutoStartHint": "Coloca cada nova tarefa na fila na hora — o limite de concorrência das configurações de tarefas decide quando ela roda. Desligado: ela espera em A fazer.",
     "autoWriteback": "Comentar o resultado",
-    "autoWritebackHint": "Ao terminar a tarefa, publica o mesmo breve comentário de status que o interruptor do diálogo de início publica.",
+    "autoWritebackHint": "Quando a tarefa terminar, publica o mesmo comentário do interruptor da caixa de início: a resposta redigida pelo agente, revisada ao aceitar a tarefa, e como o trabalho foi entregue.",
     "autoActivity": "Atividade",
     "autoScanNow": "Escanear agora",
     "autoScanNowOff": "Ligue um gatilho e salve para escanear.",

@@ -2325,7 +2325,6 @@
       "noRecentFolders": "Keine letzten Ordner-Unterhaltungen",
       "noRecentCli": "Keine letzten Unterhaltungen von der Kommandozeile",
       "recentFilterMenuLabel": "In „Zuletzt“ anzeigen",
-      "worktreeRemovedBadge": "Quell-Worktree entfernt",
       "telegramBadge": "Telegram"
     },
     "conversation": {
@@ -2378,7 +2377,7 @@
       "fieldTitle": "Titel",
       "untitled": "Unbenannte Konversation",
       "sessionId": "Sitzungs-ID",
-      "externalId": "Erweiterungs-ID",
+      "externalId": "Sitzungsindex",
       "agent": "Agent",
       "model": "Modell",
       "status": "Status",
@@ -4068,9 +4067,7 @@
         "visualizeFrameTitle": "Codex-Visualisierung",
         "htmlPreviewOpen": "Vorschau",
         "htmlPreviewOpenAria": "Vorschau von {name}",
-        "htmlPreviewHide": "Vorschau ausblenden",
-        "agentPromptLabel": "Eingabe",
-        "agentSessionAction": "Subagent-Sitzung ansehen"
+        "htmlPreviewHide": "Vorschau ausblenden"
       },
       "activity": {
         "oauth": {
@@ -7331,7 +7328,7 @@
     "dialogDescriptionMr": "Legt in {repo}s Ordner eine To-do-Aufgabe an, deren Worktree auf dem Head dieses Merge Requests ausgecheckt ist — die Commits des Agenten kommen obendrauf und werden beim Annehmen in denselben Merge Request gepusht.",
     "instructionPlaceholder": "Optionale Zusatzanweisung für den Agenten…",
     "writebackLabel": "Ergebnis als Kommentar zurückschreiben",
-    "writebackHint": "Wenn die Aufgabe fertig ist, schreibt codeg einen Kommentar zu diesem Eintrag: Ergebnis, Link und Diff-Zahlen.",
+    "writebackHint": "Wenn die Aufgabe fertig ist, schreibt codeg einen Kommentar zu diesem Eintrag: die vom Agenten entworfene Antwort (du prüfst sie beim Annehmen der Aufgabe) und wie die Arbeit ausgeliefert wurde.",
     "previewToggle": "Issue-Inhalt der Aufgabe ansehen",
     "previewEmpty": "(keine Beschreibung)",
     "duplicateBody": "Eine aktive Aufgabe bearbeitet dieses Element bereits: {title} ({status}). Trotzdem eine weitere erstellen?",
@@ -7356,7 +7353,7 @@
     "combineScenarioFixHint": "Der Agent prüft jeden Bericht zuerst und behebt die stichhaltigen in einer gemeinsamen Änderung – die übrigen rührt er nicht an und gibt dir den Befund zur Entscheidung zurück.",
     "combineScenarioPlanFirstHint": "Der Agent prüft jeden Bericht zuerst, liefert dann einen gemeinsamen Plan für die stichhaltigen und stoppt – gib ihn frei, indem du die Aufgabe zur Umsetzung zurückgibst.",
     "combineWritebackLabel": "Ergebnis bei jedem Issue kommentieren",
-    "combineWritebackHint": "Wenn die Aufgabe fertig ist, schreibt codeg zu jedem dieser Issues einen Kommentar: Ergebnis, Link und Diff-Zahlen.",
+    "combineWritebackHint": "Wenn die Aufgabe fertig ist, schreibt codeg zu jedem dieser Issues einen Kommentar: die Antwort, die der Agent dafür entwirft (du prüfst sie beim Annehmen der Aufgabe), und wie die Arbeit ausgeliefert wurde.",
     "combineTooFew": "Gemeinsam bearbeiten geht erst ab zwei Issues – ein einzelnes startest du in seiner eigenen Zeile.",
     "combineConflictsBody": "Einige dieser Issues bearbeitet bereits eine aktive Aufgabe:",
     "combineConflictItem": "#{number} — {title} ({status})",
@@ -7442,7 +7439,7 @@
     "autoAutoStart": "Sofort starten",
     "autoAutoStartHint": "Reiht jede neue Aufgabe sofort ein – wann sie läuft, entscheidet das Parallelitätslimit deiner Aufgabeneinstellungen. Aus: Sie wartet unter Zu erledigen.",
     "autoWriteback": "Ergebnis kommentieren",
-    "autoWritebackHint": "Postet nach Abschluss der Aufgabe denselben kurzen Statuskommentar wie der Schalter im Startdialog.",
+    "autoWritebackHint": "Wenn die Aufgabe fertig ist, denselben Kommentar schreiben wie der Schalter im Startdialog: die vom Agenten entworfene, beim Annehmen geprüfte Antwort und wie die Arbeit ausgeliefert wurde.",
     "autoActivity": "Aktivität",
     "autoScanNow": "Jetzt scannen",
     "autoScanNowOff": "Schalte einen Auslöser ein und speichere, um zu scannen.",
