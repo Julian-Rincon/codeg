@@ -89,7 +89,6 @@
       "sectionDescription": "Elige una paleta de colores para acentos, botones y resaltados.",
       "current": "Color actual: {color}",
       "options": {
-        "phantom": "Phantom",
         "neutral": "Neutral",
         "zinc": "Zinc",
         "slate": "Slate",
@@ -101,7 +100,8 @@
         "green": "Green",
         "blue": "Blue",
         "yellow": "Yellow",
-        "violet": "Violet"
+        "violet": "Violet",
+        "phantom": "Phantom"
       }
     },
     "customStyle": {
@@ -1993,11 +1993,6 @@
   "LoginPage": {
     "documentTitle": "Iniciar sesión - Phantom",
     "brand": "Phantom",
-    "agentsLabel": "Agentes",
-    "hideToken": "Ocultar token",
-    "showToken": "Mostrar token",
-    "tokenLabel": "Token de acceso",
-    "tagline": "Tu central de IA",
     "subtitle": "Conecta con tu servidor local de Phantom",
     "tokenPlaceholder": "Pega tu token",
     "connect": "Conectar",
@@ -2005,7 +2000,12 @@
     "helpText": "Instalación local: copia CODEG_TOKEN de ~/.config/codeg/server.env. App de escritorio: Configuración → Servicio web.",
     "invalidToken": "Token no válido. Por favor, comprueba e inténtalo de nuevo.",
     "connectionFailed": "Error de conexión (HTTP {status})",
-    "networkError": "No se puede conectar al servidor"
+    "networkError": "No se puede conectar al servidor",
+    "agentsLabel": "Agentes",
+    "hideToken": "Ocultar token",
+    "showToken": "Mostrar token",
+    "tokenLabel": "Token de acceso",
+    "tagline": "Tu central de IA"
   },
   "CommitPage": {
     "title": "Confirmación",
@@ -2236,9 +2236,8 @@
       "statusRunningBadge": "Ejecutando",
       "runningCountBadge": "{count, plural, one {# sesión en ejecución} other {# sesiones en ejecución}}",
       "statusCancelledBadge": "Cancelado",
-      "worktreeRemovedBadge": "Worktree de origen eliminado",
+      "originalWorkingDir": "Directorio de trabajo original",
       "cliBadge": "Iniciada desde la línea de comandos",
-      "telegramBadge": "Iniciada desde Telegram",
       "conversationCountUnit": "{count, plural, one {# conversación} other {# conversaciones}}",
       "emptyFolderHint": "Sin conversaciones",
       "noMatchingConversations": "No hay conversaciones coincidentes",
@@ -2278,6 +2277,7 @@
         "untitledConversation": "Conversación sin título",
         "setStatus": "Cambiar estado…",
         "deleteSelected": "Eliminar",
+        "moveSelected": "Mover a…",
         "noConversations": "No hay conversaciones en esta carpeta.",
         "noConversationsWorkspace": "No hay conversaciones en el espacio de trabajo.",
         "noMatchingConversations": "Ninguna conversación coincide con los filtros.",
@@ -2324,7 +2324,9 @@
       "noRecentChats": "No hay chats recientes",
       "noRecentFolders": "No hay conversaciones de carpeta recientes",
       "noRecentCli": "No hay conversaciones recientes desde la línea de comandos",
-      "recentFilterMenuLabel": "Mostrar en Recientes"
+      "recentFilterMenuLabel": "Mostrar en Recientes",
+      "worktreeRemovedBadge": "Worktree de origen eliminado",
+      "telegramBadge": "Iniciada desde Telegram"
     },
     "conversation": {
       "reloadFailed": "No se pudo recargar la conversación: {message}",
@@ -2426,6 +2428,33 @@
       "reopen": "Reabrir",
       "expandSubsessions": "Expandir subconversaciones",
       "collapseSubsessions": "Contraer subconversaciones"
+    },
+    "moveConversation": {
+      "menuLabel": "Mover a",
+      "title": "Mover conversación",
+      "titleMany": "Mover {count, plural, one {# conversación} other {# conversaciones}}",
+      "intro": "«{title}» se moverá a esta carpeta:",
+      "introMany": "{count, plural, one {La conversación seleccionada se moverá} other {Las # conversaciones seleccionadas se moverán}} a esta carpeta:",
+      "untitledConversation": "Conversación sin título",
+      "explain": "A partir del siguiente mensaje, el agente trabaja en esta carpeta; el historial no cambia. Si el agente no puede reanudar la sesión aquí, se te ofrecerá recargarla o iniciar una sesión nueva.",
+      "chatFilesNote": "Los archivos creados durante el chat se quedan en su directorio temporal {path}; no se mueven a la carpeta.",
+      "chatFilesNoteMany": "Los archivos creados durante estos chats se quedan en sus directorios temporales; no se mueven a la carpeta.",
+      "noTargets": "No hay otra carpeta abierta",
+      "targetUnavailable": "Esta carpeta se cerró o se eliminó; elige otra.",
+      "cancel": "Cancelar",
+      "move": "Mover",
+      "toastMoved": "{count, plural, one {Se movió # conversación} other {Se movieron # conversaciones}} a {folder}",
+      "toastSkipped": "{count, plural, one {# conversación no se movió} other {# conversaciones no se movieron}}",
+      "toastFailed": "No se pudo mover: {message}",
+      "skipReason": {
+        "not_found": "Ya no existe",
+        "not_movable": "Las subconversaciones se mueven con su conversación principal",
+        "already_there": "Ya está en esta carpeta",
+        "task_owned": "Pertenece a una tarea pendiente",
+        "busy": "Un agente está trabajando en ella; inténtalo cuando termine",
+        "conflict": "Cambió mientras se movía; inténtalo de nuevo",
+        "target_unavailable": "La carpeta se cerró o se eliminó"
+      }
     },
     "search": {
       "dialogTitle": "Buscar",
@@ -2533,6 +2562,24 @@
         "loadFailed": "No se pudo leer el estado: {message}",
         "openSettings": "Abrir ajustes completos",
         "refresh": "Actualizar"
+      },
+      "webService": {
+        "title": "Servicio web",
+        "start": "Iniciar servicio web",
+        "stop": "Detener servicio web",
+        "cancel": "Cancelar",
+        "confirmStart": "Iniciar",
+        "confirmTitle": "¿Abrir Codeg a tu red?",
+        "confirmDescription": "El servicio web escuchará en {address}. Cualquier dispositivo de tu red podrá acceder a Codeg —incluidos sus terminales y agentes— con el token de acceso.",
+        "tooltipNetwork": "Servicio web · escuchando en {address} (accesible desde tu red)",
+        "tooltipLocal": "Servicio web · escuchando en {address} (solo este equipo)",
+        "tooltipStopped": "Servicio web · detenido",
+        "hintNetwork": "Escuchando en {address}. Los dispositivos de tu red pueden abrir Codeg con el token de acceso.",
+        "hintLocal": "Escuchando en {address}. Solo este equipo puede acceder.",
+        "hintStoppedNetwork": "Detenido. Al iniciarse escuchará en {address}, accesible desde tu red.",
+        "hintStoppedLocal": "Detenido. Al iniciarse escuchará en {address}, solo este equipo.",
+        "copyAddress": "Copiar dirección",
+        "openSettings": "Abrir ajustes del servicio web"
       },
       "usage": {
         "agent": "Claude",
@@ -3463,7 +3510,8 @@
         },
         "errors": {
           "connectionFailed": "Conexión fallida",
-          "sendPromptFailed": "No se pudo enviar el mensaje: {error}"
+          "sendPromptFailed": "No se pudo enviar el mensaje: {error}",
+          "conversationMoved": "Esta conversación se movió a {folder}. Vuelve a enviar el mensaje para continuar allí."
         }
       },
       "shared": {
@@ -3870,11 +3918,11 @@
         "jumpToPreviousUserMessage": "Ir al mensaje del usuario",
         "showMore": "Mostrar más",
         "showLess": "Mostrar menos",
+        "resizeWidth": "Arrastra para cambiar el ancho del chat · doble clic para restablecer",
         "listen": "Escuchar",
         "stopListening": "Detener",
         "listenUnavailable": "Servicio de voz no disponible",
-        "listenCodeBlock": "Bloque de código.",
-        "resizeWidth": "Arrastra para cambiar el ancho del chat · doble clic para restablecer"
+        "listenCodeBlock": "Bloque de código."
       },
       "liveTurnStats": {
         "elapsedHours": "{value} h",
@@ -3950,14 +3998,12 @@
         "readImageLoading": "Cargando imagen…",
         "readImageError": "No se pudo cargar la imagen",
         "shellSession": "Sesión {id}",
-        "agentPromptLabel": "Instrucción",
         "agentModelLabel": "Modelo",
         "agentEffortLabel": "Esfuerzo",
         "agentRecoveredNote": "El subagente realmente terminó; su resultado nunca se entregó porque el turno se abortó:",
         "agentProgressTools": "{count} llamadas a herramientas",
         "agentProgressTurns": "{count} turnos",
         "agentProgressContext": "contexto {pct}%",
-        "agentSessionAction": "Ver la sesión del subagente",
         "agentSessionTitle": "Sesión del subagente",
         "agentSessionLoading": "Cargando la transcripción del subagente…",
         "agentSessionEmpty": "El subagente aún no ha escrito nada.",
@@ -4022,9 +4068,18 @@
         "visualizeFrameTitle": "Visualización de Codex",
         "htmlPreviewOpen": "Vista previa",
         "htmlPreviewOpenAria": "Vista previa de {name}",
-        "htmlPreviewHide": "Ocultar vista previa"
+        "htmlPreviewHide": "Ocultar vista previa",
+        "agentPromptLabel": "Instrucción",
+        "agentSessionAction": "Ver la sesión del subagente"
       },
       "activity": {
+        "oauth": {
+          "waiting": "Esperando autorización de {server}",
+          "reconnecting": "Reconectando con {server}…",
+          "open": "Abrir autorización en el navegador del sistema",
+          "verify": "Tras reconectar, verifica el acceso con una llamada real a una herramienta MCP. Abrir el navegador no confirma la autorización.",
+          "openFailed": "No se pudo abrir el navegador. Usa el enlace de autorización para reintentar."
+        },
         "header": {
           "label": "Actividad",
           "working": "En curso",
@@ -4190,7 +4245,9 @@
         "openFile": "Abrir {filePath}",
         "collapse": "Contraer",
         "currentMessage": "Mensaje actual",
-        "scrollToCurrent": "Desplazarse al mensaje actual (#{ordinal})"
+        "scrollToCurrent": "Desplazarse al mensaje actual (#{ordinal})",
+        "running": "En curso",
+        "total": "{count, plural, one {# mensaje} other {# mensajes}}"
       },
       "replyArtifacts": {
         "title": "Archivos modificados",
@@ -4246,6 +4303,7 @@
         "resumeDelegation": "Reanudando la tarea {task}",
         "resumeDelegationNoId": "Reanudando una tarea delegada",
         "promptLabel": "Instrucción",
+        "attachmentsLabel": "Adjuntos",
         "ackRecorded": "Registrado en la tarea de trabajo",
         "ackNotRecorded": "No registrado en la tarea de trabajo",
         "ackNotRecordedWithReason": "No registrado en la tarea de trabajo: {reason}",
@@ -4340,28 +4398,6 @@
         "dismiss": "Descartar",
         "moreIncidents": "+{count} más"
       },
-      "modelFailover": {
-        "title": "{agent} se quedó sin tokens",
-        "titleWithReset": "{agent} se quedó sin tokens ({resets})",
-        "continueWith": "Continuar con {agent} · {model}",
-        "wait": "Esperar",
-        "chooseAnother": "Elegir otro",
-        "runnerUpLabel": "O bien: {agent} · {model}",
-        "useRunnerUp": "Usar este",
-        "accepting": "Haciendo el relevo — transfiriendo el contexto completo…",
-        "looking": "Buscando el mejor sucesor…",
-        "toastTitle": "Relevo en curso con {agent} · {model}",
-        "toastDescription": "Contexto completo transferido — no se perdió nada.",
-        "noSuccessor": "Todavía no hay un sucesor medido disponible.",
-        "noSuccessorWithReset": "Todavía no hay un sucesor medido disponible ({resets}).",
-        "error": "No se pudo preparar el relevo.",
-        "retry": "Reintentar",
-        "dismiss": "Descartar",
-        "waitAndContinue": "Esperar y continuar solo",
-        "resumeScheduled": "Continuaré a las {time}",
-        "cancel": "Cancelar",
-        "resumeError": "No se pudo programar la reanudación."
-      },
       "backgroundTasks": {
         "settledFallback": "Tarea en segundo plano finalizada ({status})",
         "notifySettledOne": "{agent}: terminó una tarea en segundo plano",
@@ -4385,6 +4421,13 @@
         "scheduledWakeupAt": "Activación programada para las {time}",
         "scheduledTask": "Tarea programada"
       },
+      "liveRuns": {
+        "count": "{count} en curso",
+        "awaiting": "Un subagente espera tu respuesta",
+        "groupDelegations": "Delegaciones",
+        "background": "En segundo plano",
+        "delegatedFallback": "Subagente delegado"
+      },
       "remoteControl": {
         "title": "Control remoto activado",
         "open": "Abrir en el navegador",
@@ -4400,6 +4443,28 @@
       "proposedPlan": {
         "title": "Plan propuesto",
         "planning": "Planificando…"
+      },
+      "modelFailover": {
+        "title": "{agent} se quedó sin tokens",
+        "titleWithReset": "{agent} se quedó sin tokens ({resets})",
+        "continueWith": "Continuar con {agent} · {model}",
+        "wait": "Esperar",
+        "chooseAnother": "Elegir otro",
+        "runnerUpLabel": "O bien: {agent} · {model}",
+        "useRunnerUp": "Usar este",
+        "accepting": "Haciendo el relevo — transfiriendo el contexto completo…",
+        "looking": "Buscando el mejor sucesor…",
+        "toastTitle": "Relevo en curso con {agent} · {model}",
+        "toastDescription": "Contexto completo transferido — no se perdió nada.",
+        "noSuccessor": "Todavía no hay un sucesor medido disponible.",
+        "noSuccessorWithReset": "Todavía no hay un sucesor medido disponible ({resets}).",
+        "error": "No se pudo preparar el relevo.",
+        "retry": "Reintentar",
+        "dismiss": "Descartar",
+        "waitAndContinue": "Esperar y continuar solo",
+        "resumeScheduled": "Continuaré a las {time}",
+        "cancel": "Cancelar",
+        "resumeError": "No se pudo programar la reanudación."
       }
     },
     "diffPreview": {
@@ -4572,7 +4637,12 @@
       "permissionDenied": "Permiso denegado. Utilice un puerto superior a 1024 o ejecute con mayores privilegios.",
       "addressUnavailable": "La dirección no está disponible en este equipo",
       "bindFailed": "No se pudo enlazar la dirección"
-    }
+    },
+    "bindHost": "Escuchar en",
+    "bindHostAll": "Todas las interfaces (0.0.0.0)",
+    "bindHostLocal": "Solo este equipo (127.0.0.1)",
+    "bindHostAllHint": "Los dispositivos de tu red local pueden acceder al servicio con el token de acceso.",
+    "bindHostLocalHint": "Solo este equipo puede acceder al servicio; por ejemplo, detrás de un proxy inverso o Tailscale Serve."
   },
   "DirectoryBrowser": {
     "title": "Explorar directorio",
@@ -6422,6 +6492,11 @@
     "completeDescription": "Esta tarea no cambió ningún archivo, así que no hay nada que fusionar: se marca como completada directamente.",
     "completeDescriptionNoWorktree": "El worktree de esta tarea fue eliminado, así que ya no se puede fusionar: se marca como completada directamente. Una rama de trabajo que aún tenga commits sin fusionar se conserva.",
     "completeDeleteWorktree": "Eliminar el worktree al completar",
+    "threadCommentLabel": "Comentar en el hilo del elemento cuando termine la tarea",
+    "threadCommentLabelSeveral": "Comentar en el hilo de cada incidencia cuando termine la tarea",
+    "threadCommentReplyLabel": "Respuesta para #{number}",
+    "threadCommentPlaceholder": "Déjalo en blanco para publicar solo cómo se entregó el trabajo.",
+    "threadCommentHint": "Redactada por el agente: revísala antes de que sea pública. Codeg añade una línea que dice cómo se entregó el trabajo, y la firma de Codeg si está activada en los ajustes del repositorio.",
     "completeSubmit": "Completar",
     "settingsTitle": "Ajustes de tareas",
     "settingsDescription": "Valores por defecto para las tareas de {folder}.",
@@ -6481,6 +6556,9 @@
     "preflightRunning": "{name} en ejecución…",
     "detailDescription": "Detalle de la tarea",
     "detailSummary": "Resultado",
+    "detailThreadReply": "Respuesta para el hilo",
+    "detailThreadReplyHint": "Se publica al aceptar la tarea; puedes editarla en el diálogo de aceptación.",
+    "detailThreadReplyOffHint": "No se publica: los comentarios están desactivados para esta tarea. Puedes activarlos en el diálogo de aceptación.",
     "detailFiles": "Archivos modificados",
     "detailFilesIncludesPr": "incluye los cambios del propio pull request",
     "detailFilesIncludesMr": "incluye los cambios del propio merge request",
@@ -7070,6 +7148,9 @@
     "emptyAction": "Contabilizar mis sesiones",
     "loadFailed": "No se pudo cargar el uso",
     "truncatedNotice": "Este periodo es muy amplio: las cifras cubren solo su tramo más reciente.",
+    "apiListEstimate": "≈ {amount} tarifa API",
+    "apiListEstimatePartial": "≈ {amount} tarifa API · {percent}% de tokens",
+    "apiListEstimateHint": "Tarifas base públicas de API de models.dev, con lecturas y escrituras de caché pero sin recargos por contexto largo ni por razonamiento. Los planes de suscripción facturan distinto.",
     "tabDashboard": "Panel",
     "tabModels": "Modelos",
     "modelsGeneratedAt": "Generado {time}",
@@ -7088,10 +7169,7 @@
     "modelsColLastUsed": "Último uso",
     "modelsColStrengths": "Mejor en",
     "modelsBestForTitle": "Mejor modelo por categoría",
-    "modelsRunnerUp": "sigue {agent} · {model} ({value})",
-    "apiListEstimate": "≈ {amount} tarifa API",
-    "apiListEstimatePartial": "≈ {amount} tarifa API · {percent}% de tokens",
-    "apiListEstimateHint": "Tarifas base públicas de API de models.dev, con lecturas y escrituras de caché pero sin recargos por contexto largo ni por razonamiento. Los planes de suscripción facturan distinto."
+    "modelsRunnerUp": "sigue {agent} · {model} ({value})"
   },
   "Forge": {
     "title": "Panel del repositorio",
@@ -7100,7 +7178,11 @@
     "errors": {
       "noAccount": "No hay ninguna cuenta de {provider} configurada para {host}. Añade una en Configuración → Control de versiones para cargar este repositorio.",
       "unsupportedHost": "El panel del repositorio solo admite GitHub, GitLab, Gitea y CNB, y {host} no se reconoce como ninguno de ellos. Si es una instancia autoalojada de GitHub Enterprise, GitLab, Gitea, Forgejo o CNB, añade una cuenta para ella en Configuración → Control de versiones.",
-      "wrongForge": "{host} es un {provider}, no la forja con la que estaba clasificado. La detección se ha corregido: vuelve a cargar para reintentar."
+      "wrongForge": "{host} es un {provider}, no la forja con la que estaba clasificado. La detección se ha corregido: vuelve a cargar para reintentar.",
+      "approveHeadChanged": "Esta pull request tiene commits nuevos desde que la revisaste. Actualiza, vuelve a revisar y luego aprueba.",
+      "approveAmbiguous": "No se puede saber si estas ejecuciones son solo de esta pull request. Apruébalas en GitHub.",
+      "approveForbidden": "Esta cuenta no puede aprobar ejecuciones aquí. Necesita permiso de escritura, y el token necesita el permiso Actions (escritura) o el alcance repo.",
+      "approveNotOpen": "Esta pull request ya no está abierta."
     },
     "addAccount": "Añadir una cuenta",
     "empty": "No hay nada aquí",
@@ -7211,6 +7293,7 @@
     "checksPassing": "{count} correctas",
     "checksFailing": "{count} fallidas",
     "checksPending": "{count} en curso",
+    "checksNeutralCount": "{count} sin veredicto",
     "checkAllowFailure": "puede fallar",
     "checkSuccess": "Correcta",
     "checkFailure": "Fallida",
@@ -7306,6 +7389,8 @@
     "settingsPrDefaultHint": "Lo que viene preseleccionado al abrir el diálogo sobre un pull o merge request.",
     "settingsWritebackDefault": "Comentar el resultado por defecto",
     "settingsWritebackDefaultHint": "La posición inicial de ese interruptor en el diálogo; sigues pudiendo cambiarlo en cada elemento.",
+    "settingsCommentFooter": "Firmar los comentarios con Codeg",
+    "settingsCommentFooterHint": "Termina cada comentario que publica codeg con «🤖 Generated with Codeg», enlazado al repositorio de Codeg.",
     "settingsPromptsIntro": "Las instrucciones permanentes se añaden después del texto integrado del escenario elegido y antes de lo que escribas en el diálogo; no hace falta repetir aquí el texto integrado. Viajan con el primer turno de la tarea: lo que quieras en cada turno va en los prompts de los ajustes de tareas.",
     "settingsPromptsLabel": "Escenario",
     "settingsPromptAll": "Todos los escenarios",
@@ -7385,7 +7470,23 @@
     "autoSkipExcludedAuthor": "autor excluido",
     "autoSkipMissingLabel": "sin etiqueta coincidente",
     "autoSkipAuthorNotIncluded": "autor no listado",
-    "save": "Guardar"
+    "save": "Guardar",
+    "checksAwaitingApproval": "{count} flujos de trabajo esperando aprobación",
+    "checksApprovalShort": "Requiere aprobación",
+    "approveUnknownTitle": "Puede haber flujos de trabajo esperando aprobación",
+    "approveExplain": "Esta pull request viene de un fork y sus flujos de trabajo no se ejecutarán hasta que alguien con permiso de escritura los apruebe. Aprobar ejecuta este código en la CI del repositorio: revisa los cambios primero.",
+    "approveIncompleteHint": "No se pudieron revisar todas las ejecuciones; puede haber más esperando en GitHub.",
+    "approveBlockedAmbiguous": "Hay otra pull request abierta desde la misma rama, así que no se puede saber si estas ejecuciones son solo de esta. Apruébalas en GitHub.",
+    "approveBlockedPermission": "Esta cuenta no puede hacer push al repositorio, así que no puede aprobar flujos de trabajo.",
+    "approveOpenOnForge": "Abrir en GitHub",
+    "approveWorkflows": "Aprobar la ejecución de flujos de trabajo",
+    "approving": "Aprobando…",
+    "approveConfirmTitle": "¿Aprobar la ejecución de flujos de trabajo?",
+    "approveConfirmBody": "{count} flujos de trabajo ejecutarán el código de esta pull request (commit {sha}) en la CI del repositorio. Aprueba solo después de revisar los cambios.",
+    "approveDone": "Se aprobaron {count} flujos de trabajo",
+    "approvePartial": "No se pudieron aprobar algunos flujos de trabajo: {names}",
+    "approveNothingHeld": "Ya no hay flujos de trabajo esperando aprobación.",
+    "mergeWorkflowsAwaiting": "Hay flujos de trabajo esperando aprobación"
   },
   "Canvas": {
     "title": "Lienzo infinito",

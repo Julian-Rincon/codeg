@@ -89,7 +89,6 @@
       "sectionDescription": "ボタンやアクセント、ハイライトに使用する色を選択します。",
       "current": "現在のカラー：{color}",
       "options": {
-        "phantom": "Phantom",
         "neutral": "Neutral",
         "zinc": "Zinc",
         "slate": "Slate",
@@ -101,7 +100,8 @@
         "green": "Green",
         "blue": "Blue",
         "yellow": "Yellow",
-        "violet": "Violet"
+        "violet": "Violet",
+        "phantom": "Phantom"
       }
     },
     "customStyle": {
@@ -1993,11 +1993,6 @@
   "LoginPage": {
     "documentTitle": "ログイン - Phantom",
     "brand": "Phantom",
-    "agentsLabel": "エージェント",
-    "hideToken": "トークンを隠す",
-    "showToken": "トークンを表示",
-    "tokenLabel": "アクセストークン",
-    "tagline": "あなたの AI 司令塔",
     "subtitle": "ローカルの Phantom サーバーに接続",
     "tokenPlaceholder": "トークンを貼り付け",
     "connect": "接続",
@@ -2005,7 +2000,12 @@
     "helpText": "ローカル環境: ~/.config/codeg/server.env の CODEG_TOKEN をコピー。デスクトップアプリ: 設定 → Web サービス。",
     "invalidToken": "トークンが無効です。確認して再度お試しください",
     "connectionFailed": "接続失敗 (HTTP {status})",
-    "networkError": "サーバーに接続できません"
+    "networkError": "サーバーに接続できません",
+    "agentsLabel": "エージェント",
+    "hideToken": "トークンを隠す",
+    "showToken": "トークンを表示",
+    "tokenLabel": "アクセストークン",
+    "tagline": "あなたの AI 司令塔"
   },
   "CommitPage": {
     "title": "コミット",
@@ -2236,9 +2236,8 @@
       "statusRunningBadge": "実行中",
       "runningCountBadge": "{count} 件の会話が実行中",
       "statusCancelledBadge": "キャンセル済み",
-      "worktreeRemovedBadge": "元の worktree は削除済み",
+      "originalWorkingDir": "元の作業ディレクトリ",
       "cliBadge": "コマンドラインから開始",
-      "telegramBadge": "Telegram",
       "conversationCountUnit": "{count} 件",
       "emptyFolderHint": "会話がありません",
       "noMatchingConversations": "一致する会話がありません",
@@ -2278,6 +2277,7 @@
         "untitledConversation": "無題の会話",
         "setStatus": "ステータスを変更…",
         "deleteSelected": "削除",
+        "moveSelected": "移動先…",
         "noConversations": "このフォルダには会話がありません。",
         "noConversationsWorkspace": "ワークスペースに会話がありません。",
         "noMatchingConversations": "条件に一致する会話がありません。",
@@ -2324,7 +2324,9 @@
       "noRecentChats": "最近のチャットはありません",
       "noRecentFolders": "最近のフォルダー会話はありません",
       "noRecentCli": "コマンドラインからの最近の会話はありません",
-      "recentFilterMenuLabel": "最近の表示"
+      "recentFilterMenuLabel": "最近の表示",
+      "worktreeRemovedBadge": "元の worktree は削除済み",
+      "telegramBadge": "Telegram"
     },
     "conversation": {
       "reloadFailed": "会話の再読み込みに失敗しました: {message}",
@@ -2426,6 +2428,33 @@
       "reopen": "再開する",
       "expandSubsessions": "サブ会話を展開",
       "collapseSubsessions": "サブ会話を折りたたむ"
+    },
+    "moveConversation": {
+      "menuLabel": "移動先",
+      "title": "会話を移動",
+      "titleMany": "{count} 件の会話を移動",
+      "intro": "「{title}」を次のフォルダへ移動します：",
+      "introMany": "選択した {count} 件の会話を次のフォルダへ移動します：",
+      "untitledConversation": "無題の会話",
+      "explain": "次のメッセージから、エージェントはこのフォルダで作業します。履歴はそのまま残ります。エージェントが新しいディレクトリでセッションを再開できない場合は、再読み込みするか新しいセッションを開始するよう案内されます。",
+      "chatFilesNote": "チャット中に作成されたファイルは一時ディレクトリ {path} に残り、フォルダには移動されません。",
+      "chatFilesNoteMany": "これらのチャット中に作成されたファイルはそれぞれの一時ディレクトリに残り、フォルダには移動されません。",
+      "noTargets": "開いている他のフォルダがありません",
+      "targetUnavailable": "このフォルダは閉じられたか削除されました。別のフォルダを選んでください。",
+      "cancel": "キャンセル",
+      "move": "移動",
+      "toastMoved": "{count} 件の会話を {folder} に移動しました",
+      "toastSkipped": "{count} 件の会話は移動されませんでした",
+      "toastFailed": "移動できませんでした：{message}",
+      "skipReason": {
+        "not_found": "会話が存在しません",
+        "not_movable": "サブ会話は親と一緒に移動します",
+        "already_there": "すでにこのフォルダにあります",
+        "task_owned": "ToDo タスクに属しています",
+        "busy": "エージェントが作業中です。完了してから再試行してください",
+        "conflict": "移動中に変更されました。再試行してください",
+        "target_unavailable": "移動先のフォルダが閉じられたか削除されました"
+      }
     },
     "search": {
       "dialogTitle": "検索",
@@ -2533,6 +2562,24 @@
         "loadFailed": "状態を取得できませんでした: {message}",
         "openSettings": "詳細設定を開く",
         "refresh": "更新"
+      },
+      "webService": {
+        "title": "Web サービス",
+        "start": "Web サービスを開始",
+        "stop": "Web サービスを停止",
+        "cancel": "キャンセル",
+        "confirmStart": "開始",
+        "confirmTitle": "Codeg をネットワークに公開しますか？",
+        "confirmDescription": "Web サービスは {address} で待ち受けます。同じネットワーク上のどのデバイスからも、アクセストークンがあればターミナルやエージェントを含む Codeg にアクセスできます。",
+        "tooltipNetwork": "Web サービス · {address} で待ち受け中（ネットワークからアクセス可能）",
+        "tooltipLocal": "Web サービス · {address} で待ち受け中（このコンピューターのみ）",
+        "tooltipStopped": "Web サービス · 停止中",
+        "hintNetwork": "{address} で待ち受け中。ネットワーク上のデバイスがアクセストークンで Codeg を開けます。",
+        "hintLocal": "{address} で待ち受け中。このコンピューターからのみアクセスできます。",
+        "hintStoppedNetwork": "停止中。開始すると {address} で待ち受け、ネットワークからアクセスできます。",
+        "hintStoppedLocal": "停止中。開始すると {address} で待ち受け、このコンピューターからのみアクセスできます。",
+        "copyAddress": "アドレスをコピー",
+        "openSettings": "Web サービス設定を開く"
       },
       "usage": {
         "agent": "Claude",
@@ -3463,7 +3510,8 @@
         },
         "errors": {
           "connectionFailed": "接続に失敗しました",
-          "sendPromptFailed": "メッセージの送信に失敗しました: {error}"
+          "sendPromptFailed": "メッセージの送信に失敗しました: {error}",
+          "conversationMoved": "この会話は {folder} に移動されました。そちらで続けるには、メッセージをもう一度送信してください。"
         }
       },
       "shared": {
@@ -3870,11 +3918,11 @@
         "jumpToPreviousUserMessage": "前のユーザーメッセージへ",
         "showMore": "もっと見る",
         "showLess": "折りたたむ",
+        "resizeWidth": "ドラッグでチャット幅を調整 · ダブルクリックで元に戻す",
         "listen": "読み上げ",
         "stopListening": "停止",
         "listenUnavailable": "音声サービスを利用できません",
-        "listenCodeBlock": "コードブロック。",
-        "resizeWidth": "ドラッグでチャット幅を調整 · ダブルクリックで元に戻す"
+        "listenCodeBlock": "コードブロック。"
       },
       "liveTurnStats": {
         "elapsedHours": "{value}時間",
@@ -3950,14 +3998,12 @@
         "readImageLoading": "画像を読み込み中…",
         "readImageError": "画像を読み込めませんでした",
         "shellSession": "セッション {id}",
-        "agentPromptLabel": "プロンプト",
         "agentModelLabel": "モデル",
         "agentEffortLabel": "思考の強度",
         "agentRecoveredNote": "サブエージェントは実際には完了しています。ターン中断のため結果はメインセッションに届きませんでした：",
         "agentProgressTools": "{count} 件のツール呼び出し",
         "agentProgressTurns": "{count} ターン",
         "agentProgressContext": "コンテキスト {pct}%",
-        "agentSessionAction": "サブエージェントのセッションを表示",
         "agentSessionTitle": "サブエージェントのセッション",
         "agentSessionLoading": "サブエージェントの記録を読み込んでいます…",
         "agentSessionEmpty": "サブエージェントはまだ何も書き込んでいません。",
@@ -4022,9 +4068,18 @@
         "visualizeFrameTitle": "Codex ビジュアライゼーション",
         "htmlPreviewOpen": "プレビュー",
         "htmlPreviewOpenAria": "{name} をプレビュー",
-        "htmlPreviewHide": "プレビューを閉じる"
+        "htmlPreviewHide": "プレビューを閉じる",
+        "agentPromptLabel": "プロンプト",
+        "agentSessionAction": "サブエージェントのセッションを表示"
       },
       "activity": {
+        "oauth": {
+          "waiting": "{server} の認可を待機中",
+          "reconnecting": "{server} に再接続中…",
+          "open": "システムブラウザーで認可を開く",
+          "verify": "再接続後、実際の MCP ツール呼び出しでアクセスを確認してください。ブラウザーを開くだけでは認可は確認されません。",
+          "openFailed": "ブラウザーを開けませんでした。認可リンクから再試行してください。"
+        },
         "header": {
           "label": "実行過程",
           "working": "実行中",
@@ -4190,7 +4245,9 @@
         "openFile": "{filePath} を開く",
         "collapse": "折りたたむ",
         "currentMessage": "現在のメッセージ",
-        "scrollToCurrent": "現在のメッセージ（#{ordinal}）へスクロール"
+        "scrollToCurrent": "現在のメッセージ（#{ordinal}）へスクロール",
+        "running": "実行中",
+        "total": "全 {count} 件"
       },
       "replyArtifacts": {
         "title": "変更されたファイル",
@@ -4246,6 +4303,7 @@
         "resumeDelegation": "タスク {task} を再開中",
         "resumeDelegationNoId": "委任タスクを再開中",
         "promptLabel": "プロンプト",
+        "attachmentsLabel": "添付ファイル",
         "ackRecorded": "作業タスクに記録しました",
         "ackNotRecorded": "作業タスクに記録されていません",
         "ackNotRecordedWithReason": "作業タスクに記録されていません: {reason}",
@@ -4340,28 +4398,6 @@
         "dismiss": "閉じる",
         "moreIncidents": "他 {count} 件"
       },
-      "modelFailover": {
-        "title": "{agent}のトークンが上限に達しました",
-        "titleWithReset": "{agent}のトークンが上限に達しました（{resets}）",
-        "continueWith": "{agent} · {model} で続ける",
-        "wait": "待つ",
-        "chooseAnother": "他を選ぶ",
-        "runnerUpLabel": "または: {agent} · {model}",
-        "useRunnerUp": "これを使う",
-        "accepting": "引き継ぎ中 — コンテキストを完全に転送しています…",
-        "looking": "最適な後継モデルを探しています…",
-        "toastTitle": "{agent} · {model} への引き継ぎ中",
-        "toastDescription": "コンテキストを完全に転送しました — 作業は失われていません。",
-        "noSuccessor": "測定済みの後継モデルはまだありません。",
-        "noSuccessorWithReset": "測定済みの後継モデルはまだありません（{resets}）。",
-        "error": "引き継ぎを準備できませんでした。",
-        "retry": "再試行",
-        "dismiss": "閉じる",
-        "waitAndContinue": "Wait and continue alone",
-        "resumeScheduled": "I'll continue at {time}",
-        "cancel": "Cancel",
-        "resumeError": "Couldn't schedule the resume."
-      },
       "backgroundTasks": {
         "settledFallback": "バックグラウンドタスクが終了しました（{status}）",
         "notifySettledOne": "{agent}：バックグラウンドタスクが完了しました",
@@ -4385,6 +4421,13 @@
         "scheduledWakeupAt": "スケジュールされた起動（{time}）",
         "scheduledTask": "スケジュールされたタスク"
       },
+      "liveRuns": {
+        "count": "{count} 件実行中",
+        "awaiting": "対応待ちのサブエージェントがあります",
+        "groupDelegations": "委任",
+        "background": "バックグラウンド",
+        "delegatedFallback": "委任したサブエージェント"
+      },
       "remoteControl": {
         "title": "リモートコントロール有効",
         "open": "ブラウザで開く",
@@ -4400,6 +4443,28 @@
       "proposedPlan": {
         "title": "提案された計画",
         "planning": "計画中…"
+      },
+      "modelFailover": {
+        "title": "{agent}のトークンが上限に達しました",
+        "titleWithReset": "{agent}のトークンが上限に達しました（{resets}）",
+        "continueWith": "{agent} · {model} で続ける",
+        "wait": "待つ",
+        "chooseAnother": "他を選ぶ",
+        "runnerUpLabel": "または: {agent} · {model}",
+        "useRunnerUp": "これを使う",
+        "accepting": "引き継ぎ中 — コンテキストを完全に転送しています…",
+        "looking": "最適な後継モデルを探しています…",
+        "toastTitle": "{agent} · {model} への引き継ぎ中",
+        "toastDescription": "コンテキストを完全に転送しました — 作業は失われていません。",
+        "noSuccessor": "測定済みの後継モデルはまだありません。",
+        "noSuccessorWithReset": "測定済みの後継モデルはまだありません（{resets}）。",
+        "error": "引き継ぎを準備できませんでした。",
+        "retry": "再試行",
+        "dismiss": "閉じる",
+        "waitAndContinue": "Wait and continue alone",
+        "resumeScheduled": "I'll continue at {time}",
+        "cancel": "Cancel",
+        "resumeError": "Couldn't schedule the resume."
       }
     },
     "diffPreview": {
@@ -4572,7 +4637,12 @@
       "permissionDenied": "権限が不足しています。1024 以上のポートを使用するか、より高い権限で実行してください",
       "addressUnavailable": "このアドレスはこの端末では利用できません",
       "bindFailed": "アドレスのバインドに失敗しました"
-    }
+    },
+    "bindHost": "待ち受け",
+    "bindHostAll": "すべてのインターフェース（0.0.0.0）",
+    "bindHostLocal": "このコンピューターのみ（127.0.0.1）",
+    "bindHostAllHint": "ローカルネットワーク上のデバイスがアクセストークンでサービスに接続できます。",
+    "bindHostLocalHint": "このコンピューターからのみ接続できます。リバースプロキシや Tailscale Serve の背後で使う場合などに。"
   },
   "DirectoryBrowser": {
     "title": "ディレクトリを参照",
@@ -6422,6 +6492,11 @@
     "completeDescription": "このタスクはファイルを変更していないため、マージするものはありません。そのまま完了にします。",
     "completeDescriptionNoWorktree": "このタスクの worktree は削除されているため、マージできません。そのまま完了にします。未マージのコミットが残る作業ブランチは保持されます。",
     "completeDeleteWorktree": "完了後に worktree を削除",
+    "threadCommentLabel": "タスク完了時に項目のスレッドへコメントする",
+    "threadCommentLabelSeveral": "タスク完了時に各 Issue のスレッドへコメントする",
+    "threadCommentReplyLabel": "#{number} への返信",
+    "threadCommentPlaceholder": "空欄なら作業の届け方だけを投稿します。",
+    "threadCommentHint": "エージェントの下書きです。公開前に確認してください。Codeg は作業の届け方を示す 1 行を追加し、リポジトリ設定で有効なら Codeg の署名も付けます。",
     "completeSubmit": "完了",
     "settingsTitle": "タスク設定",
     "settingsDescription": "{folder} のタスクの既定値。",
@@ -6481,6 +6556,9 @@
     "preflightRunning": "{name} 実行中…",
     "detailDescription": "タスク詳細",
     "detailSummary": "結果",
+    "detailThreadReply": "スレッドへの返信",
+    "detailThreadReplyHint": "タスクを承認すると投稿されます。承認ダイアログで編集できます。",
+    "detailThreadReplyOffHint": "投稿されません：このタスクはコメントがオフです。承認ダイアログでオンにできます。",
     "detailFiles": "変更ファイル",
     "detailFilesIncludesPr": "PR 自体の変更を含む",
     "detailFilesIncludesMr": "MR 自体の変更を含む",
@@ -7070,6 +7148,9 @@
     "emptyAction": "セッションを集計",
     "loadFailed": "使用量を読み込めませんでした",
     "truncatedNotice": "期間が非常に長いため、表示中の数値は直近の一部のみを対象としています。",
+    "apiListEstimate": "≈ {amount} APIリスト",
+    "apiListEstimatePartial": "≈ {amount} APIリスト · トークンの {percent}%",
+    "apiListEstimateHint": "models.dev の公開 API 基本リスト料金です。キャッシュの読み書きを含み、長いコンテキストや推論の割増料金は含みません。サブスクリプションの課金とは異なります。",
     "tabDashboard": "ダッシュボード",
     "tabModels": "モデル",
     "modelsGeneratedAt": "生成日時 {time}",
@@ -7088,10 +7169,7 @@
     "modelsColLastUsed": "最終使用",
     "modelsColStrengths": "得意分野",
     "modelsBestForTitle": "カテゴリ別ベストモデル",
-    "modelsRunnerUp": "次点: {agent} · {model}（{value}）",
-    "apiListEstimate": "≈ {amount} APIリスト",
-    "apiListEstimatePartial": "≈ {amount} APIリスト · トークンの {percent}%",
-    "apiListEstimateHint": "models.dev の公開 API 基本リスト料金です。キャッシュの読み書きを含み、長いコンテキストや推論の割増料金は含みません。サブスクリプションの課金とは異なります。"
+    "modelsRunnerUp": "次点: {agent} · {model}（{value}）"
   },
   "Forge": {
     "title": "リポジトリパネル",
@@ -7100,7 +7178,11 @@
     "errors": {
       "noAccount": "{host} の {provider} アカウントが設定されていません。「設定 → バージョン管理」で追加するとこのリポジトリを読み込めます。",
       "unsupportedHost": "リポジトリパネルは GitHub、GitLab、Gitea、CNB にのみ対応しており、{host} はそのいずれとしても認識できません。自己ホスト型の GitHub Enterprise、GitLab、Gitea、Forgejo、CNB インスタンスであれば、「設定 → バージョン管理」でアカウントを追加してください。",
-      "wrongForge": "{host} は {provider} でした。別のフォージとして扱われていましたが、判定を修正しました。再読み込みしてください。"
+      "wrongForge": "{host} は {provider} でした。別のフォージとして扱われていましたが、判定を修正しました。再読み込みしてください。",
+      "approveHeadChanged": "確認した後にこのプルリクエストに新しいコミットが追加されました。更新して再確認してから承認してください。",
+      "approveAmbiguous": "これらのワークフロー実行がこのプルリクエストだけのものか判断できません。GitHub 上で承認してください。",
+      "approveForbidden": "このアカウントにはここでワークフロー実行を承認する権限がありません。書き込み権限と、トークンの Actions（書き込み）権限または repo スコープが必要です。",
+      "approveNotOpen": "このプルリクエストはもうオープンではありません。"
     },
     "addAccount": "アカウントを追加",
     "empty": "表示する項目がありません",
@@ -7211,6 +7293,7 @@
     "checksPassing": "{count} 件成功",
     "checksFailing": "{count} 件失敗",
     "checksPending": "{count} 件実行中",
+    "checksNeutralCount": "{count} 件判定なし",
     "checkAllowFailure": "失敗を許容",
     "checkSuccess": "成功",
     "checkFailure": "失敗",
@@ -7306,6 +7389,8 @@
     "settingsPrDefaultHint": "PR または MR の処理ダイアログを開いたときに選択済みになる方法です。",
     "settingsWritebackDefault": "既定でコメントを書き戻す",
     "settingsWritebackDefaultHint": "処理ダイアログにあるスイッチの初期状態です。項目ごとに変更できます。",
+    "settingsCommentFooter": "コメントに Codeg の署名を付ける",
+    "settingsCommentFooterHint": "codeg が投稿するすべてのコメントの末尾に「🤖 Generated with Codeg」を付け、Codeg リポジトリにリンクします。",
     "settingsPromptsIntro": "常設の指示は、選んだシナリオの組み込み文の後ろ、処理ダイアログで入力した補足の前に追加されます（組み込み文をここで繰り返す必要はありません）。付くのはタスクの最初のターンだけです。毎ターン必要な文はタスク設定のプロンプトに書いてください。",
     "settingsPromptsLabel": "シナリオ",
     "settingsPromptAll": "すべてのシナリオ",
@@ -7385,7 +7470,23 @@
     "autoSkipExcludedAuthor": "除外された作成者",
     "autoSkipMissingLabel": "一致するラベルなし",
     "autoSkipAuthorNotIncluded": "作成者がリスト外",
-    "save": "保存"
+    "save": "保存",
+    "checksAwaitingApproval": "承認待ちのワークフロー {count} 件",
+    "checksApprovalShort": "承認待ち",
+    "approveUnknownTitle": "承認待ちのワークフローがある可能性があります",
+    "approveExplain": "このプルリクエストはフォークからのもので、書き込み権限を持つ人が承認するまでワークフローは実行されません。承認するとこのコードがリポジトリの CI で実行されるため、先に変更を確認してください。",
+    "approveIncompleteHint": "すべてのワークフロー実行を確認できませんでした。GitHub 上にさらに承認待ちがある可能性があります。",
+    "approveBlockedAmbiguous": "同じブランチから別のプルリクエストも開かれているため、これらの実行がこのプルリクエストだけのものか判断できません。GitHub 上で承認してください。",
+    "approveBlockedPermission": "このアカウントにはリポジトリへのプッシュ権限がないため、ワークフローを承認できません。",
+    "approveOpenOnForge": "GitHub で開く",
+    "approveWorkflows": "ワークフローの実行を承認",
+    "approving": "承認中…",
+    "approveConfirmTitle": "ワークフローの実行を承認しますか？",
+    "approveConfirmBody": "{count} 件のワークフローが、このプルリクエストのコード（コミット {sha}）をリポジトリの CI で実行します。変更を確認してから承認してください。",
+    "approveDone": "{count} 件のワークフローを承認しました",
+    "approvePartial": "一部のワークフローを承認できませんでした: {names}",
+    "approveNothingHeld": "承認待ちのワークフローはもうありません。",
+    "mergeWorkflowsAwaiting": "承認待ちのワークフローがあります"
   },
   "Canvas": {
     "title": "無限キャンバス",
