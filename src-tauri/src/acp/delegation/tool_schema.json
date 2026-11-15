@@ -63,6 +63,15 @@
           ],
           "description": "How hard the sub-task is, which also sets the default reasoning effort: trivial = one obvious step, normal = well-specified routine work, hard = tricky reasoning or multi-file, long = >30 min agentic work."
         },
+        "priority": {
+          "type": "string",
+          "enum": [
+            "low",
+            "normal",
+            "high"
+          ],
+          "description": "How much this work matters to the user, for `auto` routing. low = side or low-priority project: never spends the paid Claude quota. normal (default) = spends it only while the week's quota is on pace. high = urgent or important: best model until the quota is nearly gone."
+        },
         "effort": {
           "type": "string",
           "enum": [

@@ -2353,18 +2353,21 @@ export function MessageInput({
                     onOpenMemory={phantomMemory.openEditor}
                   />
                   {hasAnySelector && (
-                    <SessionSettingsPicker
-                      agentType={agentType ?? null}
-                      settings={sessionSettings}
-                      loadingLabel={
-                        showSelectorsLoading
-                          ? showConfigLoading
-                            ? t("loadingSettings")
-                            : t("loadingMode")
-                          : null
-                      }
-                      onChange={handleSessionSettingChange}
-                    />
+                    // NEXUS: en su inicio el modelo ya está decidido; el chip vuelve con "usar otro agente".
+                    <span className="contents [[data-nexus-command-center]:not([data-nexus-agents])~*_&]:hidden">
+                      <SessionSettingsPicker
+                        agentType={agentType ?? null}
+                        settings={sessionSettings}
+                        loadingLabel={
+                          showSelectorsLoading
+                            ? showConfigLoading
+                              ? t("loadingSettings")
+                              : t("loadingMode")
+                            : null
+                        }
+                        onChange={handleSessionSettingChange}
+                      />
+                    </span>
                   )}
                 </div>
                 <div className="flex shrink-0 items-center gap-1">

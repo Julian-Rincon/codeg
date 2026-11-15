@@ -48,6 +48,8 @@ pub struct RoutingArgs {
     pub task_kind: Option<TaskKind>,
     pub difficulty: Option<Difficulty>,
     pub effort: Option<Effort>,
+    /// How much the work matters; `None` = normal.
+    pub priority: Option<router::Priority>,
 }
 
 /// What the router chose, as shown to the lead and stored for learning.
@@ -261,6 +263,56 @@ pub fn effective_profile(
             "Claude quota high ({five_hour:.0}% 5h / {week:.0}% week): routing with equilibrado weights"
         )),
     )
+}
+
+/// Points the weekly Claude quota may run ahead of the calendar before normal
+/// work stops spending the paid models.
+const PACE_MARGIN_PCT: f64 = 10.0;
+
+/// Percent of Claude's 7-day window already elapsed at `now`, from its reset
+/// instant. `None` when the reset is unknown or out of range.
+pub fn week_elapsed_pct(resets_at: Option<&str>, now: chrono::DateTime<chrono::Utc>) -> Option<f64> {
+    let reset = chrono::DateTime::parse_from_rfc3339(resets_at?).ok()?;
+    let left = (reset.with_timezone(&chrono::Utc) - now).num_seconds() as f64;
+    let week = 7.0 * 86_400.0;
+    (0.0..=week).contains(&left).then(|| (1.0 - left / week) * 100.0)
+}
+
+/// [`effective_profile`] plus the task's priority and the weekly pace, so
+/// `calidad` cannot burn the week on work that does not deserve it:
+///
+/// - `low` never spends: equilibrado weights.
+/// - `normal` spends while the week's use is at most [`PACE_MARGIN_PCT`]
+///   points ahead of the time elapsed in the window; past that, equilibrado
+///   until the calendar catches up.
+/// - `high` spends until the quota itself is nearly gone.
+pub fn paced_profile(
+    configured: Profile,
+    priority: router::Priority,
+    claude: Option<(f64, f64)>,
+    week_elapsed: Option<f64>,
+) -> (Profile, Option<String>) {
+    let (profile, note) = effective_profile(configured, claude);
+    if profile != Profile::Calidad {
+        return (profile, note);
+    }
+    match priority {
+        router::Priority::High => (profile, None),
+        router::Priority::Low => (
+            Profile::Equilibrado,
+            Some("low priority: routing with equilibrado weights".to_string()),
+        ),
+        router::Priority::Normal => match (claude, week_elapsed) {
+            (Some((_, week)), Some(elapsed)) if week > elapsed + PACE_MARGIN_PCT => (
+                Profile::Equilibrado,
+                Some(format!(
+                    "Claude week at {week:.0}% with {elapsed:.0}% of it gone: routing with \
+                     equilibrado weights (priority high overrides)"
+                )),
+            ),
+            _ => (profile, None),
+        },
+    }
 }
 
 /// `{"difficulty", "hint"}` telling the lead how to retry a failed/bad task.
@@ -712,8 +764,12 @@ impl DbRouting {
         let pool = candidates_from_scorecard(&entries, &stats);
         // Spend the paid models only while Claude's quota holds up.
         let claude = crate::commands::usage_meter::claude_usage_effective().await;
+        let elapsed = claude
+            .as_ref()
+            .and_then(|u| week_elapsed_pct(u.seven_day.resets_at.as_deref(), chrono::Utc::now()));
         let claude = claude.map(|u| (u.five_hour.percent, u.seven_day.percent));
-        let (profile, note) = effective_profile(profile, claude);
+        let (profile, note) =
+            paced_profile(profile, args.priority.unwrap_or_default(), claude, elapsed);
         let mut rng = || rand::random::<f64>();
         let mut plan = plan_with(args, &pool, &stats, profile, &mut rng)?;
         if let (Some(note), Some(info)) = (note, plan.info.as_mut()) {
@@ -1150,6 +1206,39 @@ mod tests {
         a.model = Some("opencode/mimo-v2.6-flash-free".into());
         let plan = plan_with(&a, &pool, &RouterStats::default(), Profile::Calidad, &mut || 0.5).unwrap();
         assert_eq!(plan.model.as_deref(), Some("opencode/mimo-v2.6-flash-free"));
+    }
+
+    #[test]
+    fn priority_and_weekly_pace_decide_who_spends_the_quota() {
+        use router::Priority::{High, Low, Normal};
+        let on = |p, week, elapsed| paced_profile(Profile::Calidad, p, Some((10.0, week)), Some(elapsed)).0;
+        // On pace: normal and high spend, low never does.
+        assert_eq!(on(Normal, 40.0, 35.0), Profile::Calidad);
+        assert_eq!(on(High, 40.0, 35.0), Profile::Calidad);
+        assert_eq!(on(Low, 5.0, 90.0), Profile::Equilibrado);
+        // Ahead of the calendar: normal backs off, high keeps going.
+        assert_eq!(on(Normal, 60.0, 30.0), Profile::Equilibrado);
+        assert_eq!(on(High, 60.0, 30.0), Profile::Calidad);
+        // Nearly spent: nobody spends, with the quota note.
+        let (p, note) = paced_profile(Profile::Calidad, High, Some((10.0, 95.0)), Some(99.0));
+        assert_eq!(p, Profile::Equilibrado);
+        assert!(note.unwrap().starts_with("Claude quota high"));
+        // Unknown reset: no pacing. Equilibrado configured: untouched.
+        assert_eq!(paced_profile(Profile::Calidad, Normal, Some((10.0, 80.0)), None).0, Profile::Calidad);
+        assert_eq!(
+            paced_profile(Profile::Equilibrado, High, Some((1.0, 1.0)), Some(50.0)),
+            (Profile::Equilibrado, None)
+        );
+    }
+
+    #[test]
+    fn week_elapsed_comes_from_the_reset_instant() {
+        let now = chrono::DateTime::parse_from_rfc3339("2026-11-15T12:00:00Z").unwrap().with_timezone(&chrono::Utc);
+        let pct = week_elapsed_pct(Some("2026-11-19T00:00:00Z"), now).unwrap();
+        assert!((pct - 50.0).abs() < 0.01, "{pct}");
+        assert_eq!(week_elapsed_pct(None, now), None);
+        assert_eq!(week_elapsed_pct(Some("2026-11-10T00:00:00Z"), now), None);
+        assert_eq!(week_elapsed_pct(Some("nope"), now), None);
     }
 
     #[test]

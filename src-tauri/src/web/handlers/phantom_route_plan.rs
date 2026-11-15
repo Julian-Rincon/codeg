@@ -35,6 +35,9 @@ pub struct PlanTask {
 #[derive(Deserialize)]
 pub struct PlanRequest {
     tasks: Vec<PlanTask>,
+    /// `low` / `normal` / `high` for the whole project; unknown = normal.
+    #[serde(default)]
+    priority: String,
 }
 
 #[derive(Serialize, Default)]
@@ -81,6 +84,7 @@ pub async fn phantom_route_plan(
                     auto: true,
                     task_kind: Some(kind),
                     difficulty: Some(difficulty),
+                    priority: crate::acp::delegation::router::Priority::parse(&req.priority),
                     ..Default::default()
                 };
                 match routing.plan(&args).await {

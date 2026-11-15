@@ -13,7 +13,7 @@
  * the panel's data is, and this keeps the fork out of the i18n message files.
  */
 
-import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { fetchNexusPanel, railMarks, type NexusPanel } from "@/lib/nexus-panel"
 
 const REFRESH_MS = 60_000
@@ -111,11 +111,15 @@ function Rail({ panel, now }: { panel: NexusPanel; now: number }) {
       </span>
       {marks
         .filter((m) => m.label)
-        .map((m) => (
+        .map((m, i, all) => (
           <span
             key={m.key}
-            className="absolute top-7 max-w-[30%] truncate text-[0.6875rem] text-muted-foreground"
-            style={{ left: `${m.left}%` }}
+            className="absolute top-7 truncate text-[0.6875rem] text-muted-foreground"
+            // Up to the next label (or the end of the rail), so two never overlap.
+            style={{
+              left: `${m.left}%`,
+              maxWidth: `${(all[i + 1]?.left ?? 100) - m.left - 1.5}%`,
+            }}
           >
             {m.label}
           </span>
@@ -130,15 +134,26 @@ const rowButton =
 export function NexusCommandCenter({
   fallback,
   onAsk,
+  onMain,
 }: {
   fallback: ReactNode
   /** Puts a sentence in the composer (the user still presses send). */
   onAsk?: (text: string) => void
+  /** Called while the home is NEXUS's own: the draft should use its agent. */
+  onMain?: () => void
 }) {
   const { panel, now } = useNexusPanel()
   // NEXUS runs on one agent, so the home hides the stock agent row (a sibling
   // that keys off these data attributes) until asked for.
   const [showAgents, setShowAgents] = useState(false)
+  const onMainRef = useRef(onMain)
+  useEffect(() => {
+    onMainRef.current = onMain
+  })
+  const active = panel != null && !showAgents
+  useEffect(() => {
+    if (active) onMainRef.current?.()
+  }, [active])
   if (!panel) return <>{fallback}</>
 
   // "Estado de la agenda. Estado de las tareas." — the second sentence takes
@@ -299,7 +314,7 @@ export function NexusCommandCenter({
         aria-expanded={showAgents}
         className="mx-auto rounded-md px-2 py-1 text-[0.6875rem] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
       >
-        {showAgents ? "Ocultar los agentes" : "Usar otro agente esta vez"}
+        {showAgents ? "Volver a solo NEXUS" : "Usar otro agente esta vez"}
       </button>
     </div>
   )

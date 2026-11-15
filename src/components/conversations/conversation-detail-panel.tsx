@@ -2545,11 +2545,15 @@ const ConversationTabView = memo(function ConversationTabView({
               <NexusCommandCenter
                 fallback={<WelcomeHero />}
                 onAsk={(text) => setComposerInject({ text, mode: "replace" })}
+                onMain={() => handleAgentSelect("claude_code")}
               />
-              <QuickActions
-                onSelect={handleQuickAction}
-                agentType={selectedAgent}
-              />
+              {/* NEXUS: los atajos de código salen con "usar otro agente". */}
+              <div className="contents [[data-nexus-command-center]:not([data-nexus-agents])~&]:hidden">
+                <QuickActions
+                  onSelect={handleQuickAction}
+                  agentType={selectedAgent}
+                />
+              </div>
               {/* NEXUS: con el centro de comando a la vista la fila de agentes se oculta. */}
               <div className="flex justify-center [[data-nexus-command-center]:not([data-nexus-agents])~&]:hidden">
                 <AgentSelector

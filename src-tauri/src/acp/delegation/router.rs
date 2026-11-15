@@ -126,6 +126,18 @@ str_enum!(
 );
 
 str_enum!(
+    /// How much the work matters to the user: decides whether it may spend
+    /// the paid quota (`routing::paced_profile`).
+    #[derive(Default)]
+    Priority {
+        Low => "low",
+        #[default]
+        Normal => "normal",
+        High => "high",
+    }
+);
+
+str_enum!(
     /// Outcome of a routed delegation, fed back into [`RouterStats`].
     Signal {
         Completed => "completed",

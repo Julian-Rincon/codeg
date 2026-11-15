@@ -1381,6 +1381,8 @@ impl DelegationListener {
             },
             _ => None,
         };
+        // Unknown values fall back to normal: priority only saves quota.
+        let priority = arg("priority").and_then(super::router::Priority::parse);
         let effort = match arg("effort") {
             Some(raw) if !raw.is_empty() => match super::router::Effort::parse(raw) {
                 Some(e) => Some(e),
@@ -1425,6 +1427,7 @@ impl DelegationListener {
                 task_kind,
                 difficulty,
                 effort,
+                priority,
             })
             .await
             .map_err(|e| report_failed("routing_failed", &e))?;
