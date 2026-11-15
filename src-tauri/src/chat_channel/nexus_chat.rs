@@ -6,7 +6,8 @@
 //! - los atajos del menú del bot (`/hoy`, `/tareas`, …) no son comandos de Phantom:
 //!   se convierten en la frase que Julian le diría al agente.
 //!
-//! - `/voz`, `/hibrido` y `/texto` eligen si responde con audio.
+//! - `/vozauto`, `/voz`, `/hibrido` y `/texto` eligen si responde con audio; en
+//!   automático lo decide la agenda (`voz_franjas` del panel de NEXUS).
 //!
 //! Vive en un archivo propio para que las fusiones de upstream solo tengan que
 //! conservar tres llamadas en `command_dispatcher.rs`.
@@ -59,21 +60,70 @@ fn voice_mode_path(data_dir: &Path) -> std::path::PathBuf {
     data_dir.join("nexus-voice-mode")
 }
 
-/// El modo guardado; híbrido si no hay ninguno o no se entiende.
-pub fn voice_mode(data_dir: &Path) -> VoiceMode {
-    match std::fs::read_to_string(voice_mode_path(data_dir)).as_deref().map(str::trim) {
-        Ok("voz") => VoiceMode::Voice,
-        Ok("texto") => VoiceMode::Text,
-        _ => VoiceMode::Hybrid,
+fn nexus_panel_path() -> Option<std::path::PathBuf> {
+    dirs::home_dir().map(|home| home.join(".local/share/nexus/panel.json"))
+}
+
+fn mode_from_word(word: &str) -> Option<VoiceMode> {
+    match word {
+        "voz" => Some(VoiceMode::Voice),
+        "hibrido" => Some(VoiceMode::Hybrid),
+        "texto" => Some(VoiceMode::Text),
+        _ => None,
     }
 }
 
-/// `/voz`, `/hibrido`, `/texto`: guarda el modo y devuelve la confirmación.
+/// Modo automático: la franja de `voz_franjas` del panel de NEXUS en la que cae
+/// `now` (texto durante un evento, voz en el trayecto entre dos). Fuera de toda
+/// franja, o sin panel, híbrido. Las reglas viven en `nexus/voz_modo.py`.
+fn auto_mode(panel: &Path, now: chrono::DateTime<chrono::Utc>) -> VoiceMode {
+    let Ok(bytes) = std::fs::read(panel) else {
+        return VoiceMode::Hybrid;
+    };
+    let Ok(value) = serde_json::from_slice::<serde_json::Value>(&bytes) else {
+        return VoiceMode::Hybrid;
+    };
+    let parse = |v: &serde_json::Value| {
+        chrono::DateTime::parse_from_rfc3339(v.as_str()?)
+            .ok()
+            .map(|d| d.with_timezone(&chrono::Utc))
+    };
+    value["voz_franjas"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .find_map(|slot| {
+            let (from, to) = (parse(&slot["desde"])?, parse(&slot["hasta"])?);
+            if from <= now && now < to {
+                mode_from_word(slot["modo"].as_str()?)
+            } else {
+                None
+            }
+        })
+        .unwrap_or(VoiceMode::Hybrid)
+}
+
+/// El modo que aplica ahora: el que Julian fijó con `/voz`, `/hibrido` o `/texto`,
+/// y si no fijó ninguno (o pidió `/vozauto`), el que dicta su agenda.
+pub fn voice_mode(data_dir: &Path) -> VoiceMode {
+    let stored = std::fs::read_to_string(voice_mode_path(data_dir)).unwrap_or_default();
+    mode_from_word(stored.trim()).unwrap_or_else(|| match nexus_panel_path() {
+        Some(panel) => auto_mode(&panel, chrono::Utc::now()),
+        None => VoiceMode::Hybrid,
+    })
+}
+
+/// `/vozauto`, `/voz`, `/hibrido`, `/texto`: guarda el modo y devuelve la confirmación.
 /// `None` si `text` no es uno de esos comandos.
 pub fn voice_mode_command(text: &str, prefix: &str, data_dir: &Path) -> Option<String> {
     let command = text.trim().strip_prefix(prefix)?;
     let command = command.split('@').next().unwrap_or(command).to_lowercase();
     let (stored, reply) = match command.as_str() {
+        // `/auto` a secas ya es de Phantom (aprobar permisos solo).
+        "vozauto" | "voz_auto" => (
+            "auto",
+            "Modo automático: texto mientras estás en una reunión o clase, voz cuando vas de una a otra, híbrido el resto del tiempo.",
+        ),
         "voz" => ("voz", "Modo voz: te respondo siempre con audio."),
         "hibrido" | "híbrido" => (
             "hibrido",
@@ -131,7 +181,6 @@ mod tests {
     #[test]
     fn voice_mode_is_stored_and_decides_the_spoken_reply() {
         let dir = tempfile::tempdir().unwrap();
-        assert_eq!(voice_mode(dir.path()), VoiceMode::Hybrid);
         assert!(voice_mode_command("/hoy", "/", dir.path()).is_none());
         assert!(voice_mode_command("/voz", "/", dir.path()).unwrap().contains("audio"));
         assert_eq!(voice_mode(dir.path()), VoiceMode::Voice);
@@ -145,5 +194,38 @@ mod tests {
         assert_eq!(apply_voice_mode(VoiceMode::Hybrid, None), None);
         assert_eq!(apply_voice_mode(VoiceMode::Hybrid, spoke.clone()), spoke);
         assert_eq!(apply_voice_mode(VoiceMode::Text, spoke), None);
+    }
+
+    #[test]
+    fn auto_mode_follows_the_agenda_slots_and_falls_back_to_hybrid() {
+        let dir = tempfile::tempdir().unwrap();
+        let panel = dir.path().join("panel.json");
+        let at = |t: &str| {
+            chrono::DateTime::parse_from_rfc3339(t)
+                .unwrap()
+                .with_timezone(&chrono::Utc)
+        };
+        assert_eq!(auto_mode(&panel, at("2026-11-17T08:00:00-05:00")), VoiceMode::Hybrid);
+        std::fs::write(
+            &panel,
+            r#"{"voz_franjas":[
+                {"desde":"2026-11-17T07:00:00-05:00","hasta":"2026-11-17T09:00:00-05:00","modo":"texto"},
+                {"desde":"2026-11-17T09:00:00-05:00","hasta":"2026-11-17T09:30:00-05:00","modo":"voz"},
+                {"desde":"mal","hasta":"2026-11-17T23:00:00-05:00","modo":"voz"}]}"#,
+        )
+        .unwrap();
+        assert_eq!(auto_mode(&panel, at("2026-11-17T08:00:00-05:00")), VoiceMode::Text);
+        assert_eq!(auto_mode(&panel, at("2026-11-17T09:00:00-05:00")), VoiceMode::Voice);
+        assert_eq!(auto_mode(&panel, at("2026-11-17T09:30:00-05:00")), VoiceMode::Hybrid);
+        assert_eq!(auto_mode(&panel, at("2026-11-18T08:00:00-05:00")), VoiceMode::Hybrid);
+        std::fs::write(&panel, "{roto").unwrap();
+        assert_eq!(auto_mode(&panel, at("2026-11-17T08:00:00-05:00")), VoiceMode::Hybrid);
+
+        // Un modo fijado a mano manda sobre la agenda; `/vozauto` lo suelta.
+        voice_mode_command("/texto", "/", dir.path()).unwrap();
+        assert_eq!(voice_mode(dir.path()), VoiceMode::Text);
+        assert!(voice_mode_command("/auto", "/", dir.path()).is_none());
+        assert!(voice_mode_command("/vozauto", "/", dir.path()).unwrap().contains("automático"));
+        assert_eq!(std::fs::read_to_string(voice_mode_path(dir.path())).unwrap(), "auto");
     }
 }
