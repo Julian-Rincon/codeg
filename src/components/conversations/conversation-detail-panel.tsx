@@ -2542,7 +2542,10 @@ const ConversationTabView = memo(function ConversationTabView({
             <div className="flex-1" />
             <div className="mx-auto flex w-full chat-content-w shrink-0 flex-col gap-6 px-4 py-4">
               {/* NEXUS: el centro de comando toma el lugar del saludo cuando hay panel. */}
-              <NexusCommandCenter fallback={<WelcomeHero />} />
+              <NexusCommandCenter
+                fallback={<WelcomeHero />}
+                onAsk={(text) => setComposerInject({ text, mode: "replace" })}
+              />
               <QuickActions
                 onSelect={handleQuickAction}
                 agentType={selectedAgent}

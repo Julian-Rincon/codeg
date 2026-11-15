@@ -124,7 +124,17 @@ function Rail({ panel, now }: { panel: NexusPanel; now: number }) {
   )
 }
 
-export function NexusCommandCenter({ fallback }: { fallback: ReactNode }) {
+const rowButton =
+  "-mx-1.5 flex min-w-0 cursor-pointer flex-col rounded-md px-1.5 py-0.5 text-left transition-colors hover:bg-accent/50 focus-visible:outline-2 focus-visible:outline-ring"
+
+export function NexusCommandCenter({
+  fallback,
+  onAsk,
+}: {
+  fallback: ReactNode
+  /** Puts a sentence in the composer (the user still presses send). */
+  onAsk?: (text: string) => void
+}) {
   const { panel, now } = useNexusPanel()
   if (!panel) return <>{fallback}</>
 
@@ -161,7 +171,15 @@ export function NexusCommandCenter({ fallback }: { fallback: ReactNode }) {
             <Empty>Nada pendiente. Dime una tarea y la anoto.</Empty>
           ) : (
             panel.pendientes.slice(0, 3).map((t) => (
-              <div key={t.id} className="flex min-w-0 flex-col">
+              <button
+                key={t.id}
+                type="button"
+                className={rowButton}
+                title="Pedirle ayuda a NEXUS con esta tarea"
+                onClick={() =>
+                  onAsk?.(`Ayúdame con la tarea #${t.id}: ${t.texto}`)
+                }
+              >
                 <span className="line-clamp-2 text-xs text-foreground/90">
                   {t.texto}
                 </span>
@@ -174,7 +192,7 @@ export function NexusCommandCenter({ fallback }: { fallback: ReactNode }) {
                 >
                   {dueLabel(t.vence, t.vencida)}
                 </span>
-              </div>
+              </button>
             ))
           )}
           {panel.pendientes.length > 3 ? (
@@ -235,7 +253,17 @@ export function NexusCommandCenter({ fallback }: { fallback: ReactNode }) {
             ))
           )}
           {panel.total_recuerdos > 0 ? (
-            <Empty>{panel.total_recuerdos} recuerdos en total</Empty>
+            <button
+              type="button"
+              className={`${rowButton} text-xs text-muted-foreground`}
+              onClick={() =>
+                onAsk?.(
+                  "Muéstrame lo que has aprendido de mí esta semana, para corregirte lo que esté mal."
+                )
+              }
+            >
+              {panel.total_recuerdos} recuerdos. Repasarlos
+            </button>
           ) : null}
         </Block>
       </div>

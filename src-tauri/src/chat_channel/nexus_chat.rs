@@ -6,8 +6,12 @@
 //! - los atajos del menú del bot (`/hoy`, `/tareas`, …) no son comandos de Phantom:
 //!   se convierten en la frase que Julian le diría al agente.
 //!
+//! - `/voz`, `/hibrido` y `/texto` eligen si responde con audio.
+//!
 //! Vive en un archivo propio para que las fusiones de upstream solo tengan que
-//! conservar dos llamadas en `command_dispatcher.rs`.
+//! conservar tres llamadas en `command_dispatcher.rs`.
+
+use std::path::Path;
 
 use super::i18n::{self, Lang};
 use super::types::RichMessage;
@@ -42,6 +46,57 @@ pub fn shortcut(text: &str, prefix: &str) -> Option<String> {
     Some(phrase.to_string())
 }
 
+/// Cómo responde NEXUS en el chat general: con audio siempre, solo cuando Julian
+/// mandó audio (lo que Phantom hace de fábrica), o nunca.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VoiceMode {
+    Voice,
+    Hybrid,
+    Text,
+}
+
+fn voice_mode_path(data_dir: &Path) -> std::path::PathBuf {
+    data_dir.join("nexus-voice-mode")
+}
+
+/// El modo guardado; híbrido si no hay ninguno o no se entiende.
+pub fn voice_mode(data_dir: &Path) -> VoiceMode {
+    match std::fs::read_to_string(voice_mode_path(data_dir)).as_deref().map(str::trim) {
+        Ok("voz") => VoiceMode::Voice,
+        Ok("texto") => VoiceMode::Text,
+        _ => VoiceMode::Hybrid,
+    }
+}
+
+/// `/voz`, `/hibrido`, `/texto`: guarda el modo y devuelve la confirmación.
+/// `None` si `text` no es uno de esos comandos.
+pub fn voice_mode_command(text: &str, prefix: &str, data_dir: &Path) -> Option<String> {
+    let command = text.trim().strip_prefix(prefix)?;
+    let command = command.split('@').next().unwrap_or(command).to_lowercase();
+    let (stored, reply) = match command.as_str() {
+        "voz" => ("voz", "Modo voz: te respondo siempre con audio."),
+        "hibrido" | "híbrido" => (
+            "hibrido",
+            "Modo híbrido: te respondo con audio cuando me hablas y con texto cuando me escribes.",
+        ),
+        "texto" => ("texto", "Modo texto: solo te escribo, aunque me mandes audio."),
+        _ => return None,
+    };
+    match std::fs::write(voice_mode_path(data_dir), stored) {
+        Ok(()) => Some(reply.to_string()),
+        Err(e) => Some(format!("No pude guardar el modo de voz: {e}")),
+    }
+}
+
+/// El idioma de la respuesta hablada que corresponde al modo (`None` = solo texto).
+pub fn apply_voice_mode(mode: VoiceMode, incoming: Option<String>) -> Option<String> {
+    match mode {
+        VoiceMode::Voice => incoming.or_else(|| Some("es".to_string())),
+        VoiceMode::Hybrid => incoming,
+        VoiceMode::Text => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -71,5 +126,24 @@ mod tests {
         assert!(shortcut("/sessions", "/").is_none());
         assert!(shortcut("hoy", "/").is_none());
         assert!(shortcut("qué tengo /hoy", "/").is_none());
+    }
+
+    #[test]
+    fn voice_mode_is_stored_and_decides_the_spoken_reply() {
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(voice_mode(dir.path()), VoiceMode::Hybrid);
+        assert!(voice_mode_command("/hoy", "/", dir.path()).is_none());
+        assert!(voice_mode_command("/voz", "/", dir.path()).unwrap().contains("audio"));
+        assert_eq!(voice_mode(dir.path()), VoiceMode::Voice);
+        voice_mode_command("/TEXTO@nexus_bot", "/", dir.path()).unwrap();
+        assert_eq!(voice_mode(dir.path()), VoiceMode::Text);
+        voice_mode_command("/híbrido", "/", dir.path()).unwrap();
+        assert_eq!(voice_mode(dir.path()), VoiceMode::Hybrid);
+
+        let spoke = Some("es".to_string());
+        assert_eq!(apply_voice_mode(VoiceMode::Voice, None), Some("es".to_string()));
+        assert_eq!(apply_voice_mode(VoiceMode::Hybrid, None), None);
+        assert_eq!(apply_voice_mode(VoiceMode::Hybrid, spoke.clone()), spoke);
+        assert_eq!(apply_voice_mode(VoiceMode::Text, spoke), None);
     }
 }

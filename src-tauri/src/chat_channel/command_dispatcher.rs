@@ -185,6 +185,32 @@ pub fn spawn_command_dispatcher(
                 continue;
             }
 
+            // NEXUS: modo de voz del chat general (/voz, /hibrido, /texto; nexus_chat.rs).
+            let mut voice_reply_lang = cmd.voice_reply_lang.clone();
+            if session_commands::is_general_chat_channel(&db_conn, cmd.channel_id).await {
+                if cmd.callback_data.is_none() {
+                    if let Some(reply) =
+                        super::nexus_chat::voice_mode_command(text, &config.prefix, &data_dir)
+                    {
+                        let reply = DispatchMessage::Rich(RichMessage::info(reply));
+                        send_dispatch_message(
+                            &db_conn,
+                            &manager,
+                            cmd.channel_id,
+                            text,
+                            reply,
+                            cmd.target,
+                        )
+                        .await;
+                        continue;
+                    }
+                }
+                voice_reply_lang = super::nexus_chat::apply_voice_mode(
+                    super::nexus_chat::voice_mode(&data_dir),
+                    voice_reply_lang,
+                );
+            }
+
             let response = dispatch_command(
                 text,
                 &config.prefix,
@@ -199,7 +225,7 @@ pub fn spawn_command_dispatcher(
                 &cmd.target,
                 cmd.callback_data.as_deref(),
                 config.lang,
-                cmd.voice_reply_lang.clone(),
+                voice_reply_lang,
             )
             .await;
 
