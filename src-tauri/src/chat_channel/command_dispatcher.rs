@@ -234,6 +234,15 @@ pub fn spawn_command_dispatcher(
                 }
             }
 
+            // NEXUS: el chat general no acusa recibo; muestra "escribiendo…" (nexus_chat.rs).
+            let mut response = response;
+            if matches!(&response.message, Some(DispatchMessage::Rich(rich)) if super::nexus_chat::is_ack(rich, config.lang))
+                && session_commands::is_general_chat_channel(&db_conn, cmd.channel_id).await
+            {
+                manager.send_typing_to_target(&response.target).await;
+                response.message = None;
+            }
+
             let mut messages = Vec::new();
             if let Some(message) = response.message {
                 messages.push((message, response.target));
@@ -363,6 +372,12 @@ async fn dispatch_command(
         Some(t) => (t, None),
         None => (text, callback_data),
     };
+    // NEXUS: los atajos del menú (/hoy, /tareas…) son frases para el agente (nexus_chat.rs).
+    let nexus_shortcut = match callback_data {
+        None => super::nexus_chat::shortcut(text, prefix),
+        Some(_) => None,
+    };
+    let text = nexus_shortcut.as_deref().unwrap_or(text);
     if let Some(data) = callback_data.filter(|d| question_buttons::is_question_callback(d)) {
         return DispatchResponse::current(
             session_commands::handle_question_button(data, conn_mgr, lang).await,
