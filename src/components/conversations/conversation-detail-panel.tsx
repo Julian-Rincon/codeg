@@ -2550,7 +2550,8 @@ const ConversationTabView = memo(function ConversationTabView({
                 onSelect={handleQuickAction}
                 agentType={selectedAgent}
               />
-              <div className="flex justify-center">
+              {/* NEXUS: con el centro de comando a la vista la fila de agentes se oculta. */}
+              <div className="flex justify-center [[data-nexus-command-center]:not([data-nexus-agents])~&]:hidden">
                 <AgentSelector
                   // The selector spans the row it is given (it has to measure
                   // how much room it has), so the centring lives inside it now

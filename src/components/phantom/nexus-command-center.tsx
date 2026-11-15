@@ -136,6 +136,9 @@ export function NexusCommandCenter({
   onAsk?: (text: string) => void
 }) {
   const { panel, now } = useNexusPanel()
+  // NEXUS runs on one agent, so the home hides the stock agent row (a sibling
+  // that keys off these data attributes) until asked for.
+  const [showAgents, setShowAgents] = useState(false)
   if (!panel) return <>{fallback}</>
 
   // "Estado de la agenda. Estado de las tareas." — the second sentence takes
@@ -147,7 +150,11 @@ export function NexusCommandCenter({
   const allDay = panel.manana.filter((e) => e.todo_el_dia)
 
   return (
-    <div className="flex flex-col gap-4" data-nexus-command-center>
+    <div
+      className="flex flex-col gap-4"
+      data-nexus-command-center
+      data-nexus-agents={showAgents ? "" : undefined}
+    >
       <header className="flex flex-col gap-1.5 text-center">
         <p className="text-xs text-muted-foreground">{panel.fecha}</p>
         <h1 className="text-2xl font-semibold tracking-tight text-foreground sm:text-3xl">
@@ -285,6 +292,15 @@ export function NexusCommandCenter({
           ))}
         </ul>
       ) : null}
+
+      <button
+        type="button"
+        onClick={() => setShowAgents((v) => !v)}
+        aria-expanded={showAgents}
+        className="mx-auto rounded-md px-2 py-1 text-[0.6875rem] text-muted-foreground transition-colors hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/60"
+      >
+        {showAgents ? "Ocultar los agentes" : "Usar otro agente esta vez"}
+      </button>
     </div>
   )
 }
