@@ -66,6 +66,7 @@ pub mod opencode_credentials;
 pub mod open_in;
 pub mod phantom_checkpoints;
 pub mod phantom_handoff;
+pub mod nexus_panel;
 pub mod phantom_memory;
 pub mod phantom_successor;
 #[cfg(feature = "tauri-runtime")]

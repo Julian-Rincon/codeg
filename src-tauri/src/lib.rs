@@ -2338,6 +2338,7 @@ mod tauri_app {
                 token_usage_commands::token_usage_status,
                 token_usage_commands::token_usage_sync,
                 model_scorecard_commands::model_scorecard,
+                crate::commands::nexus_panel::nexus_panel,
                 usage_meter_commands::usage_meter,
                 usage_meter_commands::router_profile_set,
                 quota_resume_commands::quota_resume_schedule,

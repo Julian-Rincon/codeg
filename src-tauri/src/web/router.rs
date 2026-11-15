@@ -1796,6 +1796,7 @@ pub fn build_router_with_proxy_auth(
             "/model_scorecard",
             post(handlers::model_scorecard::model_scorecard),
         )
+        .route("/nexus_panel", post(handlers::nexus_panel::nexus_panel))
         .route("/usage_meter", post(handlers::usage_meter::usage_meter))
         .route(
             "/router_profile_set",

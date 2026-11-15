@@ -82,6 +82,7 @@ import { useSessionFeedback } from "@/hooks/use-session-feedback"
 import { AgentSelector } from "@/components/chat/agent-selector"
 import { ChatInput } from "@/components/chat/chat-input"
 import { WelcomeHero, WelcomeTip } from "@/components/chat/welcome-hero"
+import { NexusCommandCenter } from "@/components/phantom/nexus-command-center"
 import { QuickActions } from "@/components/chat/quick-actions"
 import type { ComposerInjectContent } from "@/components/chat/message-input"
 import { TileScrollContainer } from "@/components/conversations/tile-scroll-container"
@@ -2540,7 +2541,8 @@ const ConversationTabView = memo(function ConversationTabView({
           <div className="flex min-h-full flex-col">
             <div className="flex-1" />
             <div className="mx-auto flex w-full chat-content-w shrink-0 flex-col gap-6 px-4 py-4">
-              <WelcomeHero />
+              {/* NEXUS: el centro de comando toma el lugar del saludo cuando hay panel. */}
+              <NexusCommandCenter fallback={<WelcomeHero />} />
               <QuickActions
                 onSelect={handleQuickAction}
                 agentType={selectedAgent}
