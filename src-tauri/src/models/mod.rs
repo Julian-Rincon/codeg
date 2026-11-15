@@ -67,9 +67,9 @@ pub use usage_meter::{
     ClaudeUsage, ClaudeUsageWindow, RouterProfileSet, TodayUsageEntry, UsageMeter,
 };
 pub use work_task::{
-    FollowUpIntent, WorkTaskChangedFile, WorkTaskConfig, WorkTaskDraft, WorkTaskEventInfo,
-    WorkTaskFolderSettings, WorkTaskInfo, WorkTaskMergeOp, WorkTaskMergeState, WorkTaskPreflight,
-    WorkTaskQueuedMerge, WorkTaskSource, WorkTaskStatus, WorkTaskTemplateDraft,
+    FollowUpIntent, WorkTaskBackgroundWait, WorkTaskChangedFile, WorkTaskConfig, WorkTaskDraft,
+    WorkTaskEventInfo, WorkTaskFolderSettings, WorkTaskInfo, WorkTaskMergeOp, WorkTaskMergeState,
+    WorkTaskPreflight, WorkTaskQueuedMerge, WorkTaskSource, WorkTaskStatus, WorkTaskTemplateDraft,
     WorkTaskTemplateInfo, WorkTaskUncommittedFile, DELIVERABLE_REPORT, STAGE_PROMPT_ALL,
 };
 #[cfg(feature = "tauri-runtime")]
