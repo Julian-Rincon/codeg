@@ -229,3 +229,132 @@ mod tests {
         assert_eq!(std::fs::read_to_string(voice_mode_path(dir.path())).unwrap(), "auto");
     }
 }
+
+// ── Relevo automático por cuota ──────────────────────────────────────────────
+
+/// Dónde queda escrito cada relevo, para que el juez de NEXUS (`nexus juez`)
+/// revise con Claude lo que se hizo en su ausencia.
+fn nexus_data() -> std::path::PathBuf {
+    let home = std::env::var_os("HOME").unwrap_or_default();
+    Path::new(&home).join(".local/share/nexus")
+}
+
+/// El botón del relevo que no es de Claude: la primera opción salvo que sea
+/// otro modelo de Claude y la segunda no (la cuota es de toda la cuenta).
+pub fn pick_failover_button(buttons: &[(String, String)]) -> Option<&(String, String)> {
+    let offers: Vec<&(String, String)> =
+        buttons.iter().filter(|(id, _)| id.ends_with(":go") || id.ends_with(":alt")).collect();
+    offers
+        .iter()
+        .find(|(_, label)| !label.contains("claude"))
+        .or(offers.first())
+        .copied()
+}
+
+/// NEXUS: cuando el agente del chat se queda sin cuota no pregunta, sigue solo
+/// con el mejor sucesor fuera de Claude y lo dice. `false` = no se hizo (modo
+/// manual con `~/.local/share/nexus/relevo-manual`, o sin sucesor): el llamador
+/// manda entonces la propuesta con botones de siempre.
+#[allow(clippy::too_many_arguments)]
+pub async fn auto_failover(
+    offer: &super::types::InteractiveMessage,
+    db: &sea_orm::DatabaseConnection,
+    channel_id: i32,
+    sender_id: &str,
+    source_conversation_id: i32,
+    target: &super::types::ChannelMessageTarget,
+    manager: &super::manager::ChatChannelManager,
+    conn_mgr: &crate::acp::manager::ConnectionManager,
+    emitter: &crate::web::event_bridge::EventEmitter,
+    bridge: &std::sync::Arc<tokio::sync::Mutex<super::session_bridge::SessionBridge>>,
+    lang: Lang,
+    prefix: &str,
+) -> bool {
+    let nexus = nexus_data();
+    if nexus.join("relevo-manual").exists() {
+        return false;
+    }
+    let buttons: Vec<(String, String)> =
+        offer.buttons.iter().map(|b| (b.id.clone(), b.label.clone())).collect();
+    let Some((id, label)) = pick_failover_button(&buttons).cloned() else {
+        return false;
+    };
+    let quien = label.trim_start_matches("Continuar con ").trim_start_matches("Continue with ");
+    let _ = manager
+        .send_to_target(
+            target,
+            &RichMessage::info(format!(
+                "Claude se quedó sin cuota. Sigo con {quien}, con todo el contexto de esta \
+                 conversación. Cuando Claude vuelva revisa lo que haga y corrige si hace falta."
+            )),
+        )
+        .await;
+    let data_dir = std::env::var_os("CODEG_DATA_DIR")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|| nexus.with_file_name("codeg"));
+    let result = super::session_commands::handle_failover_callback(
+        &id, db, channel_id, sender_id, target, manager, conn_mgr, emitter, bridge, lang, prefix,
+        &data_dir,
+    )
+    .await;
+    if !is_ack(&result.message, lang) {
+        let _ = manager.send_to_target(&result.response_target, &result.message).await;
+    }
+    for (message, to) in &result.extra_responses {
+        let _ = manager.send_to_target(to, message).await;
+    }
+    let nueva = match &result.post_action {
+        Some(super::session_commands::CommandPostAction::SendLinkedPrompt {
+            conversation_id, ..
+        }) => Some(*conversation_id),
+        _ => None,
+    };
+    if let Some(action) = result.post_action {
+        if let Some((message, to)) =
+            super::session_commands::handle_post_action(action, db, conn_mgr, bridge).await
+        {
+            let _ = manager.send_to_target(&to, &message).await;
+        }
+    }
+    // Una línea por relevo; el juez la lee y borra el archivo al terminar.
+    let linea = serde_json::json!({
+        "at": chrono::Utc::now().to_rfc3339(),
+        "conversacion": source_conversation_id,
+        "relevo": quien,
+        "nueva": nueva,
+    });
+    use std::io::Write;
+    if let Ok(mut f) = std::fs::OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(nexus.join("ausencia.jsonl"))
+    {
+        let _ = writeln!(f, "{linea}");
+    }
+    true
+}
+
+#[cfg(test)]
+mod relevo_tests {
+    use super::pick_failover_button;
+
+    fn b(id: &str, label: &str) -> (String, String) {
+        (id.to_string(), label.to_string())
+    }
+
+    #[test]
+    fn the_relay_skips_claude_when_another_agent_is_offered() {
+        let both = [
+            b("fo:3:go", "Continuar con claude_code · claude-sonnet-5-5"),
+            b("fo:3:alt", "codex · gpt-5.5"),
+            b("fo:3:wait", "Esperar"),
+        ];
+        assert_eq!(pick_failover_button(&both).unwrap().0, "fo:3:alt");
+        let first = [b("fo:4:go", "Continuar con open_code · mimo"), b("fo:4:wait", "Esperar")];
+        assert_eq!(pick_failover_button(&first).unwrap().0, "fo:4:go");
+        // Solo Claude disponible: mejor eso que quedarse callado.
+        let only = [b("fo:5:go", "Continuar con claude_code · haiku"), b("fo:5:wait", "Esperar")];
+        assert_eq!(pick_failover_button(&only).unwrap().0, "fo:5:go");
+        assert!(pick_failover_button(&[b("fo:6:wait", "Esperar")]).is_none());
+    }
+}

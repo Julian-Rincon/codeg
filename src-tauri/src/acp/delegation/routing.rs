@@ -265,6 +265,15 @@ pub fn effective_profile(
     )
 }
 
+/// Drops Claude Code from the pool unless that would leave no candidate.
+pub fn without_claude(pool: &mut RoutingPool) {
+    let other = |c: &router::CandidateModel| c.agent_type != AgentType::ClaudeCode;
+    if pool.candidates.iter().any(other) {
+        pool.candidates.retain(other);
+        pool.trials.retain(other);
+    }
+}
+
 /// Points the weekly Claude quota may run ahead of the calendar before normal
 /// work stops spending the paid models.
 const PACE_MARGIN_PCT: f64 = 10.0;
@@ -761,9 +770,14 @@ impl DbRouting {
             .filter(|e| !disabled.contains(&e.agent_type))
             .collect();
         let stats: RouterStats = self.load(STATS_KEY).await;
-        let pool = candidates_from_scorecard(&entries, &stats);
+        let mut pool = candidates_from_scorecard(&entries, &stats);
         // Spend the paid models only while Claude's quota holds up.
         let claude = crate::commands::usage_meter::claude_usage_effective().await;
+        // Quota used up: a Claude pick would only fail, so the best model
+        // outside Claude takes the work (when there is one).
+        if claude.as_ref().is_some_and(crate::commands::usage_meter::quota_exhausted) {
+            without_claude(&mut pool);
+        }
         let elapsed = claude
             .as_ref()
             .and_then(|u| week_elapsed_pct(u.seven_day.resets_at.as_deref(), chrono::Utc::now()));
@@ -1229,6 +1243,26 @@ mod tests {
             paced_profile(Profile::Equilibrado, High, Some((1.0, 1.0)), Some(50.0)),
             (Profile::Equilibrado, None)
         );
+    }
+
+    #[test]
+    fn an_exhausted_quota_takes_claude_out_of_the_pool() {
+        let stats = RouterStats::default();
+        let mut pool = candidates_from_scorecard(
+            &[
+                entry("claude_code", "sonnet", true, 0),
+                entry("open_code", "opencode/mimo-v2.6-flash-free", true, 30),
+            ],
+            &stats,
+        );
+        without_claude(&mut pool);
+        assert!(pool.candidates.iter().all(|c| c.agent_type != AgentType::ClaudeCode));
+        assert!(!pool.candidates.is_empty());
+        // Nothing else to route to: Claude stays rather than leaving no plan.
+        let mut solo = candidates_from_scorecard(&[entry("claude_code", "sonnet", true, 0)], &stats);
+        let before = solo.candidates.len();
+        without_claude(&mut solo);
+        assert_eq!(solo.candidates.len(), before);
     }
 
     #[test]

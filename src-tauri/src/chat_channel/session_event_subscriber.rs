@@ -158,7 +158,16 @@ async fn handle_acp_envelope(
                 )
                 .await
                 {
-                    let _ = manager.send_interactive_to_target(&target, &offer).await;
+                    // NEXUS: releva solo (nexus_chat.rs); si no puede, la propuesta de siempre.
+                    let prefix = get_prefix(db).await;
+                    if !crate::chat_channel::nexus_chat::auto_failover(
+                        &offer, db, channel_id, &sender_id, conv_id, &target, manager, conn_mgr,
+                        emitter, bridge, lang, &prefix,
+                    )
+                    .await
+                    {
+                        let _ = manager.send_interactive_to_target(&target, &offer).await;
+                    }
                 }
             }
         }
