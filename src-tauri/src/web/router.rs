@@ -1801,6 +1801,10 @@ pub fn build_router_with_proxy_auth(
             post(handlers::model_scorecard::model_scorecard),
         )
         .route("/nexus_panel", post(handlers::nexus_panel::nexus_panel))
+        .route(
+            "/phantom_route_plan",
+            post(handlers::phantom_route_plan::phantom_route_plan),
+        )
         .route("/usage_meter", post(handlers::usage_meter::usage_meter))
         .route(
             "/router_profile_set",

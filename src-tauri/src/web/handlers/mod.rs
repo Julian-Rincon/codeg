@@ -40,6 +40,7 @@ pub mod opencode_credentials;
 pub mod pet;
 pub mod phantom;
 pub mod nexus_panel;
+pub mod phantom_route_plan;
 pub mod phantom_memory;
 pub mod project_boot;
 pub mod question;
