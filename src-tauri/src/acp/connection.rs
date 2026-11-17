@@ -7121,6 +7121,7 @@ pub(crate) fn claude_raw_sdk_session_meta(
     if let Some(settings) = &claude.settings {
         options.insert("settings".to_string(), settings.clone());
     }
+    crate::phantom::chrome::agregar(&mut options);
     if !options.is_empty() {
         claude_code.insert("options".to_string(), serde_json::Value::Object(options));
     }
