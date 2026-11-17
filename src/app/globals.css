@@ -4546,3 +4546,35 @@ html {
     opacity: 0;
   }
 }
+
+/* NEXUS: su propia identidad (cian #38bdf8, violeta #a78bfa) donde NEXUS es
+   quien habla: centro de comando y modo voz. Gana al acento del modelo
+   (especificidad mayor que html[data-phantom-accent] x2) y el orbe de voz lo
+   recoge porque lee --phantom-accent. */
+html[data-nexus-tema][data-nexus-tema][data-nexus-tema] {
+  --phantom-accent: #0284c7;
+  --phantom-accent-foreground: #ffffff;
+  --phantom-accent-soft: color-mix(in srgb, #0284c7 12%, transparent);
+  --primary: #0284c7;
+  --primary-foreground: #ffffff;
+  --ring: #0284c7;
+  --sidebar-primary: #0284c7;
+  --sidebar-primary-foreground: #ffffff;
+  --chart-3: #0284c7;
+  --chart-4: #7c3aed;
+  accent-color: #0284c7;
+}
+
+html.dark[data-nexus-tema][data-nexus-tema][data-nexus-tema] {
+  --phantom-accent: #38bdf8;
+  --phantom-accent-foreground: #04121c;
+  --phantom-accent-soft: color-mix(in srgb, #38bdf8 14%, transparent);
+  --primary: #38bdf8;
+  --primary-foreground: #04121c;
+  --ring: #38bdf8;
+  --sidebar-primary: #38bdf8;
+  --sidebar-primary-foreground: #04121c;
+  --chart-3: #38bdf8;
+  --chart-4: #a78bfa;
+  accent-color: #38bdf8;
+}

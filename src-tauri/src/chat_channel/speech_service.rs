@@ -15,7 +15,8 @@ use tokio::io::AsyncWriteExt;
 /// Default address of the local speech service.
 pub const DEFAULT_BASE_URL: &str = "http://127.0.0.1:3091";
 const HTTP_CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
-const HTTP_TIMEOUT: Duration = Duration::from_secs(30);
+// NEXUS: la voz clonada tarda ~5 s por cada 100 caracteres con la GPU ocupada.
+const HTTP_TIMEOUT: Duration = Duration::from_secs(180);
 const FFMPEG_TIMEOUT: Duration = Duration::from_secs(30);
 /// Cap on the text handed to `/tts`. Telegram voice notes are meant to be
 /// short; a longer reply is summarized by truncating at a sentence boundary

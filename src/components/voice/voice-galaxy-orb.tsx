@@ -120,7 +120,7 @@ export function VoiceGalaxyOrb({
     })
     observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ["data-phantom-accent", "class"],
+      attributeFilter: ["data-phantom-accent", "data-nexus-tema", "class"],
     })
     return () => observer.disconnect()
   }, [])

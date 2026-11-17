@@ -604,7 +604,14 @@ impl ChatChannelBackend for TelegramBackend {
                                                 .send(IncomingCommand {
                                                     channel_id,
                                                     sender_id,
-                                                    command_text: caption,
+                                                    command_text: match crate::chat_channel::nexus_adjuntos::extraer(message) {
+                                                        // NEXUS: si FORGE no la toma, la foto guardada le llega al agente.
+                                                        Some(adj) => match download_telegram_file(&client, &bot_token, &adj.file_id).await {
+                                                            Ok(b) => crate::chat_channel::nexus_adjuntos::guardar(&adj, &b).unwrap_or(caption),
+                                                            Err(_) => caption,
+                                                        },
+                                                        None => caption,
+                                                    },
                                                     callback_data: None,
                                                     target,
                                                     metadata: update.clone(),
@@ -612,6 +619,72 @@ impl ChatChannelBackend for TelegramBackend {
                                                 })
                                                 .await;
                                             if let Err(e) = send_result {
+                                                tracing::error!(
+                                                    "[Telegram] command_tx.send failed: {e}"
+                                                );
+                                            }
+                                        } else if let Some(adj) =
+                                            crate::chat_channel::nexus_adjuntos::extraer(message)
+                                        {
+                                            // NEXUS: fotos y archivos llegan al agente.
+                                            let chat_type = message
+                                                .pointer("/chat/type")
+                                                .and_then(|v| v.as_str())
+                                                .unwrap_or("private");
+                                            if !telegram_should_process_voice_message(
+                                                chat_type, topic_mode,
+                                            ) {
+                                                continue;
+                                            }
+                                            let target = telegram_message_target(
+                                                channel_id,
+                                                &configured_chat_id,
+                                                topic_mode,
+                                                message,
+                                            );
+                                            let texto = match download_telegram_file(
+                                                &client,
+                                                &bot_token,
+                                                &adj.file_id,
+                                            )
+                                            .await
+                                            .map_err(|e| e.to_string())
+                                            .and_then(|b| {
+                                                crate::chat_channel::nexus_adjuntos::guardar(
+                                                    &adj, &b,
+                                                )
+                                                .map_err(|e| e.to_string())
+                                            }) {
+                                                Ok(t) => t,
+                                                Err(e) => {
+                                                    tracing::warn!("[Telegram] adjunto: {e}");
+                                                    send_plain_text_direct(
+                                                        &client,
+                                                        &bot_token,
+                                                        &configured_chat_id,
+                                                        &target,
+                                                        "No pude descargar el archivo (Telegram solo deja bajar hasta 20 MB a los bots).",
+                                                    )
+                                                    .await;
+                                                    continue;
+                                                }
+                                            };
+                                            let sender_id = message
+                                                .pointer("/from/id")
+                                                .and_then(json_scalar_to_string)
+                                                .unwrap_or_default();
+                                            if let Err(e) = command_tx
+                                                .send(IncomingCommand {
+                                                    channel_id,
+                                                    sender_id,
+                                                    command_text: texto,
+                                                    callback_data: None,
+                                                    target,
+                                                    metadata: update.clone(),
+                                                    voice_reply_lang: None,
+                                                })
+                                                .await
+                                            {
                                                 tracing::error!(
                                                     "[Telegram] command_tx.send failed: {e}"
                                                 );

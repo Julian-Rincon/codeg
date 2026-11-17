@@ -298,7 +298,7 @@ async fn photo_with(
     photo: &Photo,
 ) -> Outcome {
     let Some(meta) = message_meta(&cmd.metadata) else {
-        return if photo.caption.is_some() {
+        return if photo.caption.is_some() || !cmd.command_text.trim().is_empty() {
             Outcome::Forward
         } else {
             Outcome::Reply(PHOTO_FAILED.to_string())
@@ -309,7 +309,9 @@ async fn photo_with(
             tracing::info!("[ForgeTap] foto channel={}: handled", cmd.channel_id);
             Outcome::Reply(reply)
         }
-        _ if photo.caption.is_some() => {
+        // NEXUS: con la foto ya guardada para el agente, lo que FORGE no tome
+        // (no es comida, tardó, falló) sigue hacia NEXUS en vez de perderse.
+        _ if photo.caption.is_some() || !cmd.command_text.trim().is_empty() => {
             tracing::info!("[ForgeTap] foto channel={}: caption forwarded", cmd.channel_id);
             Outcome::Forward
         }
@@ -817,6 +819,15 @@ pub(crate) mod tests {
             out,
             Outcome::Reply("📷 No vi comida en la foto; no registré nada.".to_string())
         );
+    }
+
+    #[tokio::test]
+    async fn saved_photo_not_food_goes_on_to_nexus() {
+        let dir = tempfile::tempdir().unwrap();
+        let bin = fake_nexus(dir.path(), "📷 No vi comida en la foto; no registré nada.", 3);
+        let mut cmd = photo_cmd(None);
+        cmd.command_text = "[Julián mandó una foto por Telegram. Está guardado en /x.jpg]".into();
+        assert_eq!(photo_out(&bin, &cmd).await, Outcome::Forward);
     }
 
     #[tokio::test]

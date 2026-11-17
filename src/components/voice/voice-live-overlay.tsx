@@ -9,7 +9,6 @@ import { useEffect, useMemo, useRef, useState } from "react"
 import { useTranslations } from "next-intl"
 import { Mic, MicOff, Square, X } from "lucide-react"
 import { Button } from "@/components/ui/button"
-import { AgentIcon } from "@/components/agent-icon"
 import { cn } from "@/lib/utils"
 import type { AgentType } from "@/lib/types"
 import type { UseVoiceLiveResult, VoicePhase } from "@/lib/voice/use-voice-live"
@@ -17,6 +16,7 @@ import {
   VoiceGalaxyOrb,
   type VoiceOrbState,
 } from "@/components/voice/voice-galaxy-orb"
+import { useNexusTema } from "@/lib/nexus-tema"
 
 export interface VoiceLiveOverlayProps {
   voiceLive: UseVoiceLiveResult
@@ -57,12 +57,9 @@ function useOrbSize(): number {
   return size
 }
 
-export function VoiceLiveOverlay({
-  voiceLive,
-  agentType,
-  agentName,
-}: VoiceLiveOverlayProps) {
+export function VoiceLiveOverlay({ voiceLive }: VoiceLiveOverlayProps) {
   const t = useTranslations("Folder.chat.messageInput.voice")
+  useNexusTema()
   const orbSize = useOrbSize()
   const panelRef = useRef<HTMLDivElement | null>(null)
 
@@ -146,14 +143,10 @@ export function VoiceLiveOverlay({
       className="absolute inset-0 z-50 flex flex-col bg-background/97 backdrop-blur-md outline-none"
     >
       <div className="flex items-center justify-between gap-2 px-4 pt-4">
-        {agentType ? (
-          <div className="flex items-center gap-2 rounded-full border border-border/60 bg-card/60 px-3 py-1.5 text-xs text-muted-foreground">
-            <AgentIcon agentType={agentType} className="size-4" />
-            <span className="truncate">{agentName ?? agentType}</span>
-          </div>
-        ) : (
-          <span />
-        )}
+        {/* En voz siempre habla NEXUS, sea cual sea el agente detrás. */}
+        <div className="flex items-center gap-2 rounded-full border border-border/60 bg-card/60 px-3 py-1.5 text-xs text-muted-foreground">
+          <span className="truncate">NEXUS</span>
+        </div>
         <Button
           onClick={endVoiceMode}
           variant="ghost"

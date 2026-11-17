@@ -15,6 +15,7 @@
 
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react"
 import { fetchNexusPanel, railMarks, type NexusPanel } from "@/lib/nexus-panel"
+import { useNexusTema } from "@/lib/nexus-tema"
 
 const REFRESH_MS = 60_000
 const NEXUS_RED = "#ff2020"
@@ -151,6 +152,7 @@ export function NexusCommandCenter({
     onMainRef.current = onMain
   })
   const active = panel != null && !showAgents
+  useNexusTema(active)
   useEffect(() => {
     if (active) onMainRef.current?.()
   }, [active])

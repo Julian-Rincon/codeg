@@ -12,6 +12,7 @@ pub mod i18n;
 pub mod manager;
 pub mod menu;
 pub mod message_formatter;
+pub mod nexus_adjuntos;
 pub mod nexus_chat;
 pub mod permission_buttons;
 pub mod question_buttons;
