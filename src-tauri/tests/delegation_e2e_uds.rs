@@ -846,6 +846,7 @@ async fn end_to_end_uds_assistant_delegation() {
         disabled_agents: Vec::new(),
         assistant_support: Default::default(),
         result_schema: Default::default(),
+        routing_guide_file: None,
     };
     let inflight = Arc::new(InflightCalls::new());
 

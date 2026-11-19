@@ -1830,7 +1830,7 @@ mod async_relay_dedup_tests {
         );
         let chat = ChatChannelManager::new();
         let rec = Recorder::default();
-        chat.add_channel(
+        let _ = chat.add_channel(
             ch.id,
             "test".into(),
             ChannelType::Telegram,

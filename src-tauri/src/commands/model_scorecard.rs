@@ -1391,7 +1391,7 @@ mod tests {
             let model = format!("model-{n}");
             for i in 0..25 {
                 let mut r = row("claude_code", Some(&model), "2026-09-20T00:00:00Z");
-                r.conversation_id = (n * 100 + i) as i32;
+                r.conversation_id = n * 100 + i;
                 r.occurred_at = now;
                 r.edit_calls = 1;
                 r.duration_ms = 500;

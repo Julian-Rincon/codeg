@@ -557,7 +557,7 @@ pub async fn phantom_handoff(
         .app_data_dir()
         .map(|p| crate::paths::resolve_effective_data_dir(&p))
         .unwrap_or_else(|_| std::path::PathBuf::from("."));
-    let emitter = EventEmitter::Tauri(app_handle);
+    let emitter = EventEmitter::from_app(&app_handle);
     phantom_handoff_core(
         &db,
         &manager,

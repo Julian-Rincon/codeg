@@ -1291,6 +1291,7 @@ impl DelegationListener {
         }
     }
 
+    #[allow(clippy::result_large_err)]
     async fn process_inner(
         &self,
         req: BrokerRequest,

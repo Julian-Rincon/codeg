@@ -652,6 +652,10 @@ impl ChatChannelManager {
     }
 }
 
+fn topic_title_for_conversation(conversation_id: i32, title: &str) -> String {
+    format!("#{conversation_id} {title}").chars().take(128).collect()
+}
+
 #[cfg(test)]
 mod auto_connect_retry_tests {
     use super::*;
@@ -665,8 +669,4 @@ mod auto_connect_retry_tests {
         assert!(delays.iter().all(|&d| d <= 300));
         assert_eq!(delays.len(), 30);
     }
-}
-
-fn topic_title_for_conversation(conversation_id: i32, title: &str) -> String {
-    format!("#{conversation_id} {title}").chars().take(128).collect()
 }
