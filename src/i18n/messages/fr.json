@@ -98,7 +98,8 @@
         "blue": "Bleu",
         "yellow": "Jaune",
         "violet": "Violet",
-        "phantom": "Phantom"
+        "phantom": "Phantom",
+        "nexus": "NEXUS"
       }
     },
     "customStyle": {

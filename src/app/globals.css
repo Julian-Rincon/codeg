@@ -89,6 +89,78 @@
    canvas, cards and popovers a step above, separated by hairline borders
    instead of heavy fills. Primary here is the general blue; the model accent
    overrides it through html[data-phantom-accent] below. */
+/* ---------- nexus ----------
+   La marca de NEXUS: rojo #ff2020 sobre negro #050001 (banner de
+   NEXUS-Public). En oscuro las superficies son negros con un hilo de rojo; en
+   claro el rojo baja a #c8102e para leerse sobre blanco. */
+[data-theme="nexus"] {
+  --background: oklch(0.993 0.002 20);
+  --foreground: oklch(0.17 0.02 20);
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.17 0.02 20);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.17 0.02 20);
+  --primary: #c8102e;
+  --primary-foreground: oklch(1 0 0);
+  --secondary: oklch(0.962 0.008 20);
+  --secondary-foreground: oklch(0.21 0.03 20);
+  --muted: oklch(0.962 0.008 20);
+  --muted-foreground: oklch(0.49 0.025 20);
+  --accent: oklch(0.948 0.014 20);
+  --accent-foreground: oklch(0.17 0.02 20);
+  --destructive: oklch(0.55 0.2 40);
+  --border: oklch(0.905 0.012 20);
+  --input: oklch(0.89 0.014 20);
+  --ring: #c8102e;
+  --chart-1: #ff8a80;
+  --chart-2: #ff2020;
+  --chart-3: #c8102e;
+  --chart-4: #8a0f1f;
+  --chart-5: #4a0710;
+  --sidebar: oklch(0.975 0.005 20);
+  --sidebar-foreground: oklch(0.2 0.02 20);
+  --sidebar-primary: #c8102e;
+  --sidebar-primary-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.935 0.016 20);
+  --sidebar-accent-foreground: oklch(0.17 0.02 20);
+  --sidebar-border: oklch(0.905 0.012 20);
+  --sidebar-ring: #c8102e;
+}
+
+[data-theme="nexus"].dark {
+  --background: oklch(0.135 0.012 20);
+  --foreground: oklch(0.955 0.006 20);
+  --card: oklch(0.17 0.016 20);
+  --card-foreground: oklch(0.955 0.006 20);
+  --popover: oklch(0.19 0.02 20);
+  --popover-foreground: oklch(0.955 0.006 20);
+  --primary: #ff2020;
+  --primary-foreground: #050001;
+  --secondary: oklch(0.22 0.02 20);
+  --secondary-foreground: oklch(0.955 0.006 20);
+  --muted: oklch(0.205 0.018 20);
+  --muted-foreground: oklch(0.72 0.02 20);
+  --accent: oklch(0.25 0.03 20);
+  --accent-foreground: oklch(0.955 0.006 20);
+  --destructive: oklch(0.75 0.17 55);
+  --border: oklch(0.85 0.06 20 / 10%);
+  --input: oklch(0.85 0.06 20 / 14%);
+  --ring: #ff2020;
+  --chart-1: #ff8a80;
+  --chart-2: #ff2020;
+  --chart-3: #e01b24;
+  --chart-4: #a3121c;
+  --chart-5: #5c0a12;
+  --sidebar: oklch(0.11 0.01 20);
+  --sidebar-foreground: oklch(0.93 0.008 20);
+  --sidebar-primary: #ff2020;
+  --sidebar-primary-foreground: #050001;
+  --sidebar-accent: oklch(0.2 0.022 20);
+  --sidebar-accent-foreground: oklch(0.955 0.006 20);
+  --sidebar-border: oklch(0.85 0.06 20 / 8%);
+  --sidebar-ring: #ff2020;
+}
+
 [data-theme="phantom"] {
   --background: oklch(0.992 0.002 262);
   --foreground: oklch(0.2 0.016 264);
@@ -1246,6 +1318,12 @@
 }
 [data-theme="violet"].dark {
   --activity-accent: oklch(0.8 0.111 293.009);
+}
+[data-theme="nexus"] {
+  --activity-accent: oklch(0.5 0.203 25.331);
+}
+[data-theme="nexus"].dark {
+  --activity-accent: oklch(0.8 0.114 25.331);
 }
 [data-theme="phantom"] {
   --activity-accent: oklch(0.22 0.016 264);
@@ -4574,34 +4652,48 @@ html {
   }
 }
 
-/* NEXUS: su propia identidad (cian #38bdf8, violeta #a78bfa) donde NEXUS es
-   quien habla: centro de comando y modo voz. Gana al acento del modelo
-   (especificidad mayor que html[data-phantom-accent] x2) y el orbe de voz lo
-   recoge porque lee --phantom-accent. */
-html[data-nexus-tema][data-nexus-tema][data-nexus-tema] {
-  --phantom-accent: #0284c7;
+/* Con el estilo NEXUS elegido, el acento por modelo tampoco tiñe nada: todo
+   es rojo NEXUS. El puente de acento escribe solo -light/-dark en línea, así
+   que fijar --phantom-accent aquí basta. */
+html[data-theme="nexus"][data-theme="nexus"] {
+  --phantom-accent: #c8102e;
   --phantom-accent-foreground: #ffffff;
-  --phantom-accent-soft: color-mix(in srgb, #0284c7 12%, transparent);
-  --primary: #0284c7;
+}
+html.dark[data-theme="nexus"][data-theme="nexus"] {
+  --phantom-accent: #ff2020;
+  --phantom-accent-foreground: #050001;
+}
+
+/* NEXUS: su propia identidad (rojo #ff2020 sobre negro #050001) donde NEXUS
+   es quien habla: centro de comando y modo voz, aunque el estilo elegido sea
+   otro. Gana al acento del modelo (especificidad mayor que
+   html[data-phantom-accent] x2) y el orbe de voz lo recoge porque lee
+   --phantom-accent y --nexus-fondo. */
+html[data-nexus-tema][data-nexus-tema][data-nexus-tema] {
+  --phantom-accent: #c8102e;
+  --phantom-accent-foreground: #ffffff;
+  --phantom-accent-soft: color-mix(in srgb, #c8102e 12%, transparent);
+  --nexus-fondo: #050001;
+  --primary: #c8102e;
   --primary-foreground: #ffffff;
-  --ring: #0284c7;
-  --sidebar-primary: #0284c7;
+  --ring: #c8102e;
+  --sidebar-primary: #c8102e;
   --sidebar-primary-foreground: #ffffff;
-  --chart-3: #0284c7;
-  --chart-4: #7c3aed;
-  accent-color: #0284c7;
+  --chart-3: #c8102e;
+  --chart-4: #ff8a80;
+  accent-color: #c8102e;
 }
 
 html.dark[data-nexus-tema][data-nexus-tema][data-nexus-tema] {
-  --phantom-accent: #38bdf8;
-  --phantom-accent-foreground: #04121c;
-  --phantom-accent-soft: color-mix(in srgb, #38bdf8 14%, transparent);
-  --primary: #38bdf8;
-  --primary-foreground: #04121c;
-  --ring: #38bdf8;
-  --sidebar-primary: #38bdf8;
-  --sidebar-primary-foreground: #04121c;
-  --chart-3: #38bdf8;
-  --chart-4: #a78bfa;
-  accent-color: #38bdf8;
+  --phantom-accent: #ff2020;
+  --phantom-accent-foreground: #050001;
+  --phantom-accent-soft: color-mix(in srgb, #ff2020 14%, transparent);
+  --primary: #ff2020;
+  --primary-foreground: #050001;
+  --ring: #ff2020;
+  --sidebar-primary: #ff2020;
+  --sidebar-primary-foreground: #050001;
+  --chart-3: #ff2020;
+  --chart-4: #ff8a80;
+  accent-color: #ff2020;
 }

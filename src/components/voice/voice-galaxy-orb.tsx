@@ -40,9 +40,9 @@ interface RgbColor {
 const FALLBACK_ACCENT: RgbColor = { r: 59, g: 130, b: 246 } // phantom general-blue
 const NAVY_BG: RgbColor = { r: 7, g: 11, b: 24 }
 
-function hexToRgb(hex: string): RgbColor {
+function hexToRgb(hex: string, fallback = FALLBACK_ACCENT): RgbColor {
   const clean = hex.replace("#", "").trim()
-  if (!/^[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(clean)) return FALLBACK_ACCENT
+  if (!/^[0-9a-fA-F]{3}([0-9a-fA-F]{3})?$/.test(clean)) return fallback
   const full =
     clean.length === 3
       ? clean
@@ -65,6 +65,18 @@ function mixWithWhite(c: RgbColor, amount: number): RgbColor {
 
 function rgba(c: RgbColor, alpha: number): string {
   return `rgba(${c.r | 0}, ${c.g | 0}, ${c.b | 0}, ${Math.max(0, Math.min(1, alpha))})`
+}
+
+/** Fondo del orbe: el negro de NEXUS (`--nexus-fondo`) cuando la pantalla es
+ *  de NEXUS; si no, el azul marino original. */
+function readBackgroundColor(): RgbColor {
+  if (typeof window === "undefined" || typeof document === "undefined") {
+    return NAVY_BG
+  }
+  const value = getComputedStyle(document.documentElement)
+    .getPropertyValue("--nexus-fondo")
+    .trim()
+  return value ? hexToRgb(value, NAVY_BG) : NAVY_BG
 }
 
 function readAccentColor(): RgbColor {
@@ -99,6 +111,7 @@ export function VoiceGalaxyOrb({
   const stateRef = useRef(state)
   const mutedRef = useRef(muted)
   const accentRef = useRef<RgbColor>(FALLBACK_ACCENT)
+  const bgRef = useRef<RgbColor>(NAVY_BG)
   const reducedMotion = useMediaQuery("(prefers-reduced-motion: reduce)")
 
   // Refs, not state: `draw`'s rAF loop reads these every frame and must
@@ -115,12 +128,20 @@ export function VoiceGalaxyOrb({
   // whenever the app switches model/theme.
   useEffect(() => {
     accentRef.current = readAccentColor()
+    bgRef.current = readBackgroundColor()
     const observer = new MutationObserver(() => {
       accentRef.current = readAccentColor()
+      bgRef.current = readBackgroundColor()
     })
     observer.observe(document.documentElement, {
       attributes: true,
-      attributeFilter: ["data-phantom-accent", "data-nexus-tema", "class"],
+      attributeFilter: [
+        "data-phantom-accent",
+        "data-nexus-tema",
+        "data-theme",
+        "class",
+        "style",
+      ],
     })
     return () => observer.disconnect()
   }, [])
@@ -188,7 +209,7 @@ export function VoiceGalaxyOrb({
       const core = mixWithWhite(accent, 0.55)
 
       ctx.clearRect(0, 0, size, size)
-      ctx.fillStyle = rgba(NAVY_BG, 1)
+      ctx.fillStyle = rgba(bgRef.current, 1)
       ctx.beginPath()
       ctx.arc(cx, cy, size / 2, 0, Math.PI * 2)
       ctx.fill()

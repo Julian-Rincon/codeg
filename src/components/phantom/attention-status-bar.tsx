@@ -8,12 +8,14 @@ import {
   usePhantomAttention,
 } from "@/hooks/use-phantom-attention"
 import { useTabStore } from "@/stores/tab-store"
+import { useMigrarEstiloNexus } from "@/lib/nexus-tema"
 
 /**
  * Status bar counter of tabs waiting on the user. Hidden at zero; each click
  * jumps to the next blocked tab, cycling through them.
  */
 export function PhantomAttentionStatusBar() {
+  useMigrarEstiloNexus()
   const t = useTranslations("Phantom.attention")
   const { blocked } = usePhantomAttention()
   const switchTab = useTabStore((s) => s.switchTab)

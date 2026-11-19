@@ -7,6 +7,7 @@ import type { CSSProperties } from "react"
  * 实际 CSS 变量值定义在 src/app/globals.css 的 [data-theme="..."] 选择器中。
  */
 export const THEME_COLORS = [
+  "nexus",
   "phantom",
   "neutral",
   "zinc",
@@ -67,7 +68,7 @@ export function normalizeFolderThemeColor(
  * picked another preset keep it; only a missing/invalid stored value falls
  * back here (see APPEARANCE_INIT_SCRIPT).
  */
-export const DEFAULT_THEME_COLOR: ThemeColor = "phantom"
+export const DEFAULT_THEME_COLOR: ThemeColor = "nexus"
 
 /**
  * UI 预览用的代表色（OKLch 字符串，对应各预设的 primary 色 light 版本）。
@@ -78,6 +79,7 @@ export const DEFAULT_THEME_COLOR: ThemeColor = "phantom"
  * 自己对应预设的代表色，不能跟随当前激活的主题色。
  */
 export const THEME_COLOR_PREVIEW: Record<ThemeColor, string> = {
+  nexus: "#ff2020",
   phantom: "oklch(0.488 0.217 264.4)",
   neutral: "oklch(0.205 0 0)",
   zinc: "oklch(0.21 0.006 285.885)",
@@ -116,6 +118,11 @@ export const THEME_COLOR_TITLE: Record<
   ThemeColor,
   { light: string; dark: string }
 > = {
+  // NEXUS reutiliza los valores ya medidos del rojo (mismo tono, mismo AA).
+  nexus: {
+    light: "oklch(0.5 0.203 25.331)",
+    dark: "oklch(0.8 0.114 25.331)",
+  },
   phantom: {
     light: "oklch(0.22 0.016 264)",
     dark: "oklch(0.9 0.012 262)",
