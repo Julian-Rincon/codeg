@@ -323,6 +323,7 @@ export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
     analyser.getFloatTimeDomainData(data)
     const rms = computeRms(data)
     ttsLevelRef.current = Math.min(1, rms * TTS_LEVEL_GAIN)
+    // eslint-disable-next-line react-hooks/immutability -- self-scheduling rAF loop
     ttsRafRef.current = requestAnimationFrame(runTtsLevelLoop)
   }, [])
 
@@ -635,6 +636,7 @@ export function useVoiceLive(options: UseVoiceLiveOptions): UseVoiceLiveResult {
       vadStateRef.current = state
       handleVadEvent(event)
     }
+    // eslint-disable-next-line react-hooks/immutability -- self-scheduling rAF loop
     micRafRef.current = requestAnimationFrame(runMicLoop)
   }, [handleVadEvent])
 

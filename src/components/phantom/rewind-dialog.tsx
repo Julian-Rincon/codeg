@@ -85,6 +85,7 @@ export function RewindDialog({
   useEffect(() => {
     if (!open) return
     let cancelled = false
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- reset preview when the dialog reopens
     setPreview(null)
     setPreviewError(null)
     fetchCheckpointPreview({

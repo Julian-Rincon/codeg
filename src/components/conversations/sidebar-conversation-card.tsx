@@ -514,10 +514,7 @@ export const SidebarConversationCard = memo(function SidebarConversationCard({
                         className="ml-auto inline-flex shrink-0 items-center"
                         title={tSidebar("telegramBadge")}
                       >
-                        <Send
-                          className="h-3 w-3 text-sky-500/80"
-                          aria-hidden
-                        />
+                        <Send className="h-3 w-3 text-sky-500/80" aria-hidden />
                         <span className="sr-only">
                           {tSidebar("telegramBadge")}
                         </span>

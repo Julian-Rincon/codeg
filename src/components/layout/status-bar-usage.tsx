@@ -116,7 +116,6 @@ export function StatusBarUsage() {
     aliveRef.current = true
     // Initial read; the state write lands after the await below (and the
     // interval only ticks later), never synchronously in the effect.
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- initial fetch on mount
     void refresh()
     const id = setInterval(() => void refresh(), POLL_MS)
     return () => {

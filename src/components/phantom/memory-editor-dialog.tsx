@@ -129,6 +129,7 @@ export function MemoryEditorDialog({
 
   useEffect(() => {
     if (!open) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- fetch on open
     void refreshList()
   }, [open, refreshList])
 
@@ -136,6 +137,7 @@ export function MemoryEditorDialog({
   const info = files?.find((f) => f.scope === scope) ?? null
   useEffect(() => {
     if (!open || current || info?.error) return
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- lazy load per scope
     void load(scope)
   }, [open, scope, current, info?.error, load])
 
