@@ -3,3 +3,4 @@
 pub mod checkpoints;
 pub mod chrome;
 pub mod micro;
+pub mod worktrees;

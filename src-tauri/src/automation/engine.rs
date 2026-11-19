@@ -653,7 +653,7 @@ impl AutomationEngine {
                     name => name,
                 };
                 let dir = format!("{}-automation-{}-run-{}", repo_name, auto.id, run_id);
-                let mut wt_path = sibling_path(&root.path, &dir);
+                let mut wt_path = crate::phantom::worktrees::path_for(&dir).unwrap_or_else(|| sibling_path(&root.path, &dir));
 
                 // Retry once with a short suffix if a leftover collides (a prior
                 // attempt for this run id that failed before cleanup).
@@ -662,7 +662,7 @@ impl AutomationEngine {
                 {
                     let suffix = short_suffix(run_id);
                     let branch2 = format!("{branch}-{suffix}");
-                    wt_path = sibling_path(&root.path, &format!("{dir}-{suffix}"));
+                    wt_path = crate::phantom::worktrees::path_for(&format!("{dir}-{suffix}")).unwrap_or_else(|| sibling_path(&root.path, &format!("{dir}-{suffix}")));
                     git_worktree_add(root.path.clone(), branch2, wt_path.clone(), None)
                         .await
                         .map_err(|_| format!("worktree add failed: {e}"))?;
