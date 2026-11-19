@@ -9,8 +9,6 @@ import {
 } from "react"
 import {
   Bot,
-  BookOpenText,
-  Boxes,
   Bubbles,
   Compass,
   FileSpreadsheet,
@@ -22,7 +20,6 @@ import {
   MonitorCog,
   SendHorizontal,
   Palette,
-  PlugZap,
   Server,
   Settings,
   SlidersHorizontal,
@@ -50,9 +47,6 @@ interface SettingsNavItem {
     | "appearance"
     | "agents"
     | "model_providers"
-    | "mcp"
-    | "skills"
-    | "skill_packs"
     | "collaboration"
     | "browser"
     | "computer_use"
@@ -81,21 +75,6 @@ const SETTINGS_NAV_ITEMS: SettingsNavItem[] = [
     href: "/settings/collaboration",
     labelKey: "collaboration",
     icon: Bubbles,
-  },
-  {
-    href: "/settings/mcp",
-    labelKey: "mcp",
-    icon: PlugZap,
-  },
-  {
-    href: "/settings/skills",
-    labelKey: "skills",
-    icon: BookOpenText,
-  },
-  {
-    href: "/settings/skill-packs",
-    labelKey: "skill_packs",
-    icon: Boxes,
   },
   {
     href: "/settings/agents",
@@ -214,7 +193,7 @@ export function SettingsShell({ children }: SettingsShellProps) {
 
       // Preserve current query string so the active remote workspace context
       // (`?remoteConnectionId=N`) carries over to sub-pages — without this,
-      // navigating from /settings/appearance to /settings/mcp drops the
+      // navigating from /settings/appearance to /settings/agents drops the
       // remote id and the next page falls back to the local Tauri backend.
       const search = window.location.search
       const fullTarget = search ? `${target}${search}` : target
@@ -290,7 +269,7 @@ export function SettingsShell({ children }: SettingsShellProps) {
       <div className="flex-1 min-h-0 flex">
         {/* Desktop sidebar */}
         {!isMobile && (
-          <aside className="flex min-h-0 w-56 shrink-0 flex-col border-r px-2 py-3">
+          <aside className="flex min-h-0 w-56 shrink-0 flex-col border-e px-2 py-3">
             {navContent}
           </aside>
         )}
